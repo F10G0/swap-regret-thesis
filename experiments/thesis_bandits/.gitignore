@@ -1,0 +1,33 @@
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.pyc
+
+# pytest cache
+.pytest_cache/
+
+# virtual environment
+venv/
+.env/
+
+# =========================
+# OS junk
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Experiment outputs
+# =========================
+
+# raw data (always ignore)
+results/raw/*
+!results/raw/.gitkeep
+
+# figures (ignore by default)
+results/figures/*
+!results/figures/.gitkeep
+
+# allow final figures (for thesis)
+!results/figures/final_*.png
