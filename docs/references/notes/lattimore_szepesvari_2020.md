@@ -1,5 +1,5 @@
 # Annotations  
-(16/04/2026, 20:48:37)
+(23/04/2026, 23:28:24)
 
 “one-armed bandits” ([Lattimore and Szepesvári, 2020, p. 10](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=19&annotation=SA3X3JXN))
 
@@ -55,3 +55,69 @@
 
 [image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=71&annotation=EMZS5I28))  
 ([Lattimore and Szepesvári, 2020, p. 62](zotero://select/library/items/FBR6RLGD))
+
+“finite, unstructured and stochastic” ([Lattimore and Szepesvári, 2020, p. 90](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=99&annotation=M2HBQGAS))
+
+“explore-then-commit (ETC)” ([Lattimore and Szepesvári, 2020, p. 91](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=100&annotation=CAEE29FB))
+
+“explore-then-commit (ETC), which explores by playing each arm a fixed number of times and then exploits by committing to the arm that appeared best during exploration.” ([Lattimore and Szepesvári, 2020, p. 91](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=100&annotation=GC8I6MKI))
+
+“6.1 Algorithm and Regret Analysis” ([Lattimore and Szepesvári, 2020, p. 91](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=100&annotation=7W4V5FS5))
+
+“Algorithm 1: Explore-then-commit.” ([Lattimore and Szepesvári, 2020, p. 92](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=101&annotation=G2VTFS8N))
+
+“Recall that μi is the mean reward when playing action i and ∆i = μ∗ − μi is suboptimality gap between the mean of action i and the optimal action.” ([Lattimore and Szepesvári, 2020, p. 92](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=101&annotation=32G2IALM))
+
+“worst-case, problem free or problem independent” ([Lattimore and Szepesvári, 2020, p. 93](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=102&annotation=7CL6V4IA))
+
+“gap-free” ([Lattimore and Szepesvári, 2020, p. 93](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=102&annotation=FSU8THXK))
+
+“gap/problem/distribution/instance dependent” ([Lattimore and Szepesvári, 2020, p. 93](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=102&annotation=GMHE34BQ))
+
+“Alternatively, the number of plays before commitment can be made data dependent, which means the learner plays arms alternately until it decides based on its observations to commit to a single arm for the remainder” ([Lattimore and Szepesvári, 2020, p. 94](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=103&annotation=5CAGRYDV))
+
+“An algorithm is called anytime if it does not require advance knowledge of the horizon n.” ([Lattimore and Szepesvári, 2020, p. 95](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=104&annotation=4E4WEL4M))
+
+“anytime” ([Lattimore and Szepesvári, 2020, p. 95](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=104&annotation=LQJ7Q284))
+
+“This limitation can be addressed by the doubling trick, which is a simple way to convert a horizon-dependent algorithm into an anytime algorithm (Exercise 6.6).” ([Lattimore and Szepesvári, 2020, p. 95](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=104&annotation=XUVY4DRS))
+
+“Algorithm 2: Phased elimination for finite-armed bandits” ([Lattimore and Szepesvári, 2020, p. 99](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=108&annotation=HW78ERJD))
+
+“The upper confidence bound (UCB) algorithm offers several advantages over the explore-then-commit (ETC) algorithm introduced in the last chapter.” ([Lattimore and Szepesvári, 2020, p. 102](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=111&annotation=3VEVVD3F))
+
+“(a) It does not depend on advance knowledge of the suboptimality gaps. (b) It behaves well when there are more than two arms.” ([Lattimore and Szepesvári, 2020, p. 102](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=111&annotation=C6PQIARC))
+
+“7.1 The Optimism Principle” ([Lattimore and Szepesvári, 2020, p. 102](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=111&annotation=GGWZMD22))
+
+“The UCB algorithm is based on the principle of optimism in the face of uncertainty, which states that one should act as if the environment is as nice as plausibly possible.” ([Lattimore and Szepesvári, 2020, p. 102](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=111&annotation=T4X4IMPT))
+
+“optimism in the face of uncertainty” ([Lattimore and Szepesvári, 2020, p. 102](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=111&annotation=4YT6L9LJ))
+
+“Algorithm 3: UCB(δ).” ([Lattimore and Szepesvári, 2020, p. 103](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=112&annotation=IGHKNS8H))
+
+“In the case of UCB, the index is the sum of the empirical mean” ([Lattimore and Szepesvári, 2020, p. 103](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=112&annotation=C8RZDBLA))
+
+“of rewards experienced so far and the exploration bonus” ([Lattimore and Szepesvári, 2020, p. 104](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=113&annotation=57TSI664))
+
+“exploration bonus” ([Lattimore and Szepesvári, 2020, p. 104](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=113&annotation=GK53M27X))
+
+“confidence width” ([Lattimore and Szepesvári, 2020, p. 104](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=113&annotation=NRNRXW7G))
+
+“where δ is called the confidence level and quantifies the degree of certainty.” ([Lattimore and Szepesvári, 2020, p. 104](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=113&annotation=ZEWE6JGG))
+
+“confidence level” ([Lattimore and Szepesvári, 2020, p. 104](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=113&annotation=75KSCQ8W))
+
+“Theorem 7.1.” ([Lattimore and Szepesvári, 2020, p. 105](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=114&annotation=J5WS7UH7))
+
+“no algorithm can enjoy regret smaller than O(√nk) over all problems in ESkG(1)” ([Lattimore and Szepesvári, 2020, p. 109](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=118&annotation=Q2TA8HMJ))
+
+“The optimism principle usually leads to reasonable algorithms when (i) any action gives feedback about the quality of that action and (ii) no action gives feedback about the value of other actions.” ([Lattimore and Szepesvári, 2020, p. 110](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=119&annotation=FK7UUFGW))
+
+“large information gain and low reward” ([Lattimore and Szepesvári, 2020, p. 110](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=119&annotation=73M5QM2N))
+
+“Algorithm 4: A phased version of UCB.” ([Lattimore and Szepesvári, 2020, p. 113](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=122&annotation=E58PRAXM))
+
+“Algorithm 5: A phased version of UCB.” ([Lattimore and Szepesvári, 2020, p. 114](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=123&annotation=PT2REIPM))
+
+“Algorithm 6: Asymptotically optimal UCB.” ([Lattimore and Szepesvári, 2020, p. 117](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=126&annotation=JENL4F4X))
