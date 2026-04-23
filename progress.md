@@ -28,3 +28,21 @@
 ### Next steps
 - Continue studying *Bandit Algorithms*, focusing on UCB  
 - Implement UCB and integrate it into the experimental framework  
+
+## 2026-04-23
+
+### What I did
+- Studied Chapters 7 and 8 of *Bandit Algorithms* (Lattimore & Szepesvári, 2020)
+- Implemented the standard Upper Confidence Bound (UCB) algorithm
+- Implemented the phased elimination algorithm with optimized phase tracking
+
+### Observations / Results
+- Established a clearer understanding of optimism-based algorithms (UCB) and phase-based exploration strategies
+- Extended the experimental framework to support multiple stochastic bandit algorithms
+- All implementations are functional and pass unit tests
+
+### Next steps
+- Implement phased UCB variants
+- Implement a doubling trick wrapper for anytime algorithms
+- Continue studying *Bandit Algorithms* with focus on adversarial bandits and Exp3
+- Implement the Exp3 algorithm

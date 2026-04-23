@@ -11,7 +11,7 @@ The project is designed as a **modular and extensible experimental framework**, 
 - Reproducible experimental evaluation (multi-run averaging)
 - Regret analysis and visualization
 
-The current version includes a working baseline using the **Explore-Then-Commit (ETC)** algorithm on a Bernoulli bandit.
+The current version includes working baselines using the **Explore-Then-Commit (ETC)**, **Upper Confidence Bound (UCB)**, and **phased elimination** algorithms on a Bernoulli bandit.
 
 ---
 
@@ -70,19 +70,25 @@ thesis_bandits/
 
 Implements bandit learning algorithms.
 
-- **base.py**  
-  Abstract interface for all algorithms:
-  - `select_action()`
-  - `update(action, reward)`
-  - `reset()`
+Currently includes baseline stochastic bandit algorithms covering fixed, adaptive, and phase-based exploration strategies.
 
 - **etc.py**  
   Explore-Then-Commit (ETC) algorithm:
   - fixed exploration phase
   - commit to empirically best arm
 
+- **ucb.py**  
+  Upper Confidence Bound (UCB) algorithm:
+  - optimism-based exploration
+  - logarithmic regret guarantee
+
+- **elimination.py**  
+  Phased elimination algorithm:
+  - phase-based exploration
+  - progressively removes suboptimal arms
+  - optimized phase tracking (O(1) completion check)
+
 Future extensions:
-- `ucb.py`
 - `exp3.py`
 - swap-regret algorithms
 
@@ -153,6 +159,19 @@ Unit tests (using pytest).
   - correct commit behavior
   - correct reset behavior
 
+- **test_ucb.py**  
+  Verifies:
+  - correct initialization phase
+  - correct UCB-based action selection
+  - correct reset behavior
+
+- **test_elimination.py**  
+  Verifies:
+  - correct phase-based round-robin behavior
+  - correct elimination rule
+  - correct phase transitions
+  - correct commitment when one arm remains
+
 ---
 
 ### results/
@@ -212,15 +231,16 @@ pytest -v
 - [x] Project structure initialized
 - [x] Bernoulli bandit environment implemented
 - [x] Explore-Then-Commit (ETC) implemented
+- [x] Upper Confidence Bound (UCB) implemented
+- [x] Phased elimination algorithm implemented
 - [x] Single and multiple experiments supported
 - [x] Regret computation and plotting
-- [x] Unit tests for ETC
+- [x] Unit tests for ETC, UCB, and elimination
 
 ---
 
 ## Next Steps
 
-- [ ] Implement UCB algorithm
 - [ ] Implement Exp3 algorithm
 - [ ] Add multi-algorithm comparison plots
 - [ ] Extend to adversarial and game settings
