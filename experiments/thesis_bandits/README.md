@@ -12,7 +12,7 @@ The project is designed as a **modular and extensible experimental framework**, 
 - Regret analysis and visualization
 - Unit-tested algorithm components
 
-The current version includes working baselines using **Explore-Then-Commit (ETC)**, **Upper Confidence Bound (UCB)**, **Phased UCB**, and **phased elimination** algorithms on a Bernoulli bandit.
+The current version includes working baselines for both stochastic and adversarial bandit settings, including **Explore-Then-Commit (ETC)**, **Upper Confidence Bound (UCB)**, **Phased UCB**, **elimination-based methods**, and **Exp3/Exp3-IX** (with fixed, doubling, and adaptive learning rate variants).
 
 ---
 
@@ -107,8 +107,14 @@ Current structure:
 - **doubling_trick.py**  
   Generic doubling-trick wrapper for restarting horizon-dependent algorithms in exponentially growing epochs.
 
+- **exp3.py / exp3_adaptive.py / exp3_wrappers.py**  
+  Adversarial bandit algorithms (Exp3 family):
+  - Exp3 with fixed learning rate
+  - Exp3-IX with implicit exploration
+  - doubling-trick wrapper for unknown horizon
+  - time-varying (adaptive) learning rate version
+
 Future extensions:
-- `exp3.py`
 - internal-regret algorithms
 - swap-regret algorithms
 
@@ -130,9 +136,13 @@ Defines reward-generating processes.
   - each arm has fixed success probability
   - rewards sampled independently
 
+- **adversarial_bandit.py**  
+  Adversarial bandit with predefined reward matrix:
+  - rewards may vary arbitrarily over time
+  - supports evaluation via best fixed arm in hindsight
+
 Future extensions:
 - Gaussian bandits
-- adversarial bandits
 - game environments
 
 ---
@@ -205,6 +215,21 @@ Unit tests using pytest.
   - phase transitions
   - commitment when one arm remains
 
+- **test_exp3.py**  
+  Verifies:
+  - probability distribution validity
+  - importance-weighted updates
+  - Exp3 vs Exp3-IX behavior
+  - doubling-trick wrapper
+  - adaptive learning rate variant
+
+- **test_adversarial_bandit.py**  
+  Verifies:
+  - reward matrix interaction
+  - best fixed arm computation
+  - reset behavior
+  - input validation
+
 ---
 
 ### results/
@@ -270,15 +295,16 @@ pytest -v
 - [x] Phased elimination algorithm implemented
 - [x] Single-run and multi-run experiments supported
 - [x] Regret computation and plotting
-- [x] Unit tests for ETC, UCB, Phased UCB, and elimination
+- [x] Exp3 and Exp3-IX implemented (fixed, doubling, and adaptive variants)
+- [x] Adversarial bandit environment implemented
+- [x] Unit tests for ETC, UCB, Phased UCB, elimination, and Exp3
 
 ---
 
 ## Next Steps
 
-- [ ] Implement Exp3 algorithm
 - [ ] Add richer multi-algorithm comparison plots
-- [ ] Extend to adversarial and game settings
+- [ ] Extend to game settings
 - [ ] Implement internal-regret and no-swap-regret algorithms
 
 ---

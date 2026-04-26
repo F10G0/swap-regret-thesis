@@ -19,6 +19,14 @@ from .elimination_wrappers import (
     make_elimination_standard,
 )
 
+from .exp3_wrappers import (
+    make_exp3,
+    make_exp3_doubling,
+    make_exp3_ix_doubling,
+    make_exp3_adaptive,
+    make_exp3_ix_adaptive,
+)
+
 __all__ = [
     # Explore-Then-Commit (ETC)
     "make_etc",
@@ -36,4 +44,11 @@ __all__ = [
     # Elimination-based algorithms
     "make_elimination",
     "make_elimination_standard",
+
+    # Adversarial bandit algorithms (Exp3 family)
+    "make_exp3",
+    "make_exp3_doubling",
+    "make_exp3_ix_doubling",
+    "make_exp3_adaptive",
+    "make_exp3_ix_adaptive",
 ]

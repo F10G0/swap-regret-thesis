@@ -1,5 +1,5 @@
 # Annotations  
-(23/04/2026, 23:28:24)
+(26/04/2026, 21:09:02)
 
 “one-armed bandits” ([Lattimore and Szepesvári, 2020, p. 10](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=19&annotation=SA3X3JXN))
 
@@ -121,3 +121,107 @@
 “Algorithm 5: A phased version of UCB.” ([Lattimore and Szepesvári, 2020, p. 114](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=123&annotation=PT2REIPM))
 
 “Algorithm 6: Asymptotically optimal UCB.” ([Lattimore and Szepesvári, 2020, p. 117](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=126&annotation=JENL4F4X))
+
+“The point of bandit models is to facilitate predicting the performance of bandit algorithms on future problem instances that one encounters in their practice.” ([Lattimore and Szepesvári, 2020, p. 145](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=154&annotation=WZ78JMEJ))
+
+“It can be too specific, imposing assumptions so detached from reality that a catastrophic mismatch between actual and predicted performance may arise.” ([Lattimore and Szepesvári, 2020, p. 145](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=154&annotation=N927X7PR))
+
+“too specific” ([Lattimore and Szepesvári, 2020, p. 145](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=154&annotation=BRZR64XC))
+
+“The second mode of failure occurs when a model is too general, which makes the algorithms designed to do well on the bandit model overly cautious, which can harm performance.” ([Lattimore and Szepesvári, 2020, p. 145](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=154&annotation=4JFF6EET))
+
+“too general” ([Lattimore and Szepesvári, 2020, p. 145](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=154&annotation=J625PVTE))
+
+“It is a critical assumption in stochastic bandits that the mean reward of individual arms does not change (significantly) over time.” ([Lattimore and Szepesvári, 2020, p. 145](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=154&annotation=F7DIK62P))
+
+“k-armed adversarial bandit” ([Lattimore and Szepesvári, 2020, p. 148](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=157&annotation=TE3SKNQ7))
+
+“Let k > 1 be the number of arms. A k-armed adversarial bandit is an arbitrary sequence of reward vectors (xt)tn=1, where xt ∈ [0, 1]k. In each round, the learner chooses a distribution over the actions Pt ∈ Pk−1. Then the action At ∈ [k] is sampled from Pt, and the learner receives reward xtAt .” ([Lattimore and Szepesvári, 2020, p. 148](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=157&annotation=RR3WMLNY))
+
+“The importance-weighted estimator of xti is” ([Lattimore and Szepesvári, 2020, p. 150](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=159&annotation=3CBY4BIX))
+
+“importance-weighted estimator” ([Lattimore and Szepesvári, 2020, p. 150](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=159&annotation=NMQVJBSR))
+
+[image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=159&annotation=52VRDD34))  
+([Lattimore and Szepesvári, 2020, p. 150](zotero://select/library/items/FBR6RLGD))
+
+“The conditional mean of Xˆti satisfies” ([Lattimore and Szepesvári, 2020, p. 150](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=159&annotation=F5WNFIVH))
+
+“Et−1[Xˆti] = xti” ([Lattimore and Szepesvári, 2020, p. 150](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=159&annotation=DB66GBBW))
+
+“which means that Xˆti is an unbiased estimate of xti conditioned on the history observed after t − 1 rounds.” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=E4KDB3L8))
+
+“Xˆti is an unbiased estimate of xti” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=MB77A5NL))
+
+“So Vt−1[Xˆti] is a random variable that measures the variance of Xˆti conditioned on the past. Calculating the conditional variance using the definition of Xˆti and Eq. (11.4) shows that” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=V22QFV2H))
+
+“Vt−1[Xˆti] is a random variable” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=9S9ANI65))
+
+[image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=MSPQYKVH))  
+([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD))
+
+[image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=GXU5GSG5))  
+([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD))
+
+“The terms yti, Yt and Yˆti should be interpreted as losses.” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=JS9YT3D6))
+
+“losses” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=Y66FRMNI))
+
+“loss-based importance-weighted estimator” ([Lattimore and Szepesvári, 2020, p. 151](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=160&annotation=J9CPSEYM))
+
+“The simplest algorithm for adversarial bandits is called Exp3, which stands for ‘exponential-weight algorithm for exploration and exploitation’.” ([Lattimore and Szepesvári, 2020, p. 152](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=161&annotation=6U6Q66L2))
+
+“exponential-weight algorithm for exploration and exploitation” ([Lattimore and Szepesvári, 2020, p. 152](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=161&annotation=96A5KENX))
+
+“exponential weighting” ([Lattimore and Szepesvári, 2020, p. 152](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=161&annotation=NA9AT45N))
+
+[image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=161&annotation=P7US8NGH))  
+([Lattimore and Szepesvári, 2020, p. 152](zotero://select/library/items/FBR6RLGD))
+
+“The parameter η is called the learning rate.” ([Lattimore and Szepesvári, 2020, p. 152](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=161&annotation=NEDRLF2B))
+
+“Algorithm 9: Exp3.” ([Lattimore and Szepesvári, 2020, p. 153](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=162&annotation=LBZBAQRB))
+
+“Theorem 11.1.” ([Lattimore and Szepesvári, 2020, p. 153](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=162&annotation=4AWGTT8B))
+
+“Let x ∈ [0, 1]n×k and π be the policy of Exp3 (Algorithm 9) with learning rate η = √log(k)/(nk). Then, Rn(π, x) ≤ 2√nk log(k) .” ([Lattimore and Szepesvári, 2020, p. 153](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=162&annotation=LZD98HF6))
+
+“Theorem 11.2.” ([Lattimore and Szepesvári, 2020, p. 156](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=165&annotation=TF444ADD))
+
+“Let x ∈ [0, 1]n×k be an adversarial bandit and π be the policy of Exp3 with learning rate η = √2 log(k)/(nk). Then, Rn(π, x) ≤ √2nk log(k) .” ([Lattimore and Szepesvári, 2020, p. 156](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=165&annotation=42LVWCAW))
+
+“Exp3 is nearly optimal in the sense that its expected regret cannot be improved significantly in the worst case. The distribution of its regret, however, is very far from optimal.” ([Lattimore and Szepesvári, 2020, p. 157](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=166&annotation=C3AUCRJR))
+
+[image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=166&annotation=9AAFFD2D))  
+([Lattimore and Szepesvári, 2020, p. 157](zotero://select/library/items/FBR6RLGD))
+
+“We assumed that the adversary chooses the rewards at the start of the game. Such adversaries are called oblivious.” ([Lattimore and Szepesvári, 2020, p. 158](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=167&annotation=L7QUNEIB))
+
+“oblivious” ([Lattimore and Szepesvári, 2020, p. 158](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=167&annotation=B84V627Y))
+
+“reactive or non-oblivious” ([Lattimore and Szepesvári, 2020, p. 158](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=167&annotation=EISP3Z6A))
+
+“An adversary is called reactive or non-oblivious if xt is allowed to depend on the history x1, A1, . . . , xt−1, At−1.” ([Lattimore and Szepesvári, 2020, p. 158](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=167&annotation=EYMSS33N))
+
+“policy regret” ([Lattimore and Szepesvári, 2020, p. 158](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=167&annotation=4NAFRHIW))
+
+“The estimators in Eq. (11.3) and Eq. (11.6) both have conditional variance Vt[Xˆti] ≈ 1/Pti, which blows up for small Pti.” ([Lattimore and Szepesvári, 2020, p. 159](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=168&annotation=B4S4RDQF))
+
+“Exp3 requires advance knowledge of the horizon. The doubling trick can be used to overcome this issue, but a more elegant solution is to use a decreasing learning rate.” ([Lattimore and Szepesvári, 2020, p. 159](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=168&annotation=EDLDN65W))
+
+“algorithms with low regret on finite-armed adversarial bandits also have low regret on stochastic bandits where the reward distributions have appropriately bounded support” ([Lattimore and Szepesvári, 2020, p. 159](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=168&annotation=92QICBH6))
+
+“modify the reward estimates to control the variance at the price of introducing some bias” ([Lattimore and Szepesvári, 2020, p. 165](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=174&annotation=DNDK5VAA))
+
+“Let γ > 0 be a small constant to be chosen later and define the biased estimator” ([Lattimore and Szepesvári, 2020, p. 166](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=175&annotation=B9P7H227))
+
+[image] ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=175&annotation=JSKUPTKT))  
+([Lattimore and Szepesvári, 2020, p. 166](zotero://select/library/items/FBR6RLGD))
+
+“The suffix ‘IX’ stands for implicit exploration” ([Lattimore and Szepesvári, 2020, p. 166](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=175&annotation=HC5H37PR))
+
+“implicit exploration” ([Lattimore and Szepesvári, 2020, p. 166](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=175&annotation=VHPJIVZ4))
+
+“Exp3-IX will explore more than the standard Exp3 algorithm” ([Lattimore and Szepesvári, 2020, p. 166](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=175&annotation=YSMPZYFV))
+
+“Algorithm 10: Exp3-IX.” ([Lattimore and Szepesvári, 2020, p. 167](zotero://select/library/items/FBR6RLGD)) ([pdf](zotero://open-pdf/library/items/5URJXI9C?page=176&annotation=XYEE4E8M))

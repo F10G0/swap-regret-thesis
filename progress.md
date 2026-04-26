@@ -61,3 +61,17 @@
 ### Next steps
 - Continue studying *Bandit Algorithms* with focus on adversarial bandits and Exp3
 - Implement the Exp3 algorithm
+
+## 2026-04-26
+
+### What I did
+- Studied Chapters 11 and 12 of *Bandit Algorithms* (Lattimore & Szepesvári, 2020)
+- Implemented an adversarial bandit environment
+- Implemented multiple variants of the Exp3 algorithm
+
+### Observations / Results
+- Gained understanding of the definition, characteristics, and core challenges of Exp3
+
+### Next steps
+- Study Blum, Avrim and Yishay Mansour (2007), *From External to Internal Regret*
+- Understand the definition of internal regret and related algorithms

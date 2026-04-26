@@ -1,8 +1,9 @@
 import numpy as np
-from .base import BanditEnvironment
+
+from .base import StochasticBanditEnvironment
 
 
-class BernoulliBandit(BanditEnvironment):
+class BernoulliBandit(StochasticBanditEnvironment):
     """
     Stochastic multi-armed bandit with Bernoulli rewards.
 
