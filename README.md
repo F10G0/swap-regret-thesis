@@ -5,35 +5,80 @@ Implementation and empirical evaluation of no-regret and no-swap-regret learning
 This repository contains:
 - literature notes and references,
 - thesis proposal and related documents,
-- experimental frameworks and algorithm implementations.
+- implementations of online learning and bandit algorithms,
+- ongoing work on reduction-based no-swap-regret algorithms.
 
-The project is developed as part of a Bachelor's thesis focused on:
+The project focuses on:
 - swap regret,
 - correlated equilibrium,
-- reduction-based learning algorithms,
-- computational efficiency of online learning algorithms.
+- reduction-based online learning algorithms,
+- computational efficiency and practical behavior of learning algorithms.
 
 ---
 
 ## Repository Structure
 
-```
+```text
 swap-regret-thesis/
+├── algorithms/
+├── environments/
+├── experiments/
+├── results/
+├── tests/
+│
 ├── docs/
 │   ├── proposal/
 │   ├── references/
-│   └── thesis/
+│   ├── thesis/
+│   └── progress.md
 │
-├── experiments/
-├── results/
-│
-├── progress.md
-├── README.md
-└── requirements.txt
+├── config.py
+├── main.py
+├── pytest.ini
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Implemented Algorithms
+
+Current implementations mainly include no-external-regret and bandit algorithms:
+- Explore-Then-Commit (ETC)
+- UCB and phased UCB
+- elimination-based methods
+- Exp3 and Exp3-IX
+- doubling-trick wrappers
+
+Future work includes:
+- Hedge,
+- full-information learners,
+- reduction-based no-swap-regret algorithms.
+
+---
+
+## Usage
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run experiments:
+
+```bash
+python main.py
+```
+
+Run tests:
+
+```bash
+pytest -v
 ```
 
 ---
 
 ## Notes
 
-This repository is under active development during the thesis research process.
+This repository is under active development as part of a Bachelor's thesis project on swap regret and online learning.
