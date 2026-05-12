@@ -1,32 +1,37 @@
 # Swap Regret Thesis Project
 
-A project on the implementation and empirical evaluation of learning algorithms.
+Implementation and empirical evaluation of no-regret and no-swap-regret learning algorithms.
+
+This repository contains:
+- literature notes and references,
+- thesis proposal and related documents,
+- experimental frameworks and algorithm implementations.
+
+The project is developed as part of a Bachelor's thesis focused on:
+- swap regret,
+- correlated equilibrium,
+- reduction-based learning algorithms,
+- computational efficiency of online learning algorithms.
 
 ---
 
 ## Repository Structure
 
-`swap-regret-thesis/`
-
-- `src/` — algorithm implementations  
-- `experiments/` — experiment scripts  
-- `results/` — experimental outputs  
-- `docs/` — proposal, thesis, and references  
-- `progress.md` — project progress documentation  
-- `README.md` — project description  
-- `requirements.txt` — Python dependencies  
-
----
-
-## Progress Tracking
-
-Project progress, intermediate results, and encountered challenges are documented in:
-
-`progress.md`
+swap-regret-thesis/
+├── docs/
+│   ├── proposal/
+│   ├── references/
+│   └── thesis/
+│
+├── experiments/
+├── results/
+│
+├── progress.md
+├── README.md
+└── requirements.txt
 
 ---
 
 ## Notes
 
-This repository is under active development as part of a Bachelor thesis project.  
-The exact scope and focus may evolve during the initial exploration phase.
+This repository is under active development during the thesis research process.

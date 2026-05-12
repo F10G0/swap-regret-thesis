@@ -74,4 +74,16 @@
 
 ### Next steps
 - Study Blum, Avrim and Yishay Mansour (2007), *From External to Internal Regret*
-- Understand the definition of internal regret and related algorithms
+- Understand the definition of internal regret and related 
+
+## 2026-05-11
+
+### What I did
+- Studied multiple papers
+- Drafted the Bachelor thesis proposal
+- Refined the overall project direction and experimental plan
+
+### Next steps
+- Follow the implementation plan described in the proposal
+- Adapt the current Exp3 implementation into reduction-based no-swap-regret algorithms
+- Implement the Blum-Mansour and Ito algorithms based on the existing external-regret framework

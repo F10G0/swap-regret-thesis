@@ -1,0 +1,143 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+
+\titleformat{\section}
+  {\normalfont\large\bfseries}
+  {\thesection}{1em}{}
+
+\title{Bachelor Thesis Proposal}
+\author{Yifan Gong}
+
+\begin{document}
+
+\maketitle
+
+
+\section{Project Background}
+\emph{Nash equilibrium} is one of the central concepts in strategic game theory.
+However, in practice, it is often unrealistic to assume that all players always play a fixed Nash equilibrium strategy, especially when multiple equilibria exist.
+Instead, it is more natural to consider adaptive players that gradually update their strategies according to their previous observations and outcomes.
+As discussed in \cite{foster1997calibrated}, these adaptive learning strategies are also closely related to several important equilibrium concepts.
+
+To understand these learning dynamics, it is useful to introduce different notions of \textbf{regret}.
+Suppose the goal is to minimize loss in an online learning problem.
+\emph{External regret} compares the actual cumulative loss with the best fixed action in hindsight,
+\emph{internal regret} allows replacing one action with another action,
+and \emph{swap regret} allows arbitrary substitution rules over all actions \cite{blum2005internal}.
+
+In \emph{full-information} settings, if all players use no-external-regret learning strategies, the empirical distribution of play converges to a \emph{coarse correlated equilibrium (CCE)} \cite{foster1997calibrated}.
+If all players instead use no-internal-regret or no-swap-regret learning strategies, the empirical distribution converges to a \emph{correlated equilibrium (CE)} \cite{blum2005internal, hart2000regret}.
+In \emph{partial-information} or \textbf{adversarial} \emph{Multi-Armed Bandit (MAB)} settings, which are often treated as single-player online learning problems, equilibrium concepts are no longer the primary focus.
+
+It is worth noting that many no-swap-regret algorithms are not initially designed for adversarial MAB settings \cite{hart2000regret, stoltz2005internal, stoltz2007correlated, gordon2008convex}.
+Some of these works instead focus on more general continuous, compact, or convex strategy spaces \cite{stoltz2005internal, stoltz2007correlated, gordon2008convex}.
+
+MAB settings are discussed in more detail in \cite{lattimore2020bandit}, which also serves as the main reference for the current experimental framework.
+Since most reduction-based no-swap-regret algorithms rely on no-external-regret learners, understanding the methodology behind algorithms such as \emph{Hedge}, \emph{Exp3}, and \emph{Exp3-IX} is also important for this thesis.
+
+Both \emph{Hedge} and \emph{Exp3} are based on the \emph{Multiplicative Weights Update (MWU)} framework.
+Instead of directly adding the loss vector to the probability distribution, which may produce invalid negative values, MWU updates the distribution by exponentially reweighting each action according to its observed loss and then normalizing the result.
+
+However, in adversarial MAB settings, only the reward of the selected action can be observed, while all counterfactual information is unavailable.
+To address this issue, Exp3 introduces an importance-weighted estimator that rescales the observed reward inversely proportional to its sampling probability.
+Intuitively, when a rarely selected action receives a reward, its influence will be amplified in order to compensate for the missing observations \cite{lattimore2020bandit}.
+
+This estimator is unbiased, but it may also introduce large variance.
+In particular, when an action with extremely small probability is selected, the rescaled reward may suddenly become very large and destabilize the update process.
+Exp3-IX addresses this issue by adding implicit exploration to the denominator of the estimator.
+This slightly sacrifices unbiasedness in exchange for improved stability and much lower variance \cite{lattimore2020bandit}.
+
+\section{Project Focus}
+
+In my thesis, I want to focus more on finite action space settings.
+There are four no-swap-regret algorithms that I currently want to implement \cite{blum2005internal, hart2000regret, stoltz2005internal, ito2020swap}.
+Two of them \cite{hart2000regret, stoltz2005internal} are designed only for full-information settings, while the other two \cite{blum2005internal, ito2020swap} can also be extended to adversarial MAB settings.
+
+Among these four algorithms, \cite{hart2000regret} is probably the most straightforward to implement and also computationally the most efficient.
+It maintains a matrix with $O(N^2)$ memory complexity and updates only one row in each step with $O(N)$ update complexity.
+
+\cite{blum2005internal} is typically considered the baseline reduction-based no-swap-regret algorithm.
+It introduces the idea of wrapping multiple ($N$) external learners to construct a swap-regret learner.
+The key idea is to maintain a stationary distribution over actions using a Markov-style update.
+Intuitively, actions can be viewed as states/nodes, while swap rules $(i \rightarrow j)$ correspond to transitions/edges between them, and the goal is to compute a stationary distribution over all nodes.
+However, in every iteration all $N$ external learners must be updated, and each learner maintains an $N$-dimensional distribution vector, which can be computationally expensive.
+Later, \cite{ito2020swap} improves this term.
+
+\cite{stoltz2005internal} aligns each potential mapping with an external learner, which can require up to $N^N$ learners in the worst case and is therefore practically intractable, but it can also be applied in more general settings.
+
+\cite{ito2020swap} inherits several ideas from \cite{blum2005internal}, including reduction-based construction and stationary-distribution updates.
+However, it only maintains $N$ external learners and updates only one learner in each iteration, leading to a potential $N$ speedup in the update term compared with \cite{blum2005internal}.
+Notably, this algorithm also provides improved regret bounds compared with \cite{blum2005internal} in adversarial MAB settings and when the external learners achieve concave regret bounds $r(T)$ in full-information settings.
+Additionally, this paper establishes a tight lower bound for no-swap-regret algorithms in full-information settings, while the corresponding lower bound in adversarial MAB settings remains open.
+
+Although the long-term regret guarantees of \cite{ito2020swap} are theoretically established, I am interested in how these algorithms behave in practice under limited horizons.
+
+Furthermore, I consider investigating the trade-off between regret performance and computational efficiency when updating only a subset of external learners in each iteration.
+
+Recent work such as \cite{dagan2024swap} also shows that computational efficiency in large action spaces is still an active research topic for no-swap-regret algorithms.
+
+The external learners in reduction-based algorithms are mostly independent from each other, especially in \cite{blum2005internal}.
+This structure appears naturally parallelizable.
+Therefore, I also consider investigating whether multi-threading can accelerate the update process and reduce the practical computational overhead.
+
+\section{Preliminary Progress}
+
+I have already implemented a modular experimental framework for stochastic and adversarial bandit algorithms in Python.\\
+
+The framework currently supports:
+\begin{itemize}
+    \item stochastic and adversarial environments,
+    \item regret computation and visualization,
+    \item reproducible multi-run experiments,
+    \item unit-tested algorithm implementations.
+\end{itemize}
+
+The currently implemented algorithms include:
+\begin{itemize}
+    \item Explore-Then-Commit (ETC),
+    \item UCB and phased UCB variants,
+    \item elimination-based methods,
+    \item Exp3 and Exp3-IX variants.
+\end{itemize}
+
+The framework follows a modular design such that stronger regret notions and reduction-based no-swap-regret algorithms can later be integrated more easily.
+
+\section{Future work}
+
+\begin{itemize}
+    \item Adjust the no-external-regret algorithm interfaces and integrate them into \cite{blum2005internal, stoltz2005internal}.
+    \item Construct full-information experimental environments.
+    \item Implement the Hedge algorithm (with configurable parameter variants).
+    \item Wrap Hedge using \cite{blum2005internal, stoltz2005internal, ito2020swap}.
+    \item Implement \cite{hart2000regret}.
+    \item Evaluate the computational complexity of the algorithms.
+    \item Evaluate regret convergence behavior experimentally.
+    \item Visualize experimental results.
+    \item Summarize results in tables.
+    \item Compare the empirical performance among these algorithms.
+\end{itemize}
+
+\section{Possible add-ons}
+
+\begin{itemize}
+    \item Test performance under finite horizons and compare.
+    \item Test subset-updating variants of \cite{ito2020swap}.
+    \item Multi-thread parallelization for reduction-based learner updates.
+\end{itemize}
+
+\section{Time Table}
+
+\begin{itemize}
+    \item May: Finish implementation and experimental setup.
+    \item June: Run experiments, analyze regret behavior, and study the theoretical proofs in more detail.
+    \item July: Thesis writing.
+    \item Possible add-ons and optimizations if time permits.
+\end{itemize}
+
+\bibliographystyle{unsrt}
+\bibliography{refs}
+
+\end{document}
