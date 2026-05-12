@@ -76,7 +76,7 @@
 - Study Blum, Avrim and Yishay Mansour (2007), *From External to Internal Regret*
 - Understand the definition of internal regret and related 
 
-## 2026-05-11
+## 2026-05-12
 
 ### What I did
 - Studied multiple papers
