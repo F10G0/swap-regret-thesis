@@ -2,17 +2,19 @@
 
 ## Overview
 
-This repository contains the implementation and experimental framework for a Bachelor's thesis on **no-regret and no-swap-regret algorithms** in bandit and online learning settings.
+This repository contains the implementation and experimental framework for a Bachelor's thesis on **no-regret and no-swap-regret algorithms** in online learning settings.
 
 The project is designed as a **modular and extensible experimental framework**, supporting:
 
-- Implementation of bandit algorithms and no-regret learning baselines
-- Simulation of stochastic and adversarial environments
+- Implementation of stochastic and adversarial bandit algorithms
+- Implementation of no-external-regret learning baselines
+- Future extension to internal-regret and no-swap-regret algorithms
 - Reproducible experimental evaluation
 - Regret analysis and visualization
 - Unit-tested algorithm components
 
 The current version includes working baselines for both stochastic and adversarial bandit settings, including **Explore-Then-Commit (ETC)**, **Upper Confidence Bound (UCB)**, **Phased UCB**, **elimination-based methods**, and **Exp3/Exp3-IX** (with fixed, doubling, and adaptive learning rate variants).
+```
 
 ---
 
@@ -303,9 +305,11 @@ pytest -v
 
 ## Next Steps
 
-- [ ] Add richer multi-algorithm comparison plots
-- [ ] Extend to game settings
-- [ ] Implement internal-regret and no-swap-regret algorithms
+- [ ] Implement Hedge and reduction-based no-swap-regret algorithms
+- [ ] Construct full-information experimental environments
+- [ ] Extend experiments to game settings
+- [ ] Compare regret behavior and computational efficiency
+- [ ] Investigate finite-horizon performance and possible optimizations
 
 ---
 
