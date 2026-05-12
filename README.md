@@ -17,6 +17,7 @@ The project is developed as part of a Bachelor's thesis focused on:
 
 ## Repository Structure
 
+```
 swap-regret-thesis/
 ├── docs/
 │   ├── proposal/
@@ -29,6 +30,7 @@ swap-regret-thesis/
 ├── progress.md
 ├── README.md
 └── requirements.txt
+```
 
 ---
 
