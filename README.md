@@ -68,7 +68,7 @@ pip install -r requirements.txt
 Run experiments:
 
 ```bash
-python main.py
+python3 main.py
 ```
 
 Run tests:
