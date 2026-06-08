@@ -7,35 +7,15 @@ __pycache__/
 # pytest cache
 .pytest_cache/
 
-# virtual environments
+# virtual environment
 venv/
-.venv/
 .env/
-
-# =========================
-# IDE files
-# =========================
-.vscode/
-.idea/
 
 # =========================
 # OS junk
 # =========================
 .DS_Store
 Thumbs.db
-
-# =========================
-# LaTeX build files
-# =========================
-*.aux
-*.bbl
-*.blg
-*.fdb_latexmk
-*.fls
-*.log
-*.out
-*.synctex.gz
-*.toc
 
 # =========================
 # Experiment outputs

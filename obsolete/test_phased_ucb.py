@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from algorithms import (
+from obsolete.algorithms import (
     make_phased_ucb_exponential,
     make_phased_ucb_count_doubling,
 )
@@ -151,7 +151,7 @@ def test_best_ucb_arm_matches_manual_computation():
 
 
 def test_compute_phase_length_rejects_nonpositive_value():
-    from algorithms.phased_ucb import PhasedUCB
+    from obsolete.algorithms.phased_ucb import PhasedUCB
 
     algo = PhasedUCB(
         n_arms=2,
@@ -168,7 +168,7 @@ def test_compute_phase_length_rejects_nonpositive_value():
 
 
 def test_negative_beta_raises_error():
-    from algorithms.phased_ucb import PhasedUCB
+    from obsolete.algorithms.phased_ucb import PhasedUCB
 
     algo = PhasedUCB(
         n_arms=2,
@@ -185,7 +185,7 @@ def test_negative_beta_raises_error():
 
 
 def test_none_beta_fn_raises_error():
-    from algorithms.phased_ucb import PhasedUCB
+    from obsolete.algorithms.phased_ucb import PhasedUCB
 
     with pytest.raises(ValueError, match="beta_fn must not be None"):
         PhasedUCB(
@@ -196,7 +196,7 @@ def test_none_beta_fn_raises_error():
 
 
 def test_none_phase_length_fn_raises_error():
-    from algorithms.phased_ucb import PhasedUCB
+    from obsolete.algorithms.phased_ucb import PhasedUCB
 
     with pytest.raises(ValueError, match="phase_length_fn must not be None"):
         PhasedUCB(

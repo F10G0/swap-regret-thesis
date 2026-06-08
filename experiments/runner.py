@@ -1,99 +1,44 @@
 import numpy as np
 
-from algorithms import BanditAlgorithm
-from environments import BanditEnvironment
-from .metrics import compute_instant_regret, cumulative_sum
+from algorithms.base import Algorithm
+from environments.base import FixedGameEnvironment
+from experiments.recorder import CsvRecorder
+from metrics import RegretBundle
 
 
-def run_single_experiment(
-    env: BanditEnvironment,
-    algo: BanditAlgorithm,
-    horizon: int,
-) -> dict:
-    """
-    Run a single bandit experiment for a fixed horizon.
+def run_game(game_name: str, game: FixedGameEnvironment, algorithm_name: str, players: list[Algorithm], recorder: CsvRecorder, horizon: int) -> None:
+    n_players = game.n_players
+    if len(players) != n_players:
+        raise ValueError("number of players must match game.n_players")
 
-    Args:
-        env: bandit environment
-        algo: bandit algorithm
-        horizon: number of rounds
+    regrets = [
+        RegretBundle(game.n_actions[player_id])
+        for player_id in range(n_players)
+    ]
 
-    Returns:
-        dict containing:
-            - actions
-            - rewards
-            - instant_regret
-            - cumulative_regret
-            - cumulative_reward
-    """
-    if horizon <= 0:
-        raise ValueError("horizon must be positive")
+    for t in range(1, horizon + 1):
+        actions = tuple(player.sample_action() for player in players)
 
-    env.reset()
-    algo.reset()
+        for player_id, player in enumerate(players):
+            outcome = game.evaluate(player=player_id, actions=actions)
+            regrets[player_id].update(player.strategy(), outcome)
 
-    actions = np.zeros(horizon, dtype=int)
-    rewards = np.zeros(horizon, dtype=float)
-    instant_regrets = np.zeros(horizon, dtype=float)
+            recorder.record(
+                {
+                    "game": game_name,
+                    "algorithm": algorithm_name,
+                    "t": t,
+                    
+                    "player": player_id,
+                    "action": actions[player_id],
+                    "payoff": outcome.payoff,
 
-    for t in range(horizon):
-        action = algo.select_action()
-        reward = env.pull(action)
-
-        algo.update(action, reward)
-
-        actions[t] = action
-        rewards[t] = reward
-        instant_regrets[t] = compute_instant_regret(env, action)
-
-    cumulative_regret = cumulative_sum(instant_regrets)
-    cumulative_reward = cumulative_sum(rewards)
-
-    return {
-        "actions": actions,
-        "rewards": rewards,
-        "instant_regret": instant_regrets,
-        "cumulative_regret": cumulative_regret,
-        "cumulative_reward": cumulative_reward,
-        "final_regret": float(cumulative_regret[-1]),
-        "final_reward": float(cumulative_reward[-1]),
-    }
-
-
-def run_multiple_experiments(
-    env_factory,
-    algo_factory,
-    horizon: int,
-    n_runs: int,
-    base_seed: int = 0,
-) -> list[dict]:
-    """
-    Run multiple independent experiments.
-
-    Args:
-        env_factory: callable returning a fresh environment
-        algo_factory: callable returning a fresh algorithm
-        horizon: number of rounds per run
-        n_runs: number of independent runs
-        base_seed: base random seed; run i uses seed = base_seed + i
-
-    Returns:
-        list of result dicts returned by run_single_experiment
-    """
-    if horizon <= 0:
-        raise ValueError("horizon must be positive")
-    if n_runs <= 0:
-        raise ValueError("n_runs must be positive")
-
-    results = []
-
-    for i in range(n_runs):
-        np.random.seed(base_seed + i)
-
-        env = env_factory()
-        algo = algo_factory()
-
-        result = run_single_experiment(env, algo, horizon)
-        results.append(result)
-
-    return results
+                    **regrets[player_id].summary(t),
+                }
+            )
+            
+            feedback = game.observe(player=player_id, actions=actions)
+            if isinstance(feedback, np.ndarray):
+                player.update(feedback)
+            else:
+                player.update(actions[player_id], feedback)

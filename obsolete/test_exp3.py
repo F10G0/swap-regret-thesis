@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from algorithms import (
+from obsolete.algorithms import (
     make_exp3,
     make_exp3_doubling,
     make_exp3_ix_doubling,

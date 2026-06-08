@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from environments.adversarial_bandit import AdversarialBandit
+from obsolete.single_player.partial_information.adversarial_bandit import AdversarialBandit
 
 
 def test_adversarial_bandit_n_arms_and_horizon():

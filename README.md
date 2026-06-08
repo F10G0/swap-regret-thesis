@@ -1,84 +1,135 @@
 # Swap Regret Thesis Project
 
-Implementation and empirical evaluation of no-regret and no-swap-regret learning algorithms.
+Implementation and empirical evaluation of no-regret and no-swap-regret learning algorithms in repeated games.
 
-This repository contains:
-- literature notes and references,
-- thesis proposal and related documents,
-- implementations of online learning and bandit algorithms,
-- ongoing work on reduction-based no-swap-regret algorithms.
+This repository contains a modular experimental framework developed for my bachelor's thesis. The project focuses on regret minimization, swap regret reductions, correlated equilibrium, and repeated game dynamics.
 
-The project focuses on:
-- swap regret,
-- correlated equilibrium,
-- reduction-based online learning algorithms,
-- computational efficiency and practical behavior of learning algorithms.
+---
+
+## Implemented Algorithms
+
+### External Regret
+
+Full-information:
+- Hedge
+
+Partial-information:
+- Exp3
+
+### Swap Regret
+
+Full-information:
+- Blum-Mansour reduction
+- Ito reduction
+
+Partial-information:
+- Blum-Mansour reduction
+- Ito reduction
+
+---
+
+## Implemented Environments
+
+### Full-information
+
+- Repeated Game
+
+### Partial-information
+
+- Bandit Repeated Game
+
+---
+
+## Regret Metrics
+
+The framework currently supports:
+
+- External Regret
+- Internal Regret
+- Swap Regret
+
+All regret notions are computed from a common cumulative replacement-gain matrix.
+
+---
+
+## Experimental Games
+
+Current benchmark games include:
+
+- Rock-Paper-Scissors
+- Dominant Coordination
+- Cyclic Dominance
 
 ---
 
 ## Repository Structure
 
 ```text
-swap-regret-thesis/
-├── algorithms/
-├── environments/
-├── experiments/
-├── results/
-├── tests/
-│
-├── docs/
-│   ├── proposal/
-│   ├── references/
-│   ├── thesis/
-│   └── progress.md
+.
+├── algorithms
+├── environments
+├── experiments
+├── metrics
+├── results
+│   ├── raw
+│   └── figures
 │
 ├── config.py
 ├── main.py
-├── pytest.ini
 ├── requirements.txt
-└── README.md
+└── Makefile
 ```
 
 ---
 
-## Implemented Algorithms
+## Installation
 
-Current implementations mainly include no-external-regret and bandit algorithms:
-- Explore-Then-Commit (ETC)
-- UCB and phased UCB
-- elimination-based methods
-- Exp3 and Exp3-IX
-- doubling-trick wrappers
+```bash
+make install
+```
 
-Future work includes:
-- Hedge,
-- full-information learners,
-- reduction-based no-swap-regret algorithms.
-
----
-
-## Usage
-
-Install dependencies:
+or
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Run experiments:
+---
+
+## Running Experiments
+
+Run the full experimental pipeline:
 
 ```bash
-python3 main.py
+make run
 ```
 
-Run tests:
+This will:
 
-```bash
-pytest -v
+1. Execute all configured experiments.
+2. Save raw CSV results.
+3. Generate regret plots.
+
+Generated files are stored in:
+
+```text
+results/
+├── raw/
+└── figures/
 ```
 
 ---
 
-## Notes
+## Research Topics
 
-This repository is under active development as part of a Bachelor's thesis project on swap regret and online learning.
+The project investigates:
+
+- External regret minimization
+- Internal regret minimization
+- Swap regret minimization
+- Reduction-based learning algorithms
+- Correlated equilibrium
+- Repeated games
+- Online learning
+
+The codebase is designed to support both theoretical investigation and empirical comparison of regret-minimizing algorithms.

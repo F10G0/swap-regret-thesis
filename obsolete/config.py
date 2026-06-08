@@ -1,0 +1,11 @@
+DEFAULT_PROBS = [0.4, 0.5, 0.8]
+
+DEFAULT_HORIZON = 1000
+DEFAULT_M = 20
+
+DEFAULT_N_RUNS = 50
+DEFAULT_BASE_SEED = 42
+
+RESULTS_DIR = "results"
+RAW_RESULTS_DIR = "results/raw"
+FIGURES_DIR = "results/figures"

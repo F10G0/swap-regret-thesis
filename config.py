@@ -1,11 +1,14 @@
-DEFAULT_PROBS = [0.4, 0.5, 0.8]
+from pathlib import Path
 
-DEFAULT_HORIZON = 1000
-DEFAULT_M = 20
 
-DEFAULT_N_RUNS = 50
-DEFAULT_BASE_SEED = 42
+# Experiment configuration
+SEED = 42
+HORIZON = 10_000
 
-RESULTS_DIR = "results"
-RAW_RESULTS_DIR = "results/raw"
-FIGURES_DIR = "results/figures"
+# Numerical configuration
+NUMERICAL_TOLERANCE = 1e-12
+
+# Output directories
+RESULTS_DIR = Path("results")
+RAW_DIR = RESULTS_DIR / "raw"
+FIGURE_DIR = RESULTS_DIR / "figures"

@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from algorithms import (
+from obsolete.algorithms import (
     make_ucb_standard,
     make_ucb_delta,
     make_ucb_asymptotically_optimal,
@@ -136,7 +136,7 @@ def test_invalid_update_action():
 
 
 def test_negative_beta_raises_error():
-    from algorithms.ucb import UpperConfidenceBound
+    from obsolete.algorithms.ucb import UpperConfidenceBound
 
     algo = UpperConfidenceBound(
         n_arms=2,
@@ -152,7 +152,7 @@ def test_negative_beta_raises_error():
 
 
 def test_none_beta_fn_raises_error():
-    from algorithms.ucb import UpperConfidenceBound
+    from obsolete.algorithms.ucb import UpperConfidenceBound
 
     with pytest.raises(ValueError, match="beta_fn must not be None"):
         UpperConfidenceBound(n_arms=2, beta_fn=None)

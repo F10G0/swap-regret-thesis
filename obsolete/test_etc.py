@@ -1,8 +1,8 @@
 import math
 import pytest
 
-from algorithms import make_etc, make_etc_doubling
-from algorithms.etc_wrappers import optimal_etc_m
+from obsolete.algorithms import make_etc, make_etc_doubling
+from obsolete.algorithms.etc_wrappers import optimal_etc_m
 
 
 def test_round_robin_exploration():

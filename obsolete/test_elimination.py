@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from algorithms import (
+from obsolete.algorithms import (
     make_elimination,
     make_elimination_standard,
 )

@@ -1,195 +1,81 @@
-# Algorithms Module
+# Algorithms
 
-This module contains the implementations of online learning and bandit algorithms used throughout the thesis project.
+Implementation of regret-minimization algorithms used in this project.
 
-The framework is designed around:
-- unified algorithm interfaces,
-- modular implementations,
-- reusable shared components,
-- extensibility toward stronger regret notions.
-
-The current focus is on no-external-regret algorithms in stochastic and adversarial bandit settings, which will later serve as building blocks for reduction-based no-swap-regret algorithms.
-
----
-
-# Design Philosophy
-
-The framework separates:
-- core algorithm logic,
-- shared reusable components,
-- public wrappers,
-- experiment-facing interfaces.
-
-This separation is intended to:
-- simplify experimentation,
-- reduce duplicated logic,
-- improve extensibility,
-- make future regret reductions easier to implement.
-
-In particular, many no-swap-regret algorithms are constructed by wrapping multiple no-external-regret learners.
-Therefore, reusable external learners are treated as first-class components in the framework design.
-
----
-
-# Unified Interface
-
-All algorithms follow a unified interface:
-
-```python
-select_action()
-update(action, reward)
-reset()
-```
-
-This abstraction allows algorithms to be:
-- exchanged easily in experiments,
-- benchmarked under identical environments,
-- wrapped by higher-level reductions.
-
-The interface is intentionally minimal to support both:
-- stochastic bandit algorithms,
-- adversarial learning algorithms.
-
----
-
-# Shared Components
-
-## empirical_mean_base.py
-
-Several stochastic algorithms maintain:
-- pull counts,
-- reward sums,
-- empirical means.
-
-These shared statistics are abstracted into:
+## Structure
 
 ```text
-EmpiricalMeanBanditAlgorithm
+algorithms/
+├── base.py
+│
+├── external_regret/
+│   ├── base.py
+│   ├── full_information/
+│   │   └── hedge.py
+│   └── partial_information/
+│       └── exp3.py
+│
+└── swap_regret/
+    ├── base.py
+    ├── stationary.py
+    ├── full_information/
+    │   ├── blum_mansour.py
+    │   └── ito.py
+    └── partial_information/
+        ├── blum_mansour.py
+        └── ito.py
 ```
 
-to avoid duplicated logic across:
-- ETC,
-- UCB,
-- phased UCB,
-- elimination-based methods.
+## Files
 
----
+### base.py
 
-## doubling_trick.py
+Base class for all learning algorithms.
 
-Some algorithms require horizon-dependent parameters.
+Provides:
+- strategy management,
+- action sampling,
+- common validation utilities,
+- unified update/reset interface.
 
-The framework therefore provides a generic doubling-trick wrapper that:
-- restarts algorithms periodically,
-- increases epoch lengths exponentially,
-- converts horizon-dependent algorithms into anytime algorithms.
+### external_regret/
 
-The wrapper is implemented independently from concrete algorithms in order to maximize reuse.
+External-regret minimization algorithms.
 
----
+#### base.py
 
-# Implemented Algorithms
+Shared functionality for exponential-weights methods.
 
-## Explore-Then-Commit (ETC)
+#### full_information/hedge.py
 
-A simple stochastic bandit baseline:
-1. explore each arm uniformly,
-2. estimate empirical means,
-3. commit permanently to the empirically best arm.
+Implementation of the Hedge algorithm.
 
-The implementation also supports:
-- doubling-trick wrappers,
-- configurable exploration lengths.
+#### partial_information/exp3.py
 
----
+Implementation of the Exp3 algorithm.
 
-## Upper Confidence Bound (UCB)
+### swap_regret/
 
-Optimism-based stochastic bandit algorithms.
+Swap-regret minimization algorithms based on stationary-distribution reductions.
 
-The framework currently includes:
-- standard UCB,
-- delta-based variants,
-- asymptotically optimal variants,
-- phased UCB.
+#### base.py
 
-The implementations emphasize:
-- modular confidence schedules,
-- reusable exploration logic,
-- configurable phase structures.
+Base implementation for stationary-distribution reductions.
 
----
+#### stationary.py
 
-## Elimination-Based Algorithms
+Utilities for computing stationary distributions.
 
-Phase-based stochastic algorithms that:
-- explore active arms,
-- eliminate statistically suboptimal arms,
-- eventually commit to a remaining candidate.
+#### full_information/
 
-The implementation maintains:
-- phase-local statistics,
-- active-arm tracking,
-- configurable elimination schedules.
+Full-information versions of swap-regret reductions.
 
----
+- blum_mansour.py
+- ito.py
 
-## Exp3 and Exp3-IX
+#### partial_information/
 
-Adversarial bandit algorithms based on multiplicative weights updates.
+Bandit-feedback versions of swap-regret reductions.
 
-Current implementations include:
-- fixed learning-rate Exp3,
-- adaptive learning-rate variants,
-- Exp3-IX with implicit exploration,
-- doubling-trick wrappers.
-
-The implementations focus on:
-- probability stability,
-- importance-weighted updates,
-- reusable update structures.
-
-Since reduction-based no-swap-regret algorithms rely heavily on external learners, Exp3-based learners are expected to become important building blocks for future extensions.
-
----
-
-# Wrappers
-
-Public constructors are separated from internal implementations.
-
-For example:
-
-```text
-ucb.py
-ucb_wrappers.py
-```
-
-This separation allows:
-- cleaner experiment configuration,
-- reusable parameter schedules,
-- simpler algorithm composition,
-- easier future extensions.
-
-The wrapper structure is especially useful for:
-- doubling-trick integration,
-- adaptive parameter schedules,
-- future reduction-based algorithms.
-
----
-
-# Future Extensions
-
-Planned future additions include:
-- Hedge,
-- full-information external-regret learners,
-- internal-regret algorithms,
-- reduction-based no-swap-regret algorithms,
-- Blum-Mansour style reductions,
-- Ito-style reductions,
-- parallelized learner updates.
-
-The long-term goal is to study:
-- computational efficiency,
-- regret convergence,
-- finite-horizon behavior,
-- scalability of reduction-based methods.
+- blum_mansour.py
+- ito.py

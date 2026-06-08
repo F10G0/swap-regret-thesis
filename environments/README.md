@@ -1,21 +1,39 @@
-# Environments Module
+# Environments
 
-This module contains reward-generating environments used for empirical evaluation of learning algorithms.
+Repeated-game environments used for evaluating learning algorithms.
 
-Current environments include:
-- stochastic Bernoulli bandits,
-- adversarial bandits with predefined reward sequences.
+## Structure
 
-All environments follow a unified interface supporting:
-- reward generation,
-- optimal action queries,
-- regret computation.
+```text
+environments/
+├── base.py
+│
+├── full_information/
+│   └── repeated_game.py
+│
+└── partial_information/
+    └── bandit_repeated_game.py
+```
 
-The current focus is on:
-- stochastic bandit settings,
-- adversarial MAB settings.
+## Files
 
-Future extensions may include:
-- full-information environments,
-- game environments,
-- correlated equilibrium simulations.
+### base.py
+
+Core environment definitions.
+
+Provides:
+- environment interfaces,
+- outcome representation,
+- fixed payoff-tensor environments.
+
+### full_information/repeated_game.py
+
+Full-information repeated game.
+
+Each player observes the payoff of all available actions against the realized actions of the other players.
+
+### partial_information/bandit_repeated_game.py
+
+Bandit-feedback repeated game.
+
+Each player observes only the payoff of the action actually played.
