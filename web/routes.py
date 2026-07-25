@@ -26,6 +26,20 @@ def _figure_data() -> list[dict]:
     return [{**figure, "url": url_for("dashboard.serve_figure", filename=figure["filename"])} for figure in get_service().figure_records()]
 
 
+def _equilibrium_figure_data() -> dict[str, dict[str, str]]:
+    return {
+        game_name: {
+            equilibrium: url_for(
+                "dashboard.equilibrium_figure",
+                game_name=game_name,
+                equilibrium=equilibrium,
+            )
+            for equilibrium in ("ce", "cce")
+        }
+        for game_name in get_service().games
+    }
+
+
 def _dashboard_context(form_state: dict | None = None, inline_error: str | None = None) -> dict:
     service = get_service()
     results = service.result_snapshot()
@@ -54,11 +68,13 @@ def _dashboard_context(form_state: dict | None = None, inline_error: str | None 
     ]
     return {
         "games": service.games,
+        "game_presentations": service.game_presentations,
         "feedback_modes": service.feedback_modes,
         "algorithms_by_feedback_mode": service.algorithms_by_feedback_mode,
         "algorithm_labels": service.algorithm_labels,
         "experiments": results.filenames,
         "figures": _figure_data(),
+        "equilibrium_figures": _equilibrium_figure_data(),
         "summaries": summaries,
         "warnings": results.warnings,
         "jobs": job_data,
@@ -118,7 +134,7 @@ def run_all_pairs():
             400,
         )
 
-    flash(f"Queued job {job.id[:8]} for {scheduled_count} runs; {skipped_count} already exist.", "success")
+    flash(f"Queued job {job.id[:8]} for {scheduled_count} runs; {skipped_count} already exist or are queued.", "success")
     return redirect(url_for("dashboard.index"))
 
 
@@ -174,6 +190,20 @@ def serve_figure(filename: str):
         get_service().figure_dir.resolve(),
         filename,
     )
+
+
+@dashboard.get(
+    "/games/<game_name>/equilibria/<equilibrium>.png"
+)
+def equilibrium_figure(game_name: str, equilibrium: str):
+    try:
+        path = get_service().equilibrium_figure(
+            game_name,
+            equilibrium,
+        )
+    except (KeyError, ValueError):
+        abort(404)
+    return send_from_directory(path.parent.resolve(), path.name)
 
 
 @dashboard.get("/experiments/<filename>")

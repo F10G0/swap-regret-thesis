@@ -175,6 +175,19 @@ make plot
 
 `plots/plot_joint_actions.py` streams one result file, counts the realized two-player joint actions, and plots their empirical frequency. The dashboard generates these heatmaps lazily, caches them under `results/figures/details/`, and regenerates them when the source CSV changes.
 
+## Equilibrium Profile-Weight Heatmaps
+
+`plots/plot_equilibrium_weights.py` displays the maximum probability
+that any CE or CCE can assign to each profile of a two-player game.
+Every cell is optimized independently, so these theoretical matrices
+are not equilibrium distributions. They are independent of experiments,
+algorithms, feedback modes, horizons, seeds, and replicates.
+
+The dashboard generates each PNG lazily under
+`results/figures/details/equilibria/`. The PNG itself is the cache;
+resetting generated results removes it naturally. This visualization is
+kept separate from the empirical joint-action distribution.
+
 ## Static Report
 
 `build_report.py` creates `results/index.html` from the top-level regret figures:
@@ -194,7 +207,9 @@ results/
 ├── figures/
 │   ├── <regret-figure>.png
 │   └── details/
-│       └── <run-id>_joint_actions.png
+│       ├── <run-id>_joint_actions.png
+│       └── equilibria/
+│           └── <game>_<concept>_maximum_profile_weight.png
 └── index.html
 ```
 

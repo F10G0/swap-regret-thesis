@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from algorithms.stationary import _validate_distribution, stationary_distribution
+from config import NUMERICAL_TOLERANCE
 
 
 @pytest.mark.parametrize("method", ["solve", "pinv", "iteration"])
@@ -97,8 +98,8 @@ def test_solve_falls_back_to_pseudoinverse(monkeypatch) -> None:
 
 def test_stationary_distribution_cleans_roundoff_sized_probability_errors() -> None:
     transition_matrix = np.eye(2)
-
-    distribution = _validate_distribution(np.array([-5e-13, 1.0 + 5e-13]), transition_matrix)
+    roundoff = NUMERICAL_TOLERANCE / 2.0
+    distribution = _validate_distribution(np.array([-roundoff, 1.0 + roundoff]), transition_matrix)
 
     assert np.array_equal(distribution, [0.0, 1.0])
 

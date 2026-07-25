@@ -11,7 +11,12 @@ from experiments.scenarios.bandit_cross_play import (
 from experiments.scenarios.full_information_cross_play import (
     run_full_information_cross_play_experiment,
 )
-from web.services import DashboardService, JobManager, ServiceBusyError
+from web.services import (
+    DashboardService,
+    GAME_PRESENTATIONS,
+    JobManager,
+    ServiceBusyError,
+)
 from web.validation import ExperimentForm
 
 
@@ -55,30 +60,121 @@ def test_bandit_dashboard_exposes_lce_ix() -> None:
     assert service.algorithm_labels["lce_ix"] == "LCE-IX"
 
 
-def test_job_manager_rejects_parallel_operations() -> None:
+def test_dashboard_exposes_presentations_for_all_bertrand_benchmarks() -> None:
+    service = DashboardService(
+        results_dir="results",
+        raw_dir="results/raw",
+        figure_dir="results/figures",
+    )
+    bertrand_games = {
+        "bertrand_standard_o1",
+        "bertrand_linear_o2",
+        "bertrand_logit_o3",
+        "bertrand_linear_o2_prime",
+        "bertrand_logit_o3_prime",
+    }
+
+    assert bertrand_games <= set(service.games)
+    assert set(service.game_presentations) == set(service.games)
+    for game_name in bertrand_games:
+        assert service.game_presentations[game_name] == GAME_PRESENTATIONS[game_name]
+
+
+def test_job_manager_runs_queued_operations_in_submission_order() -> None:
     manager = JobManager()
-    release_operation = False
+    first_started = Event()
+    second_started = Event()
+    release_first = Event()
+    execution_order = []
 
-    def operation(job) -> str:
-        deadline = time.monotonic() + 2
-        while not release_state[0] and time.monotonic() < deadline:
-            time.sleep(0.01)
-        return "done"
+    def first_operation(job) -> str:
+        execution_order.append("first")
+        first_started.set()
+        assert release_first.wait(timeout=2)
+        return "first done"
 
-    release_state = [release_operation]
-    job = manager.submit("first", operation)
-    with pytest.raises(ServiceBusyError, match="already running"):
-        manager.submit("second", lambda job: None)
-    release_state[0] = True
+    def second_operation(job) -> str:
+        execution_order.append("second")
+        second_started.set()
+        return "second done"
 
+    first = manager.submit("first", first_operation, resource_keys={"first-run"})
+    assert first_started.wait(timeout=1)
+    second = manager.submit("second", second_operation, resource_keys={"second-run"})
+    assert manager.get(second.id).status == "queued"
+    assert not second_started.is_set()
+    assert manager.reserved_resources() == {"first-run", "second-run"}
+    release_first.set()
+
+    terminal_statuses = {}
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
-        current_job = manager.get(job.id)
-        if current_job is not None and current_job.status == "succeeded":
+        terminal_statuses = {
+            job_id: manager.get(job_id).status
+            for job_id in (first.id, second.id)
+        }
+        if set(terminal_statuses.values()) == {"succeeded"}:
             break
         time.sleep(0.01)
     else:
-        raise AssertionError("first job did not complete")
+        raise AssertionError(f"queued jobs did not complete: {terminal_statuses}")
+
+    assert execution_order == ["first", "second"]
+    assert manager.reserved_resources() == set()
+
+
+def test_cancelling_queued_job_releases_its_reserved_resources() -> None:
+    manager = JobManager()
+    first_started = Event()
+    release_first = Event()
+
+    def blocking_operation(job) -> None:
+        first_started.set()
+        assert release_first.wait(timeout=2)
+
+    first = manager.submit("first", blocking_operation)
+    assert first_started.wait(timeout=1)
+    queued = manager.submit("queued", lambda job: None, resource_keys={"run"})
+
+    cancelled = manager.cancel(queued.id)
+    replacement = manager.submit("replacement", lambda job: None, resource_keys={"run"})
+
+    assert cancelled.status == "cancelled"
+    assert manager.get(queued.id).status == "cancelled"
+    assert manager.get(replacement.id).status == "queued"
+    release_first.set()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if manager.get(first.id).status == "succeeded" and manager.get(replacement.id).status == "succeeded":
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("replacement job did not complete")
+
+
+def test_maintenance_remains_blocked_while_jobs_are_queued() -> None:
+    manager = JobManager()
+    started = Event()
+    release = Event()
+
+    def operation(job) -> None:
+        started.set()
+        assert release.wait(timeout=2)
+
+    job = manager.submit("active", operation)
+    assert started.wait(timeout=1)
+
+    with pytest.raises(ServiceBusyError, match="active operation"):
+        manager.run_maintenance(lambda: None)
+
+    release.set()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if manager.get(job.id).status == "succeeded":
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("active job did not complete")
 
 
 def test_job_manager_records_and_logs_failures(caplog) -> None:
@@ -240,6 +336,34 @@ def test_bandit_submission_runs_requested_replicates(tmp_path: Path) -> None:
     assert len(list(service.raw_dir.glob("*.csv"))) == 3
 
 
+def test_experiment_submissions_queue_and_reserve_run_ids(tmp_path: Path) -> None:
+    service = create_service(tmp_path)
+    blocker_started = Event()
+    release_blocker = Event()
+
+    def block_queue(job) -> None:
+        blocker_started.set()
+        assert release_blocker.wait(timeout=2)
+
+    blocker = service.jobs.submit("blocker", block_queue)
+    assert blocker_started.wait(timeout=1)
+    first = service.submit_experiment(experiment_form())
+
+    with pytest.raises(FileExistsError, match="queued"):
+        service.submit_experiment(experiment_form())
+
+    second_form = ExperimentForm("rps", "full_information", "hedge", "hedge", horizon=2, seed=43, replicate=0, replicates=1)
+    second = service.submit_experiment(second_form)
+
+    assert service.jobs.get(first.id).status == "queued"
+    assert service.jobs.get(second.id).status == "queued"
+    release_blocker.set()
+    assert wait_for_job(service, blocker.id) == "succeeded"
+    assert wait_for_job(service, first.id) == "succeeded"
+    assert wait_for_job(service, second.id) == "succeeded"
+    assert len(list(service.raw_dir.glob("*.csv"))) == 2
+
+
 def test_plot_publication_creates_structured_figure_metadata(tmp_path: Path) -> None:
     service = DashboardService(
         results_dir=tmp_path,
@@ -337,9 +461,22 @@ def test_plotting_keeps_expected_and_realized_results_for_the_same_game(tmp_path
     assert {figure["source"] for figure in figures} == {"expected", "realized"}
 
 
-def test_joint_action_heatmap_is_generated_and_cached(tmp_path: Path) -> None:
+def test_joint_action_heatmap_is_generated_and_cached(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from matplotlib.axes import Axes
+
     service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
     result_path = run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=3, output_dir=service.raw_dir)
+    original_imshow = Axes.imshow
+    colormaps = []
+
+    def capture_colormap(axes, *args, **kwargs):
+        colormaps.append(kwargs.get("cmap"))
+        return original_imshow(axes, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "imshow", capture_colormap)
 
     first = service.joint_action_figure(result_path.name)
     first_timestamp = first.stat().st_mtime_ns
@@ -348,3 +485,74 @@ def test_joint_action_heatmap_is_generated_and_cached(tmp_path: Path) -> None:
     assert first == second
     assert second.stat().st_mtime_ns == first_timestamp
     assert second.stat().st_size > 0
+    assert colormaps == ["Blues"]
+
+
+def test_equilibrium_heatmap_uses_png_as_its_only_cache(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from matplotlib.axes import Axes
+
+    from experiments.plots import plot_equilibrium_weights
+
+    service = DashboardService(
+        results_dir=tmp_path,
+        raw_dir=tmp_path / "raw",
+        figure_dir=tmp_path / "figures",
+    )
+    original_plot = (
+        plot_equilibrium_weights.plot_equilibrium_profile_weights
+    )
+    calls = 0
+    original_imshow = Axes.imshow
+    colormaps = []
+
+    def capture_colormap(axes, *args, **kwargs):
+        colormaps.append(kwargs.get("cmap"))
+        return original_imshow(axes, *args, **kwargs)
+
+    def counted_plot(*args, **kwargs) -> None:
+        nonlocal calls
+        calls += 1
+        original_plot(*args, **kwargs)
+
+    monkeypatch.setattr(
+        plot_equilibrium_weights,
+        "plot_equilibrium_profile_weights",
+        counted_plot,
+    )
+    monkeypatch.setattr(Axes, "imshow", capture_colormap)
+
+    first = service.equilibrium_figure("rps", "ce")
+    first_timestamp = first.stat().st_mtime_ns
+    second = service.equilibrium_figure("rps", "ce")
+
+    assert calls == 1
+    assert first == second
+    assert "_blue_" in first.name
+    assert second.stat().st_mtime_ns == first_timestamp
+    assert second.stat().st_size > 0
+    assert colormaps == ["Blues"]
+    assert service.figure_records() == []
+
+    service.clear_results()
+    assert not first.exists()
+
+
+@pytest.mark.parametrize(
+    ("game_name", "equilibrium"),
+    [
+        ("unknown", "ce"),
+        ("rps", "nash"),
+    ],
+)
+def test_equilibrium_heatmap_rejects_unknown_parameters(
+    tmp_path: Path,
+    game_name: str,
+    equilibrium: str,
+) -> None:
+    service = create_service(tmp_path)
+
+    with pytest.raises(ValueError):
+        service.equilibrium_figure(game_name, equilibrium)

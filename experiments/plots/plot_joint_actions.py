@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from experiments.games import PAYOFF_FACTORIES
+from experiments.plots import HEATMAP_COLORMAP
 from experiments.results import EXPERIMENT_PLAYERS, iter_result_rows
 
 
@@ -42,7 +43,7 @@ def plot_joint_actions(input_path: str | Path, output_path: str | Path) -> None:
 
     frequencies = counts / np.sum(counts)
     figure, axes = plt.subplots(figsize=(6.5, 5.5))
-    image = axes.imshow(frequencies, cmap="YlGn", vmin=0.0, vmax=max(float(np.max(frequencies)), 1.0 / frequencies.size))
+    image = axes.imshow(frequencies, cmap=HEATMAP_COLORMAP, vmin=0.0, vmax=max(float(np.max(frequencies)), 1.0 / frequencies.size))
     axes.set_xlabel("Player 1 action")
     axes.set_ylabel("Player 0 action")
     axes.set_title(f"{game_name}: empirical joint-action distribution")

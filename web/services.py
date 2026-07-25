@@ -62,6 +62,40 @@ ALGORITHM_LABELS = {
     "stationary_regret_matching": "Stationary Regret Matching",
 }
 
+GAME_PRESENTATIONS = {
+    "rps": {
+        "label": "Rock–Paper–Scissors",
+        "description": "Symmetric zero-sum game with three actions.",
+    },
+    "dominant_coordination_9": {
+        "label": "Dominant Coordination (9 actions)",
+        "description": "Identical-interest coordination game with one dominant equilibrium.",
+    },
+    "cyclic_dominance_9": {
+        "label": "Cyclic Dominance (9 actions)",
+        "description": "Balanced odd-action generalization of Rock–Paper–Scissors.",
+    },
+    "bertrand_standard_o1": {
+        "label": "O1 — Standard Bertrand (symmetric)",
+        "description": "21 prices in [0.05, 1.00]; costs (0, 0); homogeneous-good demand.",
+    },
+    "bertrand_linear_o2": {
+        "label": "O2 — Linear Bertrand (symmetric)",
+        "description": "21 prices in [0, 1]; costs (0, 0); α=0.48, β=0.9, γ=0.6.",
+    },
+    "bertrand_logit_o3": {
+        "label": "O3 — Logit Bertrand (symmetric)",
+        "description": "21 prices in [1, 2]; costs (1, 1); α=(2, 2), μ=0.25, α₀=0.",
+    },
+    "bertrand_linear_o2_prime": {
+        "label": "O2′ — Linear Bertrand (asymmetric)",
+        "description": "21 prices in [0, 1]; costs (0, 0.2); α=0.48, β=0.9, γ=0.6.",
+    },
+    "bertrand_logit_o3_prime": {
+        "label": "O3′ — Logit Bertrand (asymmetric)",
+        "description": "21 prices in [0.5, 2]; costs (0.5, 1); α=(1.5, 2), μ=0.25, α₀=0.",
+    },
+}
 
 class ServiceBusyError(RuntimeError):
     pass
@@ -115,6 +149,8 @@ class JobManager:
         self._lock = Lock()
         self._jobs: dict[str, Job] = {}
         self._cancel_events: dict[str, Event] = {}
+        self._job_resource_keys: dict[str, set[str]] = {}
+        self._resource_owners: dict[str, str] = {}
         self._maintenance_active = False
         self._max_history = max_history
 
@@ -124,12 +160,16 @@ class JobManager:
     def _has_active_job_unlocked(self) -> bool:
         return any(job.status in {"queued", "running"} for job in self._jobs.values())
 
-    def submit(self, description: str, operation: Callable[[JobContext], str | None], reload_page: bool = True, total: int = 1) -> Job:
+    def submit(self, description: str, operation: Callable[[JobContext], str | None], reload_page: bool = True, total: int = 1,
+               resource_keys: set[str] | None = None) -> Job:
         with self._lock:
-            if self._maintenance_active or self._has_active_job_unlocked():
-                raise ServiceBusyError("another dashboard operation is already running")
+            if self._maintenance_active:
+                raise ServiceBusyError("dashboard maintenance is currently running")
 
             self._trim_history_unlocked()
+            resource_keys = set(resource_keys or ())
+            if resource_keys & self._resource_owners.keys():
+                raise FileExistsError("one or more requested runs are already queued")
             job = Job(
                 id=uuid4().hex,
                 description=description,
@@ -141,14 +181,20 @@ class JobManager:
             )
             self._jobs[job.id] = job
             self._cancel_events[job.id] = Event()
+            self._job_resource_keys[job.id] = resource_keys
+            for resource_key in resource_keys:
+                self._resource_owners[resource_key] = job.id
             self._executor.submit(self._run, job.id, operation)
             return Job(**asdict(job))
 
     def _run(self, job_id: str, operation: Callable[[JobContext], str | None]) -> None:
         with self._lock:
-            job = self._jobs[job_id]
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
             if job.cancel_requested:
                 self._finish_cancelled_unlocked(job)
+                self._release_resources_unlocked(job_id)
                 return
             job.status = "running"
             job.message = f"0 / {job.total} completed"
@@ -159,6 +205,7 @@ class JobManager:
         except ExperimentCancelled:
             with self._lock:
                 self._finish_cancelled_unlocked(self._jobs[job_id])
+                self._release_resources_unlocked(job_id)
         except Exception as error:
             logger.exception("Dashboard job %s failed", job_id)
             with self._lock:
@@ -166,6 +213,7 @@ class JobManager:
                 job.status = "failed"
                 job.message = f"{type(error).__name__}: {error}"
                 job.finished_at = self._now()
+                self._release_resources_unlocked(job_id)
         else:
             with self._lock:
                 job = self._jobs[job_id]
@@ -176,6 +224,7 @@ class JobManager:
                     job.completed = job.total
                     job.message = message or "Operation completed"
                     job.finished_at = self._now()
+                self._release_resources_unlocked(job_id)
 
     def _finish_cancelled_unlocked(self, job: Job) -> None:
         job.status = "cancelled"
@@ -184,6 +233,11 @@ class JobManager:
 
     def _cancel_requested(self, job_id: str) -> bool:
         return self._cancel_events[job_id].is_set()
+
+    def _release_resources_unlocked(self, job_id: str) -> None:
+        for resource_key in self._job_resource_keys.pop(job_id, set()):
+            if self._resource_owners.get(resource_key) == job_id:
+                del self._resource_owners[resource_key]
 
     def _advance(self, job_id: str, message: str | None = None) -> None:
         with self._lock:
@@ -200,7 +254,11 @@ class JobManager:
                 raise ValueError("job has already finished")
             job.cancel_requested = True
             self._cancel_events[job_id].set()
-            job.message = "Cancellation requested"
+            if job.status == "queued":
+                self._finish_cancelled_unlocked(job)
+                self._release_resources_unlocked(job_id)
+            else:
+                job.message = "Cancellation requested"
             return Job(**asdict(job))
 
     def run_maintenance(self, operation: Callable[[], Any]) -> Any:
@@ -224,6 +282,10 @@ class JobManager:
         with self._lock:
             jobs = list(self._jobs.values())
             return [Job(**asdict(job)) for job in reversed(jobs)]
+
+    def reserved_resources(self) -> set[str]:
+        with self._lock:
+            return set(self._resource_owners)
 
     def is_busy(self) -> bool:
         with self._lock:
@@ -259,6 +321,21 @@ class DashboardService:
     @property
     def games(self) -> list[str]:
         return list(PAYOFF_FACTORIES)
+
+    @property
+    def game_presentations(self) -> dict[str, dict[str, str]]:
+        presentations = {}
+        for game_name in self.games:
+            configured = GAME_PRESENTATIONS.get(game_name)
+            presentations[game_name] = (
+                dict(configured)
+                if configured is not None
+                else {
+                    "label": game_name.replace("_", " ").title(),
+                    "description": "",
+                }
+            )
+        return presentations
 
     @property
     def feedback_modes(self) -> dict[str, dict]:
@@ -311,7 +388,12 @@ class DashboardService:
 
     def _missing_runs(self, form: ExperimentForm, profiles: list[list[str]]) -> tuple[list[tuple[list[str], int]], int]:
         requested = [(profile, replicate) for profile in profiles for replicate in self._replicates(form)]
-        missing = [(profile, replicate) for profile, replicate in requested if not (self.raw_dir / f"{self._spec(form, profile, replicate).run_id}.csv").exists()]
+        reserved = self.jobs.reserved_resources()
+        missing = []
+        for profile, replicate in requested:
+            run_id = self._spec(form, profile, replicate).run_id
+            if run_id not in reserved and not (self.raw_dir / f"{run_id}.csv").exists():
+                missing.append((profile, replicate))
         return missing, len(requested) - len(missing)
 
     def _run_experiments(self, form: ExperimentForm, mode: FeedbackMode, missing_runs: list[tuple[list[str], int]], skipped_count: int, job: JobContext) -> str:
@@ -327,13 +409,13 @@ class DashboardService:
             self._publish_plots(form.game)
         except Exception as error:
             raise PlotUpdateError(f"experiments were saved, but their figures could not be rebuilt: {error}") from error
-        return f"Completed {len(missing_runs)} run(s); skipped {skipped_count} existing"
+        return f"Completed {len(missing_runs)} run(s); skipped {skipped_count} existing or queued"
 
     def submit_experiment(self, form: ExperimentForm) -> Job:
         mode = FEEDBACK_MODES[form.feedback_mode]
         missing_runs, skipped_count = self._missing_runs(form, [form.algorithm_names])
         if not missing_runs:
-            raise FileExistsError("all requested replicates already exist")
+            raise FileExistsError("all requested replicates already exist or are queued")
 
         def operation(job: JobContext) -> str:
             return self._run_experiments(form, mode, missing_runs, skipped_count, job)
@@ -342,6 +424,7 @@ class DashboardService:
             f"{form.game}: {' vs '.join(ALGORITHM_LABELS.get(name, name) for name in form.algorithm_names)}",
             operation,
             total=len(missing_runs),
+            resource_keys={self._spec(form, names, replicate).run_id for names, replicate in missing_runs},
         )
 
     def submit_all_pairs(self, form: ExperimentForm) -> tuple[Job, int, int]:
@@ -353,7 +436,7 @@ class DashboardService:
         ]
         missing_runs, skipped_count = self._missing_runs(form, pairs)
         if not missing_runs:
-            raise FileExistsError("all requested runs already exist")
+            raise FileExistsError("all requested runs already exist or are queued")
 
         def operation(job: JobContext) -> str:
             return self._run_experiments(form, mode, missing_runs, skipped_count, job)
@@ -362,6 +445,7 @@ class DashboardService:
             f"{form.game}: all {form.feedback_mode} pairs",
             operation,
             total=len(missing_runs),
+            resource_keys={self._spec(form, names, replicate).run_id for names, replicate in missing_runs},
         )
         return job, len(missing_runs), skipped_count
 
@@ -427,6 +511,59 @@ class DashboardService:
     @property
     def detail_figure_dir(self) -> Path:
         return self.figure_dir / "details"
+
+    @property
+    def equilibrium_figure_dir(self) -> Path:
+        return self.detail_figure_dir / "equilibria"
+
+    def equilibrium_figure(
+        self,
+        game_name: str,
+        equilibrium: str,
+    ) -> Path:
+        if game_name not in PAYOFF_FACTORIES:
+            raise ValueError(f"unknown game: {game_name}")
+        if equilibrium not in {"ce", "cce"}:
+            raise ValueError(
+                f"unknown equilibrium concept: {equilibrium}"
+            )
+        payoff_tensor = PAYOFF_FACTORIES[game_name]()
+        if payoff_tensor.ndim != 3:
+            raise ValueError(
+                "equilibrium profile heatmaps require exactly two players"
+            )
+
+        output_path = (
+            self.equilibrium_figure_dir
+            / f"{game_name}_{equilibrium}_blue_maximum_profile_weight.png"
+        )
+        with self._detail_figure_lock:
+            if output_path.is_file():
+                return output_path
+
+            from experiments.plots.plot_equilibrium_weights import (
+                plot_equilibrium_profile_weights,
+            )
+
+            self.equilibrium_figure_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            with tempfile.TemporaryDirectory(
+                prefix=".equilibrium-",
+                dir=self.equilibrium_figure_dir,
+            ) as temporary_directory:
+                temporary_path = (
+                    Path(temporary_directory) / output_path.name
+                )
+                plot_equilibrium_profile_weights(
+                    payoff_tensor,
+                    equilibrium,
+                    temporary_path,
+                    game_name=self.game_presentations[game_name]["label"],
+                )
+                os.replace(temporary_path, output_path)
+        return output_path
 
     def joint_action_figure(self, filename: str) -> Path:
         filename = validate_leaf_filename(filename, ".csv")

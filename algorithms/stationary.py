@@ -1,6 +1,6 @@
 import numpy as np
 
-from config import NUMERICAL_TOLERANCE, STATIONARITY_TOLERANCE, STATIONARY_METHOD
+from config import NUMERICAL_TOLERANCE, STATIONARY_METHOD
 
 
 def stationary_distribution(transition_matrix: np.ndarray, method: str = STATIONARY_METHOD, max_iterations: int = 1000) -> np.ndarray:
@@ -77,6 +77,6 @@ def _validate_distribution(distribution: np.ndarray, transition_matrix: np.ndarr
     distribution = np.clip(distribution, 0.0, 1.0)
     distribution /= np.sum(distribution)
     residual = np.linalg.norm(distribution @ transition_matrix - distribution, ord=1)
-    if not np.isfinite(residual) or residual > STATIONARITY_TOLERANCE:
-        raise FloatingPointError(f"stationary-distribution residual {residual} exceeds {STATIONARITY_TOLERANCE}")
+    if not np.isfinite(residual) or residual > NUMERICAL_TOLERANCE:
+        raise FloatingPointError(f"stationary-distribution residual {residual} exceeds {NUMERICAL_TOLERANCE}")
     return distribution

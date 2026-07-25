@@ -111,6 +111,25 @@ def test_exp3_ix_experiment_smoke(tmp_path) -> None:
     assert "learning_rate_player_0" not in rows[0]
 
 
+def test_o1_stationary_regret_matching_handles_solver_roundoff(tmp_path) -> None:
+    output_path = (
+        full_information_cross_play.run_full_information_cross_play_experiment(
+            game_name="bertrand_standard_o1",
+            algorithm_names=[
+                "stationary_regret_matching",
+                "stationary_regret_matching",
+            ],
+            horizon=1300,
+            seed=42,
+            output_dir=tmp_path,
+        )
+    )
+
+    rows = _read_rows(output_path)
+
+    assert len(rows) == 2600
+
+
 def test_lce_ix_experiment_uses_theoretical_default_schedule(tmp_path) -> None:
     output_path = bandit_cross_play.run_bandit_cross_play_experiment(
         game_name="rps",

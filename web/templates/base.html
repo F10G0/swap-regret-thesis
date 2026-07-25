@@ -4,6 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Swap Regret Dashboard{% endblock %}</title>
+    <script>
+        try {
+            const storedTheme = window.localStorage.getItem("swap-regret-primary-theme");
+            if (storedTheme) {
+                document.documentElement.dataset.theme = storedTheme;
+            }
+        } catch (error) {
+            console.warn("Could not restore the primary color", error);
+        }
+    </script>
     <link
         rel="stylesheet"
         href="{{ url_for('static', filename='dashboard.css') }}"

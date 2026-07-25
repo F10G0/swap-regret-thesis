@@ -8,14 +8,52 @@
     --border: #d6ded9;
     --accent: #176b4d;
     --accent-dark: #0f5139;
+    --accent-soft: #e0f1e6;
+    --accent-focus: rgba(23, 107, 77, 0.22);
     --danger: #a33a34;
     --warning: #8a6014;
     --success: #246b45;
     --shadow: 0 14px 36px rgba(28, 48, 39, 0.08);
 }
 
+:root[data-theme="blue"] {
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --accent-soft: #e4edff;
+    --accent-focus: rgba(37, 99, 235, 0.22);
+}
+
+:root[data-theme="purple"] {
+    --accent: #7c3aed;
+    --accent-dark: #5b21b6;
+    --accent-soft: #efe8ff;
+    --accent-focus: rgba(124, 58, 237, 0.22);
+}
+
+:root[data-theme="orange"] {
+    --accent: #c2410c;
+    --accent-dark: #9a3412;
+    --accent-soft: #ffeadf;
+    --accent-focus: rgba(194, 65, 12, 0.22);
+}
+
+:root[data-theme="red"] {
+    --accent: #b42318;
+    --accent-dark: #8f1d16;
+    --accent-soft: #fee8e7;
+    --accent-focus: rgba(180, 35, 24, 0.22);
+}
+
 * {
     box-sizing: border-box;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+::selection {
+    background: var(--accent-soft);
 }
 
 body {
@@ -63,13 +101,19 @@ select {
     min-height: 42px;
     padding: 8px 10px;
     background: var(--surface);
+    accent-color: var(--accent);
+}
+
+input:focus,
+select:focus {
+    border-color: var(--accent);
 }
 
 input:focus,
 select:focus,
 button:focus-visible,
 a:focus-visible {
-    outline: 3px solid rgba(23, 107, 77, 0.22);
+    outline: 3px solid var(--accent-focus);
     outline-offset: 2px;
 }
 
@@ -115,6 +159,7 @@ a {
 }
 
 .sidebar {
+    position: relative;
     padding: 30px;
     background: var(--surface);
     border-right: 1px solid var(--border);
@@ -132,11 +177,30 @@ a {
     margin-bottom: 28px;
 }
 
+.sidebar-theme {
+    position: absolute;
+    z-index: 1;
+    top: 25px;
+    right: 30px;
+    width: 86px;
+    min-height: 32px;
+    padding: 4px 7px;
+    border-radius: 7px;
+    background: var(--surface-muted);
+    font-size: 0.78rem;
+}
+
 .brand p:last-child,
 .hint,
 .empty,
+.queue-explanation,
 .section-heading > span {
     color: var(--muted);
+}
+
+.queue-explanation {
+    margin: 10px 0 0;
+    font-size: 0.86rem;
 }
 
 .eyebrow {
@@ -179,6 +243,34 @@ legend {
 .field-grid-two,
 .players {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.top-control-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 17px;
+}
+
+.control-card {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    align-content: start;
+    gap: 7px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-muted);
+}
+
+.control-card label {
+    font-size: 0.86rem;
+    font-weight: 750;
+}
+
+.control-card .hint {
+    line-height: 1.4;
 }
 
 .player-heading,
@@ -386,6 +478,45 @@ fieldset {
     margin-top: 18px;
 }
 
+.equilibrium-explanation {
+    max-width: 850px;
+    margin: 12px 0 0;
+    color: var(--muted);
+}
+
+.equilibrium-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.equilibrium-card {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-muted);
+}
+
+.equilibrium-card h3 {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+}
+
+.equilibrium-card img {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: var(--surface);
+}
+
+.equilibrium-card a {
+    display: inline-block;
+    margin-top: 7px;
+    font-size: 0.75rem;
+}
+
 .figure-card {
     min-width: 0;
     padding: 10px;
@@ -522,7 +653,7 @@ tbody tr:hover {
 }
 
 .best-value {
-    background: #e0f1e6;
+    background: var(--accent-soft);
     color: var(--accent-dark);
     font-weight: 800;
 }
@@ -593,6 +724,10 @@ tbody tr:hover {
         border-bottom: 1px solid var(--border);
     }
 
+    .top-control-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .figure-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -604,10 +739,16 @@ tbody tr:hover {
         padding: 18px;
     }
 
+    .sidebar-theme {
+        top: 16px;
+        right: 18px;
+    }
+
     .field-grid-two,
     .players,
     .filter-grid,
     .summary-filters,
+    .equilibrium-grid,
     .figure-grid,
     .detail-regrets {
         grid-template-columns: 1fr;
@@ -615,5 +756,17 @@ tbody tr:hover {
 
     .panel {
         padding: 16px;
+    }
+}
+
+@media (max-width: 520px) {
+    .top-control-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 360px) {
+    .brand {
+        padding-top: 40px;
     }
 }

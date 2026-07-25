@@ -94,6 +94,30 @@ Full-information experiments record expected regret from the learner's mixed str
 
 All generated payoff tensors are normalized to `[0, 1]`.
 
+## CE and CCE Analysis
+
+Finite-game correlated equilibria (CE) and coarse correlated equilibria
+(CCE) are represented as linear feasibility polytopes. The reusable
+metrics utilities build their incentive constraints and use
+SciPy/HiGHS to maximize each joint-action probability independently:
+
+```python
+from metrics import equilibrium_profile_weights
+
+ce_weights = equilibrium_profile_weights(payoff_tensor, equilibrium="ce")
+cce_weights = equilibrium_profile_weights(payoff_tensor, equilibrium="cce")
+```
+
+CE constraints condition deviations on a recommended action; CCE
+constraints describe unconditional fixed deviations. Consequently,
+`CE` is contained in `CCE`.
+
+An entry `weights[a]` is the maximum probability that any equilibrium of
+the selected type can assign to profile `a`. Different entries can be
+attained by different equilibria, so the returned array is not itself
+an equilibrium distribution and generally does not sum to one. The
+solver supports finite n-player games with heterogeneous action counts.
+
 ## Experiments and Outputs
 
 The experiment layer supports heterogeneous two-player cross-play, deterministic run identities, independent player and replicate seeds, stationary-solver metadata, atomic CSV recording, result validation, and regret plotting.
@@ -111,7 +135,7 @@ Generated artifacts are stored in:
 results/
 ├── raw/                 # Per-round CSV results
 ├── figures/             # Regret plots
-│   └── details/         # Dashboard-generated joint-action heatmaps
+│   └── details/         # Lazy empirical and theoretical heatmaps
 └── index.html           # Static report
 ```
 
@@ -132,12 +156,14 @@ It supports:
 - game, feedback mode, player algorithm, horizon, seed, and replicate selection;
 - consecutive bandit replicate batches;
 - one profile or all missing algorithm pairs;
+- first-in, first-out experiment queueing while another experiment is running;
 - job progress and safe cancellation;
 - persistent form parameters across reloads;
 - expected- and realized-regret figure filtering;
 - responsive plot comparison and full-size PNG inspection;
 - result filtering, sorting, comparable-group minimum highlighting, and exact parameter reuse;
 - raw CSV downloads and lazily cached empirical joint-action heatmaps;
+- lazily cached maximum CE and CCE profile-weight heatmaps for each game;
 - asynchronous plot rebuilding and figure-inventory updates without page navigation;
 - individual experiment deletion and generated-result reset.
 
@@ -150,7 +176,7 @@ The dashboard executes one background job at a time. Its default limits are 100,
 ├── algorithms/          # Learners, reductions, and stationary solvers
 ├── environments/        # Full-information and bandit repeated games
 ├── experiments/         # Games, scenarios, recording, results, and plots
-├── metrics/             # Expected and realized regret trackers
+├── metrics/             # Regret and equilibrium analysis
 ├── results/             # Generated CSV, PNG, and HTML artifacts
 ├── tests/               # Algorithm, environment, metric, experiment, and web tests
 ├── web/                 # Flask dashboard
@@ -190,7 +216,7 @@ The main defaults are defined in `config.py`:
 - `HORIZON`: experiment horizon;
 - `BANDIT_REPLICATES`: number of bandit repetitions in the batch scenario;
 - `STATIONARY_METHOD`: `solve`, `pinv`, or `iteration`;
-- numerical and stationarity tolerances;
+- numerical and equilibrium-LP validation tolerances;
 - output directories.
 
 The selected stationary method is included in each run ID and CSV so results produced with different solvers cannot overwrite or merge with one another.
@@ -203,4 +229,8 @@ Run the complete suite with:
 make test
 ```
 
-The tests cover initialization, numerical safety, stationary distributions, regret matching, reduction behavior, environment feedback, regret metrics, experiment identity and atomic recording, plotting layout, cancellation, dashboard validation, and end-to-end execution.
+The tests cover initialization, numerical safety, stationary distributions,
+CE/CCE constraints and optimization, regret matching, reduction behavior,
+environment feedback, regret metrics, experiment identity and atomic
+recording, plotting layout, cancellation, dashboard validation, and
+end-to-end execution.

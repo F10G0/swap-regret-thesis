@@ -3,12 +3,51 @@
 const dashboardDataElement = document.getElementById("dashboard-data");
 const dashboardData = dashboardDataElement
     ? JSON.parse(dashboardDataElement.textContent)
-    : {figures: [], figuresUrl: "", jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
+    : {figures: [], figuresUrl: "", equilibriumFigures: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
 const formStorageKey = "swap-regret-experiment-form";
+const themeStorageKey = "swap-regret-primary-theme";
+const primaryThemes = new Set(["green", "blue", "purple", "orange", "red"]);
 const formFieldIds = ["game", "feedback-mode", "algorithm_player_0", "algorithm_player_1", "horizon", "seed", "replicate", "replicates"];
 
 function element(id) {
     return document.getElementById(id);
+}
+
+function gamePresentation(game) {
+    return dashboardData.gamePresentations[game] || {
+        label: game,
+        description: "",
+    };
+}
+
+function applyPrimaryTheme(theme, persist = false) {
+    const selectedTheme = primaryThemes.has(theme) ? theme : "green";
+    document.documentElement.dataset.theme = selectedTheme;
+    const themeSelect = element("primary-theme");
+    if (themeSelect) {
+        themeSelect.value = selectedTheme;
+    }
+    if (!persist) {
+        return;
+    }
+    try {
+        window.localStorage.setItem(themeStorageKey, selectedTheme);
+    } catch (error) {
+        console.warn("Could not save the primary color", error);
+    }
+}
+
+function installThemeSelector() {
+    let storedTheme = "";
+    try {
+        storedTheme = window.localStorage.getItem(themeStorageKey) || "";
+    } catch (error) {
+        console.warn("Could not restore the primary color", error);
+    }
+    applyPrimaryTheme(storedTheme || document.documentElement.dataset.theme);
+    element("primary-theme")?.addEventListener("change", (event) => {
+        applyPrimaryTheme(event.target.value, true);
+    });
 }
 
 function saveFormState() {
@@ -95,6 +134,35 @@ function updateReplicateVisibility() {
     const field = element("replicates-field");
     if (field) {
         field.hidden = element("feedback-mode")?.value !== "bandit";
+    }
+}
+
+function updateEquilibriumFigures() {
+    const game = element("game")?.value;
+    const urls = dashboardData.equilibriumFigures[game];
+    if (!game || !urls) {
+        return;
+    }
+
+    const presentation = gamePresentation(game);
+    const gameLabel = element("equilibrium-game");
+    if (gameLabel) {
+        gameLabel.textContent = presentation.label;
+    }
+    const gameDescription = element("game-description");
+    if (gameDescription) {
+        gameDescription.textContent = presentation.description;
+    }
+    for (const equilibrium of ["ce", "cce"]) {
+        const image = element(`${equilibrium}-equilibrium-image`);
+        const download = element(`${equilibrium}-equilibrium-download`);
+        if (image) {
+            image.src = urls[equilibrium];
+            image.alt = `Maximum ${equilibrium.toUpperCase()} profile weight for ${presentation.label}`;
+        }
+        if (download) {
+            download.href = urls[equilibrium];
+        }
     }
 }
 
@@ -216,8 +284,9 @@ function openFigure(index) {
     const title = element("dialog-figure-title");
     const download = element("dialog-figure-download");
     image.src = figure.url;
-    image.alt = `${figure.game}, ${figure.source} ${figure.regret} regret, player ${figure.player}`;
-    title.textContent = `${figure.game} · ${figure.source} ${figure.regret} · player ${figure.player}`;
+    const gameLabel = gamePresentation(figure.game).label;
+    image.alt = `${gameLabel}, ${figure.source} ${figure.regret} regret, player ${figure.player}`;
+    title.textContent = `${gameLabel} · ${figure.source} ${figure.regret} · player ${figure.player}`;
     download.href = figure.url;
     download.download = figure.filename;
     dialog.showModal();
@@ -242,7 +311,8 @@ function showExperimentDetail(index) {
 
     selectedSummary = summary;
     panel.hidden = false;
-    element("detail-title").textContent = `${summary.game} · player ${summary.player}`;
+    const gameLabel = gamePresentation(summary.game).label;
+    element("detail-title").textContent = `${gameLabel} · player ${summary.player}`;
     const metadata = element("detail-metadata");
     metadata.replaceChildren();
     addDetail(metadata, "Feedback", summary.feedback_mode);
@@ -272,6 +342,7 @@ function showExperimentDetail(index) {
     download.download = summary.experiment;
     const heatmap = element("detail-heatmap");
     heatmap.src = summary.joint_actions_url;
+    heatmap.alt = `Empirical joint-action distribution for ${gameLabel}`;
     const heatmapDownload = element("detail-heatmap-download");
     heatmapDownload.href = summary.joint_actions_url;
     heatmapDownload.download = `${summary.run_id}_joint_actions.png`;
@@ -292,6 +363,7 @@ function reuseSelectedExperiment() {
     element("seed").value = selectedSummary.seed;
     element("replicate").value = selectedSummary.replicate;
     element("replicates").value = 1;
+    updateEquilibriumFigures();
     saveFormState();
     element("experiment-form").scrollIntoView({behavior: "smooth"});
 }
@@ -312,10 +384,11 @@ function createFigureCard(figure, index) {
     button.className = "figure-open";
     button.type = "button";
     const label = document.createElement("span");
-    label.textContent = `${figure.source} · Player ${figure.player} · ${figure.regret}`;
+    const gameLabel = gamePresentation(figure.game).label;
+    label.textContent = `${gameLabel} · ${figure.source} · Player ${figure.player} · ${figure.regret}`;
     const image = document.createElement("img");
     image.src = figure.url;
-    image.alt = `${figure.source} ${figure.regret} regret for player ${figure.player}`;
+    image.alt = `${gameLabel}, ${figure.source} ${figure.regret} regret for player ${figure.player}`;
     image.loading = "lazy";
     button.append(label, image);
 
@@ -499,6 +572,7 @@ element("feedback-mode")?.addEventListener("change", () => {
     updateAlgorithmsForFeedbackMode();
     updateReplicateVisibility();
 });
+element("game")?.addEventListener("change", updateEquilibriumFigures);
 element("swap-players")?.addEventListener("click", () => {
     swapPlayerValues();
     saveFormState();
@@ -535,7 +609,9 @@ element("rebuild-plots-form")?.addEventListener("submit", submitPlotRebuild);
 ].forEach((id) => element(id)?.addEventListener("change", applyFilters));
 ["filter-horizon", "filter-seed"].forEach((id) => element(id)?.addEventListener("input", applyFilters));
 
+installThemeSelector();
 restoreFormState();
+updateEquilibriumFigures();
 installFormPersistence();
 installConfirmations();
 installTableSorting();

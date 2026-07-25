@@ -5,6 +5,12 @@
         form_state.feedback_mode,
         algorithms_by_feedback_mode["full_information"]
     ) %}
+    {% set equilibrium_game = (
+        form_state.game
+        if form_state.game in equilibrium_figures
+        else games[0]
+    ) %}
+    {% set equilibrium_presentation = game_presentations[equilibrium_game] %}
     {% set regret_summary_columns = [
         ("Exp ext", "average_expected_external_regret"),
         ("Exp int", "average_expected_internal_regret"),
@@ -16,6 +22,14 @@
 
     <div class="app-shell">
         <aside class="sidebar" aria-label="Experiment configuration">
+            <select id="primary-theme" class="sidebar-theme" aria-label="Primary color theme">
+                <option value="green">Green</option>
+                <option value="blue">Blue</option>
+                <option value="purple">Purple</option>
+                <option value="orange">Orange</option>
+                <option value="red">Red</option>
+            </select>
+
             <div class="brand">
                 <p class="eyebrow">Bachelor thesis laboratory</p>
                 <h1>Swap Regret</h1>
@@ -29,22 +43,25 @@
             <form id="experiment-form" method="post" action="{{ url_for('dashboard.index') }}">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 
-                <div class="field-grid field-grid-two">
-                    <div class="field">
+                <div class="top-control-grid">
+                    <div class="control-card control-card-game">
                         <label for="game">Game</label>
-                        <select id="game" name="game" required>
+                        <select id="game" name="game" aria-describedby="game-description" required>
                             {% for game in games %}
                                 <option
                                     value="{{ game }}"
                                     {% if game == form_state.game %}selected{% endif %}
-                                >{{ game }}</option>
+                                >{{ game_presentations[game].label }}</option>
                             {% endfor %}
                         </select>
+                        <span id="game-description" class="hint">
+                            {{ equilibrium_presentation.description }}
+                        </span>
                     </div>
 
-                    <div class="field">
+                    <div class="control-card">
                         <label for="feedback-mode">Feedback</label>
-                        <select id="feedback-mode" name="feedback_mode" required>
+                        <select id="feedback-mode" name="feedback_mode" aria-describedby="feedback-description" required>
                             {% for mode, config in feedback_modes.items() %}
                                 <option
                                     value="{{ mode }}"
@@ -52,6 +69,9 @@
                                 >{{ config.label }}</option>
                             {% endfor %}
                         </select>
+                        <span id="feedback-description" class="hint">
+                            Choose whether learners observe every action payoff or only their realized payoff.
+                        </span>
                     </div>
                 </div>
 
@@ -131,15 +151,14 @@
                 </div>
 
                 <div class="button-stack">
-                    <button class="button-primary" type="submit" data-busy-control {% if busy %}disabled{% endif %}>
-                        Run experiment
+                    <button id="queue-experiment" class="button-primary" type="submit">
+                        Queue experiment
                     </button>
                     <button
+                        id="queue-all-pairs"
                         type="submit"
                         formaction="{{ url_for('dashboard.run_all_pairs') }}"
-                        data-busy-control
-                        {% if busy %}disabled{% endif %}
-                    >Run missing algorithm pairs</button>
+                    >Queue missing algorithm pairs</button>
                 </div>
             </form>
 
@@ -212,8 +231,9 @@
                         <p class="eyebrow">Execution</p>
                         <h2 id="jobs-heading">Recent jobs</h2>
                     </div>
-                    <span id="busy-indicator" class="busy-indicator" {% if not busy %}hidden{% endif %}>Working</span>
+                    <span id="busy-indicator" class="busy-indicator" {% if not busy %}hidden{% endif %}>Queue active</span>
                 </div>
+                <p class="queue-explanation">Experiment submissions run one at a time in first-in, first-out order. You can queue more while one is running.</p>
 
                 {% if jobs %}
                     <ol class="job-list">
@@ -240,6 +260,51 @@
                 {% endif %}
             </section>
 
+            <section class="panel equilibrium-panel" aria-labelledby="equilibrium-heading">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Theoretical game properties</p>
+                        <h2 id="equilibrium-heading">Equilibrium profile weights</h2>
+                    </div>
+                    <span id="equilibrium-game">{{ equilibrium_presentation.label }}</span>
+                </div>
+                <p class="equilibrium-explanation">
+                    Each cell is optimized independently over the corresponding
+                    equilibrium polytope. The displayed matrix is not itself an
+                    equilibrium distribution and generally does not sum to one.
+                </p>
+                <div class="equilibrium-grid">
+                    <article class="equilibrium-card">
+                        <h3>Maximum CE Profile Weight</h3>
+                        <img
+                            id="ce-equilibrium-image"
+                            src="{{ equilibrium_figures[equilibrium_game].ce }}"
+                            alt="Maximum CE profile weight for {{ equilibrium_presentation.label }}"
+                            loading="lazy"
+                        >
+                        <a
+                            id="ce-equilibrium-download"
+                            href="{{ equilibrium_figures[equilibrium_game].ce }}"
+                            download
+                        >Download PNG</a>
+                    </article>
+                    <article class="equilibrium-card">
+                        <h3>Maximum CCE Profile Weight</h3>
+                        <img
+                            id="cce-equilibrium-image"
+                            src="{{ equilibrium_figures[equilibrium_game].cce }}"
+                            alt="Maximum CCE profile weight for {{ equilibrium_presentation.label }}"
+                            loading="lazy"
+                        >
+                        <a
+                            id="cce-equilibrium-download"
+                            href="{{ equilibrium_figures[equilibrium_game].cce }}"
+                            download
+                        >Download PNG</a>
+                    </article>
+                </div>
+            </section>
+
             <section class="panel figures-panel" aria-labelledby="figures-heading">
                 <div class="section-heading">
                     <div>
@@ -254,7 +319,7 @@
                         <label for="filter-game">Game</label>
                         <select id="filter-game">
                             <option value="all">All games</option>
-                            {% for game in games %}<option value="{{ game }}">{{ game }}</option>{% endfor %}
+                            {% for game in games %}<option value="{{ game }}">{{ game_presentations[game].label }}</option>{% endfor %}
                         </select>
                     </div>
                     <div class="field">
@@ -297,8 +362,8 @@
                         <article class="figure-card" data-figure-index="{{ loop.index0 }}" data-game="{{ figure.game }}" data-source="{{ figure.source }}"
                                  data-regret="{{ figure.regret }}" data-player="{{ figure.player }}" data-view="{{ figure.view }}">
                             <button class="figure-open" type="button">
-                                <span>{{ figure.source | title }} · Player {{ figure.player }} · {{ figure.regret | title }}</span>
-                                <img src="{{ figure.url }}" alt="{{ figure.source }} {{ figure.regret }} regret for player {{ figure.player }}" loading="lazy">
+                                <span>{{ game_presentations[figure.game].label }} · {{ figure.source | title }} · Player {{ figure.player }} · {{ figure.regret | title }}</span>
+                                <img src="{{ figure.url }}" alt="{{ game_presentations[figure.game].label }}, {{ figure.source }} {{ figure.regret }} regret for player {{ figure.player }}" loading="lazy">
                             </button>
                             <a href="{{ figure.url }}" download="{{ figure.filename }}">Download PNG</a>
                         </article>
@@ -387,7 +452,7 @@
                                         data-replicate="{{ row.replicate }}"
                                         data-stationary-method="{{ row.stationary_method }}"
                                     >
-                                        <td>{{ row.game }}</td>
+                                        <td>{{ game_presentations[row.game].label }}</td>
                                         <td>{{ row.feedback_mode }}</td>
                                         <td>{{ row.seed }} / {{ row.replicate }}</td>
                                         <td>{{ row.player }}</td>
@@ -439,6 +504,8 @@
         {{ {
             "figures": figures,
             "figuresUrl": url_for("dashboard.figure_data"),
+            "equilibriumFigures": equilibrium_figures,
+            "gamePresentations": game_presentations,
             "jobs": jobs,
             "summaries": summaries,
             "algorithms": algorithms_by_feedback_mode,
