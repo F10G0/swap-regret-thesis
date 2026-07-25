@@ -1,1 +1,1 @@
-from metrics.regret import RegretBundle
+from metrics.regret import ExpectedRegretBundle, RealizedRegretBundle, RegretBundles

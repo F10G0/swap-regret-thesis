@@ -1,28 +1,31 @@
+from abc import abstractmethod
+
 import numpy as np
 
 from algorithms.base import Algorithm
+from config import NUMERICAL_TOLERANCE
 
 
 class ExponentialWeightsAlgorithm(Algorithm):
-    """
-    Base class for exponential-weights algorithms.
-    """
+    """Base class for fixed-horizon and anytime exponential-weights algorithms."""
 
-    def __init__(self, n_actions: int, learning_rate: float, seed: int | None = None) -> None:
-        super().__init__(n_actions, seed)
+    @property
+    def _rate_horizon(self) -> int:
+        """Return the horizon used by the learning-rate schedule."""
+        return max(self.horizon, self.t + 1)
 
-        if learning_rate <= 0.0:
-            raise ValueError("learning_rate must be positive.")
-        self.learning_rate = learning_rate
-        self.reset()
+    @property
+    @abstractmethod
+    def learning_rate(self) -> float:
+        """Return the algorithm-specific learning rate."""
+        pass
 
-    def _exponential_weights(self, scores: np.ndarray) -> np.ndarray:
-        """
-        Compute the exponential-weights distribution induced by scores.
-        """
-        logits = self.learning_rate * scores
+    def _reset_state(self) -> None:
+        self.cumulative_score = np.zeros(self.n_actions, dtype=float)
 
-        # Numerical stability.
+    def _compute_strategy(self) -> np.ndarray:
+        logits = self.learning_rate * self.cumulative_score
         logits -= np.max(logits)
         weights = np.exp(logits)
-        return weights / np.sum(weights)
+        strategy = np.maximum(weights / np.sum(weights), NUMERICAL_TOLERANCE)
+        return strategy / np.sum(strategy)

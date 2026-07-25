@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Swap Regret Dashboard{% endblock %}</title>
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='dashboard.css') }}"
+    >
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to results</a>
+
+    <div id="notice-stack" class="flash-stack" aria-live="polite">
+        {% for category, message in get_flashed_messages(with_categories=true) %}
+            <div class="notice notice-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+
+    {% block content %}{% endblock %}
+    {% block scripts %}{% endblock %}
+</body>
+</html>

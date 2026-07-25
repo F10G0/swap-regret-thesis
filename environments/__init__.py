@@ -1,2 +1,1 @@
-from .full_information.repeated_game import RepeatedGame
-from .partial_information.bandit_repeated_game import BanditRepeatedGame
+from .repeated_game import RepeatedGame, BanditRepeatedGame

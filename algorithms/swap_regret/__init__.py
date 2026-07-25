@@ -1,9 +1,3 @@
-from .full_information import (
-    BlumMansour as FullBM,
-    Ito as FullIto,
-)
-
-from .partial_information import (
-    BlumMansour as BanditBM,
-    Ito as BanditIto,
-)
+from .blum_mansour import FullBM, BanditBM
+from .ito import FullIto, BanditIto
+from .lce_ix import LCEIX

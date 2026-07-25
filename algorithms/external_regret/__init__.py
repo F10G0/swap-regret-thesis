@@ -1,2 +1,2 @@
-from .full_information.hedge import Hedge
-from .partial_information.exp3 import Exp3
+from .hedge import Hedge
+from .exp3 import Exp3, Exp3IX
