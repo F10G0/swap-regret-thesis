@@ -190,6 +190,183 @@ a {
     font-size: 0.78rem;
 }
 
+.page-theme {
+    position: fixed;
+    z-index: 2;
+    top: 18px;
+    right: 22px;
+    width: 86px;
+    min-height: 32px;
+    padding: 4px 7px;
+    background: var(--surface);
+    font-size: 0.78rem;
+}
+
+.builder-shell {
+    width: min(1180px, calc(100% - 36px));
+    margin: 0 auto;
+    padding: 40px 0;
+}
+
+.builder-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 24px;
+    padding-right: 100px;
+}
+
+.builder-heading p:last-child {
+    max-width: 700px;
+    color: var(--muted);
+}
+
+.button-anchor {
+    display: inline-flex;
+    align-items: center;
+    min-height: 42px;
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.builder-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
+    gap: 22px;
+}
+
+.action-count-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+    gap: 12px;
+}
+
+.custom-game-list {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0;
+    padding: 0;
+    list-style: none;
+}
+
+.custom-game-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 3px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-muted);
+}
+
+.custom-game-details {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.custom-game-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.small-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 650;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.custom-game-list span,
+.custom-game-list code {
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.payoff-inspector {
+    margin-top: 22px;
+}
+
+.payoff-metadata {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 10px;
+    margin: 18px 0;
+}
+
+.payoff-metadata div {
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-muted);
+}
+
+.payoff-metadata dt {
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.payoff-metadata dd {
+    margin: 3px 0 0;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-weight: 700;
+}
+
+.payoff-control-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.payoff-slice-status {
+    margin: 14px 0 8px;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.payoff-table-scroll {
+    min-height: 180px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+}
+
+.payoff-table {
+    width: max-content;
+    min-width: 100%;
+}
+
+.payoff-table th,
+.payoff-table td {
+    min-width: 74px;
+    text-align: right;
+}
+
+.payoff-table th:first-child {
+    left: 0;
+    z-index: 1;
+    text-align: left;
+}
+
+.payoff-cell {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+}
+
 .brand p:last-child,
 .hint,
 .empty,
@@ -245,6 +422,17 @@ legend {
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.replicate-grid-single {
+    grid-template-columns: 1fr;
+}
+
+@media (min-width: 721px) {
+    .replicate-grid:not(.replicate-grid-single) .field {
+        grid-template-rows: auto 42px minmax(3.2em, 1fr);
+        align-content: stretch;
+    }
+}
+
 .top-control-grid {
     display: grid;
     grid-template-columns: 1fr;
@@ -283,6 +471,12 @@ legend {
 
 .player-heading {
     margin: 21px 0 10px;
+}
+
+.player-heading-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .button-link {
@@ -504,17 +698,53 @@ fieldset {
     font-size: 0.9rem;
 }
 
-.equilibrium-card img {
+.heatmap-frame {
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 13 / 11;
+    background: var(--surface);
+}
+
+.heatmap-frame img {
     display: block;
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain;
+    transition: opacity 120ms ease;
+}
+
+.heatmap-loading {
+    position: absolute;
+    inset: 0;
+    display: none;
+    place-items: center;
+    padding: 16px;
     background: var(--surface);
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-align: center;
+}
+
+.heatmap-frame.is-loading .heatmap-loading,
+.heatmap-frame.has-error .heatmap-loading {
+    display: grid;
+}
+
+.heatmap-frame.is-loading img,
+.heatmap-frame.has-error img {
+    opacity: 0;
 }
 
 .equilibrium-card a {
     display: inline-block;
     margin-top: 7px;
     font-size: 0.75rem;
+}
+
+.equilibrium-card a.is-disabled {
+    pointer-events: none;
+    opacity: 0.5;
 }
 
 .figure-card {
@@ -558,10 +788,20 @@ fieldset {
 }
 
 .figure-dialog {
-    width: min(1100px, calc(100vw - 40px));
-    padding: 20px;
+    width: calc(100vw - 32px);
+    max-width: none;
+    height: calc(100vh - 32px);
+    max-height: none;
+    padding: 16px;
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 14px;
+}
+
+.figure-dialog[open] {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 10px;
 }
 
 .figure-dialog::backdrop {
@@ -573,13 +813,14 @@ fieldset {
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    margin-bottom: 12px;
+    margin: 0;
 }
 
 .figure-dialog img {
     display: block;
     width: 100%;
-    max-height: 78vh;
+    height: 100%;
+    min-height: 0;
     object-fit: contain;
 }
 
@@ -658,6 +899,13 @@ tbody tr:hover {
     font-weight: 800;
 }
 
+.metric-confidence {
+    display: block;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 500;
+}
+
 .experiment-detail {
     margin-top: 18px;
     padding: 18px;
@@ -702,16 +950,97 @@ tbody tr:hover {
 
 .detail-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 16px;
     margin-bottom: 14px;
 }
 
-.detail-heatmap {
-    display: block;
+.detail-heatmap-frame {
     width: min(620px, 100%);
     border: 1px solid var(--border);
     border-radius: 8px;
+}
+
+.detail-subheading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 18px 0 10px;
+}
+
+.detail-subheading h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.detail-subheading p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.detail-figure-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.detail-figure-card {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
     background: var(--surface);
+}
+
+.detail-figure-card h4 {
+    margin: 0 0 8px;
+    font-size: 0.85rem;
+}
+
+.trajectory-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.trajectory-card-heading h4 {
+    margin: 0;
+}
+
+.trajectory-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.trajectory-card-heading label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.72rem;
+}
+
+.trajectory-card-heading input[type="number"] {
+    width: 58px;
+    min-height: 30px;
+    padding: 4px 6px;
+}
+
+.trajectory-card-heading input[type="checkbox"] {
+    width: 16px;
+    min-height: 16px;
+    margin: 0;
+}
+
+.detail-figure-card > a {
+    display: inline-block;
+    margin-top: 7px;
+    font-size: 0.75rem;
 }
 
 @media (max-width: 1100px) {
@@ -725,7 +1054,7 @@ tbody tr:hover {
     }
 
     .top-control-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .figure-grid {
@@ -750,18 +1079,29 @@ tbody tr:hover {
     .summary-filters,
     .equilibrium-grid,
     .figure-grid,
+    .detail-figure-grid,
     .detail-regrets {
         grid-template-columns: 1fr;
     }
 
-    .panel {
-        padding: 16px;
-    }
-}
-
-@media (max-width: 520px) {
     .top-control-grid {
         grid-template-columns: 1fr;
+    }
+
+    .builder-grid,
+    .action-count-grid,
+    .payoff-control-grid,
+    .payoff-metadata {
+        grid-template-columns: 1fr;
+    }
+
+    .builder-heading {
+        display: grid;
+        padding-right: 90px;
+    }
+
+    .panel {
+        padding: 16px;
     }
 }
 

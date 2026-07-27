@@ -1,306 +1,34 @@
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from concurrent.futures import Future, ThreadPoolExecutor
+from hashlib import sha256
 import logging
 import os
 from pathlib import Path
 import re
 import tempfile
-from threading import Event, Lock
-from typing import Any
-from uuid import uuid4
+from threading import Lock
 
-from config import BANDIT_REPLICATES, HORIZON, SEED
+import numpy as np
+
+from config import BANDIT_REPLICATES, CUSTOM_GAME_DIR, HORIZON, SEED
+from experiments.algorithm_labels import algorithm_label, algorithm_profile_label
+from experiments.game_catalog import GameCatalog, GameDefinition
 from experiments.games import PAYOFF_FACTORIES
-from experiments.scenarios.bandit_cross_play import (
-    ALGORITHMS as BANDIT_ALGORITHMS,
-    run_bandit_cross_play_experiment,
-)
-from experiments.scenarios.full_information_cross_play import (
-    ALGORITHMS as FULL_INFORMATION_ALGORITHMS,
-    run_full_information_cross_play_experiment,
-)
-from experiments.scenarios.cross_play import AlgorithmFactory
-from experiments.runner import ExperimentCancelled
+from experiments.results import iter_result_rows
 from experiments.spec import ExperimentSpec
-from web.results import ResultIndex, ResultSnapshot
-from web.validation import ExperimentForm, validate_leaf_filename
+from web.equilibrium_figures import PRECOMPUTED_EQUILIBRIUM_DIR, equilibrium_figure_filename
+from web.experiment_modes import FEEDBACK_MODES, FeedbackMode
+from web.jobs import Job, JobContext, JobManager
+from web.presentations import GAME_PRESENTATIONS
+from web.result_groups import result_group_filenames
+from web.result_index import ResultIndex, ResultSnapshot
+from web.validation import DEFAULT_TRAJECTORY_POINTS, ExperimentForm, validate_leaf_filename
 
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class FeedbackMode:
-    label: str
-    algorithms: dict[str, AlgorithmFactory]
-    runner: Callable[..., Path]
-
-
-FEEDBACK_MODES = {
-    "full_information": FeedbackMode(
-        label="Full information",
-        algorithms=FULL_INFORMATION_ALGORITHMS,
-        runner=run_full_information_cross_play_experiment,
-    ),
-    "bandit": FeedbackMode(
-        label="Bandit feedback",
-        algorithms=BANDIT_ALGORITHMS,
-        runner=run_bandit_cross_play_experiment,
-    ),
-}
-
-ALGORITHM_LABELS = {
-    "hedge": "Hedge",
-    "exp3": "EXP3",
-    "exp3_ix": "EXP3-IX",
-    "bm": "BM",
-    "ito": "Ito",
-    "lce_ix": "LCE-IX",
-    "regret_matching": "Regret Matching",
-    "stationary_regret_matching": "Stationary Regret Matching",
-}
-
-GAME_PRESENTATIONS = {
-    "rps": {
-        "label": "Rock–Paper–Scissors",
-        "description": "Symmetric zero-sum game with three actions.",
-    },
-    "dominant_coordination_9": {
-        "label": "Dominant Coordination (9 actions)",
-        "description": "Identical-interest coordination game with one dominant equilibrium.",
-    },
-    "cyclic_dominance_9": {
-        "label": "Cyclic Dominance (9 actions)",
-        "description": "Balanced odd-action generalization of Rock–Paper–Scissors.",
-    },
-    "bertrand_standard_o1": {
-        "label": "O1 — Standard Bertrand (symmetric)",
-        "description": "21 prices in [0.05, 1.00]; costs (0, 0); homogeneous-good demand.",
-    },
-    "bertrand_linear_o2": {
-        "label": "O2 — Linear Bertrand (symmetric)",
-        "description": "21 prices in [0, 1]; costs (0, 0); α=0.48, β=0.9, γ=0.6.",
-    },
-    "bertrand_logit_o3": {
-        "label": "O3 — Logit Bertrand (symmetric)",
-        "description": "21 prices in [1, 2]; costs (1, 1); α=(2, 2), μ=0.25, α₀=0.",
-    },
-    "bertrand_linear_o2_prime": {
-        "label": "O2′ — Linear Bertrand (asymmetric)",
-        "description": "21 prices in [0, 1]; costs (0, 0.2); α=0.48, β=0.9, γ=0.6.",
-    },
-    "bertrand_logit_o3_prime": {
-        "label": "O3′ — Logit Bertrand (asymmetric)",
-        "description": "21 prices in [0.5, 2]; costs (0.5, 1); α=(1.5, 2), μ=0.25, α₀=0.",
-    },
-}
-
-class ServiceBusyError(RuntimeError):
-    pass
-
-
 class PlotUpdateError(RuntimeError):
     pass
-
-
-@dataclass
-class Job:
-    id: str
-    description: str
-    status: str
-    message: str
-    created_at: str
-    reload_page: bool = True
-    completed: int = 0
-    total: int = 1
-    cancel_requested: bool = False
-    started_at: str | None = None
-    finished_at: str | None = None
-
-    def public_data(self) -> dict:
-        return asdict(self)
-
-
-class JobContext:
-    def __init__(self, manager: "JobManager", job_id: str):
-        self.manager = manager
-        self.job_id = job_id
-
-    @property
-    def cancelled(self) -> bool:
-        return self.manager._cancel_requested(self.job_id)
-
-    def check_cancelled(self) -> None:
-        if self.cancelled:
-            raise ExperimentCancelled("experiment cancelled")
-
-    def advance(self, message: str | None = None) -> None:
-        self.manager._advance(self.job_id, message)
-
-
-class JobManager:
-    def __init__(self, max_history: int = 20):
-        self._executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="swap-regret-web",
-        )
-        self._lock = Lock()
-        self._jobs: dict[str, Job] = {}
-        self._cancel_events: dict[str, Event] = {}
-        self._job_resource_keys: dict[str, set[str]] = {}
-        self._resource_owners: dict[str, str] = {}
-        self._maintenance_active = False
-        self._max_history = max_history
-
-    def _now(self) -> str:
-        return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-    def _has_active_job_unlocked(self) -> bool:
-        return any(job.status in {"queued", "running"} for job in self._jobs.values())
-
-    def submit(self, description: str, operation: Callable[[JobContext], str | None], reload_page: bool = True, total: int = 1,
-               resource_keys: set[str] | None = None) -> Job:
-        with self._lock:
-            if self._maintenance_active:
-                raise ServiceBusyError("dashboard maintenance is currently running")
-
-            self._trim_history_unlocked()
-            resource_keys = set(resource_keys or ())
-            if resource_keys & self._resource_owners.keys():
-                raise FileExistsError("one or more requested runs are already queued")
-            job = Job(
-                id=uuid4().hex,
-                description=description,
-                status="queued",
-                message="Waiting to start",
-                created_at=self._now(),
-                reload_page=reload_page,
-                total=total,
-            )
-            self._jobs[job.id] = job
-            self._cancel_events[job.id] = Event()
-            self._job_resource_keys[job.id] = resource_keys
-            for resource_key in resource_keys:
-                self._resource_owners[resource_key] = job.id
-            self._executor.submit(self._run, job.id, operation)
-            return Job(**asdict(job))
-
-    def _run(self, job_id: str, operation: Callable[[JobContext], str | None]) -> None:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                return
-            if job.cancel_requested:
-                self._finish_cancelled_unlocked(job)
-                self._release_resources_unlocked(job_id)
-                return
-            job.status = "running"
-            job.message = f"0 / {job.total} completed"
-            job.started_at = self._now()
-
-        try:
-            message = operation(JobContext(self, job_id))
-        except ExperimentCancelled:
-            with self._lock:
-                self._finish_cancelled_unlocked(self._jobs[job_id])
-                self._release_resources_unlocked(job_id)
-        except Exception as error:
-            logger.exception("Dashboard job %s failed", job_id)
-            with self._lock:
-                job = self._jobs[job_id]
-                job.status = "failed"
-                job.message = f"{type(error).__name__}: {error}"
-                job.finished_at = self._now()
-                self._release_resources_unlocked(job_id)
-        else:
-            with self._lock:
-                job = self._jobs[job_id]
-                if job.cancel_requested:
-                    self._finish_cancelled_unlocked(job)
-                else:
-                    job.status = "succeeded"
-                    job.completed = job.total
-                    job.message = message or "Operation completed"
-                    job.finished_at = self._now()
-                self._release_resources_unlocked(job_id)
-
-    def _finish_cancelled_unlocked(self, job: Job) -> None:
-        job.status = "cancelled"
-        job.message = f"Cancelled after {job.completed} / {job.total}"
-        job.finished_at = self._now()
-
-    def _cancel_requested(self, job_id: str) -> bool:
-        return self._cancel_events[job_id].is_set()
-
-    def _release_resources_unlocked(self, job_id: str) -> None:
-        for resource_key in self._job_resource_keys.pop(job_id, set()):
-            if self._resource_owners.get(resource_key) == job_id:
-                del self._resource_owners[resource_key]
-
-    def _advance(self, job_id: str, message: str | None = None) -> None:
-        with self._lock:
-            job = self._jobs[job_id]
-            job.completed = min(job.completed + 1, job.total)
-            job.message = message or f"{job.completed} / {job.total} completed"
-
-    def cancel(self, job_id: str) -> Job:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                raise KeyError(job_id)
-            if job.status not in {"queued", "running"}:
-                raise ValueError("job has already finished")
-            job.cancel_requested = True
-            self._cancel_events[job_id].set()
-            if job.status == "queued":
-                self._finish_cancelled_unlocked(job)
-                self._release_resources_unlocked(job_id)
-            else:
-                job.message = "Cancellation requested"
-            return Job(**asdict(job))
-
-    def run_maintenance(self, operation: Callable[[], Any]) -> Any:
-        with self._lock:
-            if self._maintenance_active or self._has_active_job_unlocked():
-                raise ServiceBusyError("wait for the active operation to finish")
-            self._maintenance_active = True
-
-        try:
-            return operation()
-        finally:
-            with self._lock:
-                self._maintenance_active = False
-
-    def get(self, job_id: str) -> Job | None:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            return None if job is None else Job(**asdict(job))
-
-    def recent(self) -> list[Job]:
-        with self._lock:
-            jobs = list(self._jobs.values())
-            return [Job(**asdict(job)) for job in reversed(jobs)]
-
-    def reserved_resources(self) -> set[str]:
-        with self._lock:
-            return set(self._resource_owners)
-
-    def is_busy(self) -> bool:
-        with self._lock:
-            return self._maintenance_active or self._has_active_job_unlocked()
-
-    def _trim_history_unlocked(self) -> None:
-        terminal_ids = [
-            job_id
-            for job_id, job in self._jobs.items()
-            if job.status in {"succeeded", "failed", "cancelled"}
-        ]
-        excess = max(0, len(self._jobs) - self._max_history + 1)
-        for job_id in terminal_ids[:excess]:
-            del self._jobs[job_id]
-            del self._cancel_events[job_id]
 
 
 class DashboardService:
@@ -310,32 +38,127 @@ class DashboardService:
         raw_dir: str | Path,
         figure_dir: str | Path,
         job_manager: JobManager | None = None,
+        custom_game_dir: str | Path = CUSTOM_GAME_DIR,
     ):
         self.results_dir = Path(results_dir)
         self.raw_dir = Path(raw_dir)
         self.figure_dir = Path(figure_dir)
+        self.game_catalog = GameCatalog(custom_game_dir)
         self.jobs = job_manager or JobManager()
         self.result_index = ResultIndex(self.raw_dir)
         self._detail_figure_lock = Lock()
+        self._detail_figure_generation = 0
+        self._convergence_executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="equilibrium-convergence",
+        )
+        self._convergence_future_lock = Lock()
+        self._convergence_futures: dict[str, Future[dict[str, Path]]] = {}
 
     @property
     def games(self) -> list[str]:
-        return list(PAYOFF_FACTORIES)
+        return list(self.game_definitions)
+
+    @property
+    def game_definitions(self) -> dict[str, GameDefinition]:
+        return self.game_catalog.definitions()
+
+    @property
+    def game_player_counts(self) -> dict[str, int]:
+        return {game_id: definition.n_players for game_id, definition in self.game_definitions.items()}
 
     @property
     def game_presentations(self) -> dict[str, dict[str, str]]:
         presentations = {}
-        for game_name in self.games:
+        for game_name, definition in self.game_definitions.items():
             configured = GAME_PRESENTATIONS.get(game_name)
             presentations[game_name] = (
                 dict(configured)
                 if configured is not None
                 else {
-                    "label": game_name.replace("_", " ").title(),
-                    "description": "",
+                    "label": definition.label,
+                    "description": definition.description,
                 }
             )
         return presentations
+
+    def supports_matrix_figures(self, game_name: str) -> bool:
+        return game_name in PAYOFF_FACTORIES
+
+    def supports_equilibrium_distance(self, game_name: str) -> bool:
+        return game_name in self.game_definitions
+
+    def supports_equilibrium_trajectory(self, game_name: str) -> bool:
+        return game_name in self.game_definitions
+
+    def custom_games(self) -> tuple[list[GameDefinition], list[str]]:
+        return self.game_catalog.custom_definitions()
+
+    def create_custom_game(self, name: str, n_players, action_counts, seed) -> GameDefinition:
+        return self.game_catalog.create_random(name, n_players, action_counts, seed)
+
+    def delete_custom_game(self, game_id: str) -> GameDefinition:
+        def operation() -> GameDefinition:
+            result_prefix = f"{game_id}_"
+            if self.raw_dir.exists() and any(path.name.startswith(result_prefix) for path in self.raw_dir.glob("*.csv")):
+                raise ValueError("delete the recorded experiments for this game before deleting the game")
+            definition = self.game_catalog.delete(game_id)
+            self._clear_figure_files(game_id)
+            return definition
+
+        return self.jobs.run_maintenance(operation)
+
+    def custom_game_inspection(self, game_id: str) -> dict:
+        definition = self.game_definitions.get(game_id)
+        if definition is None or definition.source != "custom":
+            raise KeyError(game_id)
+        payoff_tensor = self.game_catalog.load(game_id)
+        return {
+            "definition": definition.public_data(),
+            "shape": payoff_tensor.shape,
+            "minimum": float(np.min(payoff_tensor)),
+            "maximum": float(np.max(payoff_tensor)),
+            "mean": float(np.mean(payoff_tensor)),
+        }
+
+    def custom_game_payoff_slice(self, game_id: str, payoff_player: int, row_player: int, column_player: int, fixed_actions: list[int]) -> dict:
+        definition = self.game_definitions.get(game_id)
+        if definition is None or definition.source != "custom":
+            raise KeyError(game_id)
+        if not 0 <= payoff_player < definition.n_players:
+            raise ValueError("invalid payoff player")
+        if not 0 <= row_player < definition.n_players or not 0 <= column_player < definition.n_players:
+            raise ValueError("invalid axis player")
+        if row_player == column_player:
+            raise ValueError("row and column players must be different")
+        if len(fixed_actions) != definition.n_players:
+            raise ValueError("provide one fixed action per player")
+        for player, action in enumerate(fixed_actions):
+            if not 0 <= action < definition.action_counts[player]:
+                raise ValueError(f"invalid fixed action for player {player}")
+
+        payoff_tensor = self.game_catalog.load(game_id)
+        values = np.empty((definition.action_counts[row_player], definition.action_counts[column_player]))
+        joint_action = list(fixed_actions)
+        for row_action in range(values.shape[0]):
+            joint_action[row_player] = row_action
+            for column_action in range(values.shape[1]):
+                joint_action[column_player] = column_action
+                values[row_action, column_action] = payoff_tensor[(payoff_player, *joint_action)]
+        return {
+            "game": game_id,
+            "payoff_player": payoff_player,
+            "row_player": row_player,
+            "column_player": column_player,
+            "fixed_actions": fixed_actions,
+            "values": values.tolist(),
+        }
+
+    def custom_game_file(self, game_id: str) -> Path:
+        definition = self.game_definitions.get(game_id)
+        if definition is None or definition.source != "custom":
+            raise KeyError(game_id)
+        return self.game_catalog.custom_path(game_id)
 
     @property
     def feedback_modes(self) -> dict[str, dict]:
@@ -356,16 +179,17 @@ class DashboardService:
 
     @property
     def algorithm_labels(self) -> dict[str, str]:
-        return {name: ALGORITHM_LABELS.get(name, name) for algorithms in self.algorithms_by_feedback_mode.values() for name in algorithms}
+        return {name: algorithm_label(name) for algorithms in self.algorithms_by_feedback_mode.values() for name in algorithms}
 
     def default_form_state(self) -> dict:
         feedback_mode = "full_information"
         first_algorithm = self.algorithms_by_feedback_mode[feedback_mode][0]
+        game = self.games[0]
         return {
-            "game": self.games[0],
+            "game": game,
             "feedback_mode": feedback_mode,
-            "algorithm_player_0": first_algorithm,
-            "algorithm_player_1": first_algorithm,
+            "regret_evaluation": "expected",
+            "algorithm_names": [first_algorithm] * self.game_player_counts[game],
             "horizon": HORIZON,
             "seed": SEED,
             "replicate": 0,
@@ -381,6 +205,7 @@ class DashboardService:
             horizon=form.horizon,
             seed=form.seed,
             replicate=form.replicate if replicate is None else replicate,
+            regret_evaluation=form.regret_evaluation,
         )
 
     def _replicates(self, form: ExperimentForm) -> range:
@@ -401,7 +226,8 @@ class DashboardService:
             job.check_cancelled()
             mode.runner(
                 game_name=form.game, algorithm_names=algorithm_names, horizon=form.horizon, seed=form.seed, replicate=replicate,
-                output_dir=self.raw_dir, should_cancel=lambda: job.cancelled,
+                output_dir=self.raw_dir, should_cancel=lambda: job.cancelled, custom_game_dir=self.game_catalog.custom_game_dir,
+                regret_evaluation=form.regret_evaluation,
             )
             job.advance()
         job.check_cancelled()
@@ -421,13 +247,16 @@ class DashboardService:
             return self._run_experiments(form, mode, missing_runs, skipped_count, job)
 
         return self.jobs.submit(
-            f"{form.game}: {' vs '.join(ALGORITHM_LABELS.get(name, name) for name in form.algorithm_names)}",
+            f"{form.game}: {algorithm_profile_label(form.algorithm_names)}",
             operation,
             total=len(missing_runs),
             resource_keys={self._spec(form, names, replicate).run_id for names, replicate in missing_runs},
         )
 
     def submit_all_pairs(self, form: ExperimentForm) -> tuple[Job, int, int]:
+        definition = self.game_definitions[form.game]
+        if definition.source != "builtin" or definition.n_players != 2:
+            raise ValueError("all-pairs runs are available only for built-in two-player games")
         mode = FEEDBACK_MODES[form.feedback_mode]
         pairs = [
             [algorithm_player_0, algorithm_player_1]
@@ -512,57 +341,30 @@ class DashboardService:
     def detail_figure_dir(self) -> Path:
         return self.figure_dir / "details"
 
-    @property
-    def equilibrium_figure_dir(self) -> Path:
-        return self.detail_figure_dir / "equilibria"
+    def _result_group_paths(self, group_id: str) -> list[Path]:
+        if re.fullmatch(r"[0-9a-f]{16}", group_id) is None:
+            raise ValueError("invalid result group")
+        filenames = result_group_filenames(self.result_snapshot().summaries, group_id)
+        paths = [self.raw_dir / validate_leaf_filename(filename, ".csv") for filename in filenames]
+        if any(not path.is_file() for path in paths):
+            raise FileNotFoundError(group_id)
+        return paths
 
-    def equilibrium_figure(
-        self,
-        game_name: str,
-        equilibrium: str,
-    ) -> Path:
-        if game_name not in PAYOFF_FACTORIES:
+    def _group_cache_stem(self, group_id: str, input_paths: list[Path]) -> str:
+        membership = "\n".join(path.name for path in input_paths)
+        return f"{group_id}_{sha256(membership.encode('utf-8')).hexdigest()[:8]}"
+
+    def _equilibrium_figure_path(self, game_name: str, equilibrium: str) -> Path:
+        if not self.supports_matrix_figures(game_name):
             raise ValueError(f"unknown game: {game_name}")
         if equilibrium not in {"ce", "cce"}:
-            raise ValueError(
-                f"unknown equilibrium concept: {equilibrium}"
-            )
-        payoff_tensor = PAYOFF_FACTORIES[game_name]()
-        if payoff_tensor.ndim != 3:
-            raise ValueError(
-                "equilibrium profile heatmaps require exactly two players"
-            )
+            raise ValueError(f"unknown equilibrium concept: {equilibrium}")
+        return PRECOMPUTED_EQUILIBRIUM_DIR / equilibrium_figure_filename(game_name, equilibrium)
 
-        output_path = (
-            self.equilibrium_figure_dir
-            / f"{game_name}_{equilibrium}_blue_maximum_profile_weight.png"
-        )
-        with self._detail_figure_lock:
-            if output_path.is_file():
-                return output_path
-
-            from experiments.plots.plot_equilibrium_weights import (
-                plot_equilibrium_profile_weights,
-            )
-
-            self.equilibrium_figure_dir.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-            with tempfile.TemporaryDirectory(
-                prefix=".equilibrium-",
-                dir=self.equilibrium_figure_dir,
-            ) as temporary_directory:
-                temporary_path = (
-                    Path(temporary_directory) / output_path.name
-                )
-                plot_equilibrium_profile_weights(
-                    payoff_tensor,
-                    equilibrium,
-                    temporary_path,
-                    game_name=self.game_presentations[game_name]["label"],
-                )
-                os.replace(temporary_path, output_path)
+    def precomputed_equilibrium_figure(self, game_name: str, equilibrium: str) -> Path:
+        output_path = self._equilibrium_figure_path(game_name, equilibrium)
+        if not output_path.is_file():
+            raise FileNotFoundError(f"missing precomputed equilibrium figure: {output_path.name}")
         return output_path
 
     def joint_action_figure(self, filename: str) -> Path:
@@ -570,10 +372,22 @@ class DashboardService:
         input_path = self.raw_dir / filename
         if not input_path.is_file():
             raise FileNotFoundError(filename)
+        return self._joint_action_figure([input_path], input_path.stem)
 
-        output_path = self.detail_figure_dir / f"{input_path.stem}_joint_actions.png"
+    def group_joint_action_figure(self, group_id: str) -> Path:
+        input_paths = self._result_group_paths(group_id)
+        cache_stem = self._group_cache_stem(group_id, input_paths)
+        return self._joint_action_figure(input_paths, f"{cache_stem}_replicate_mean")
+
+    def _joint_action_figure(self, input_paths: list[Path], cache_stem: str) -> Path:
+        game_name = next(iter_result_rows(input_paths[0]))["game"]
+        if not self.supports_matrix_figures(game_name):
+            raise ValueError(f"joint-action heatmaps are unavailable for {game_name}")
+
+        output_path = self.detail_figure_dir / f"{cache_stem}_joint_actions_blue_lower_origin.png"
+        input_mtime = max(path.stat().st_mtime_ns for path in input_paths)
         with self._detail_figure_lock:
-            if output_path.is_file() and output_path.stat().st_mtime_ns >= input_path.stat().st_mtime_ns:
+            if output_path.is_file() and output_path.stat().st_mtime_ns >= input_mtime:
                 return output_path
 
             from experiments.plots.plot_joint_actions import plot_joint_actions
@@ -581,9 +395,277 @@ class DashboardService:
             self.detail_figure_dir.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix=".joint-actions-", dir=self.detail_figure_dir) as temporary_directory:
                 temporary_path = Path(temporary_directory) / output_path.name
-                plot_joint_actions(input_path, temporary_path)
+                plot_joint_actions(input_paths, temporary_path)
                 os.replace(temporary_path, output_path)
         return output_path
+
+    def _convergence_figure_paths(
+        self,
+        filename: str,
+        trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+        hide_first: bool = False,
+    ) -> tuple[Path, dict[str, Path]]:
+        filename = validate_leaf_filename(filename, ".csv")
+        input_path = self.raw_dir / filename
+        if not input_path.is_file():
+            raise FileNotFoundError(filename)
+        game_name = next(iter_result_rows(input_path))["game"]
+        if not self.supports_equilibrium_distance(game_name):
+            raise ValueError(f"equilibrium distance is unavailable for {game_name}")
+        paths = {
+            "distance": self.detail_figure_dir / f"{input_path.stem}_equilibrium_distance.png",
+        }
+        if self.supports_equilibrium_trajectory(game_name):
+            first_node = "hide_round_1" if hide_first else "from_round_1"
+            paths["trajectory"] = self.detail_figure_dir / f"{input_path.stem}_p{trajectory_points}_{first_node}_equilibrium_trajectory.png"
+        return input_path, paths
+
+    def _group_convergence_figure_paths(
+        self,
+        group_id: str,
+        trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+        hide_first: bool = False,
+    ) -> tuple[list[Path], dict[str, Path], str]:
+        input_paths = self._result_group_paths(group_id)
+        game_name = next(iter_result_rows(input_paths[0]))["game"]
+        if not self.supports_equilibrium_distance(game_name):
+            raise ValueError(f"equilibrium distance is unavailable for {game_name}")
+        cache_stem = self._group_cache_stem(group_id, input_paths)
+        paths = {
+            "distance": self.detail_figure_dir / f"{cache_stem}_replicate_mean_equilibrium_distance.png",
+        }
+        if self.supports_equilibrium_trajectory(game_name):
+            first_node = "hide_round_1" if hide_first else "from_round_1"
+            paths["trajectory"] = self.detail_figure_dir / f"{cache_stem}_p{trajectory_points}_{first_node}_replicate_mean_equilibrium_trajectory.png"
+        return input_paths, paths, cache_stem
+
+    def _current_convergence_path(self, filename: str, figure: str, trajectory_points: int, hide_first: bool) -> Path | None:
+        input_path, paths = self._convergence_figure_paths(filename, trajectory_points, hide_first)
+        if figure not in paths:
+            raise ValueError(f"unknown equilibrium convergence figure: {figure}")
+        path = paths[figure]
+        if path.is_file() and path.stat().st_mtime_ns >= input_path.stat().st_mtime_ns:
+            return path
+        return None
+
+    def request_equilibrium_convergence_figure(
+        self,
+        filename: str,
+        figure: str,
+        trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+        hide_first: bool = False,
+    ) -> tuple[Path | None, str | None]:
+        future_key = f"{filename}:{figure}" if figure == "distance" else f"{filename}:trajectory:p{trajectory_points}:hide{int(hide_first)}"
+        current_path = self._current_convergence_path(filename, figure, trajectory_points, hide_first)
+        if current_path is not None:
+            with self._convergence_future_lock:
+                future = self._convergence_futures.get(future_key)
+                if future is not None and future.done():
+                    self._convergence_futures.pop(future_key, None)
+            return current_path, None
+
+        scheduled = False
+        with self._convergence_future_lock:
+            future = self._convergence_futures.get(future_key)
+            if future is None:
+                future = self._convergence_executor.submit(
+                    self._generate_equilibrium_convergence_figure,
+                    filename,
+                    figure,
+                    trajectory_points,
+                    hide_first,
+                )
+                self._convergence_futures[future_key] = future
+                scheduled = True
+        if scheduled or not future.done():
+            return None, None
+
+        with self._convergence_future_lock:
+            self._convergence_futures.pop(future_key, None)
+        try:
+            return future.result()[figure], None
+        except Exception as error:
+            logger.exception("Equilibrium convergence figure generation failed for %s", filename)
+            return None, f"{type(error).__name__}: {error}"
+
+    def request_group_equilibrium_convergence_figure(
+        self,
+        group_id: str,
+        figure: str,
+        trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+        hide_first: bool = False,
+    ) -> tuple[Path | None, str | None]:
+        input_paths, paths, cache_stem = self._group_convergence_figure_paths(group_id, trajectory_points, hide_first)
+        if figure not in paths:
+            raise ValueError(f"unknown equilibrium convergence figure: {figure}")
+        input_mtime = max(path.stat().st_mtime_ns for path in input_paths)
+        path = paths[figure]
+        if path.is_file() and path.stat().st_mtime_ns >= input_mtime:
+            return path, None
+
+        future_key = f"group:{cache_stem}:{figure}" if figure == "distance" else f"group:{cache_stem}:trajectory:p{trajectory_points}:hide{int(hide_first)}"
+        scheduled = False
+        with self._convergence_future_lock:
+            future = self._convergence_futures.get(future_key)
+            if future is None:
+                future = self._convergence_executor.submit(
+                    self._generate_group_equilibrium_convergence_figure,
+                    group_id,
+                    figure,
+                    trajectory_points,
+                    hide_first,
+                )
+                self._convergence_futures[future_key] = future
+                scheduled = True
+        if scheduled or not future.done():
+            return None, None
+
+        with self._convergence_future_lock:
+            self._convergence_futures.pop(future_key, None)
+        try:
+            return future.result()[figure], None
+        except Exception as error:
+            logger.exception("Equilibrium convergence figure generation failed for group %s", group_id)
+            return None, f"{type(error).__name__}: {error}"
+
+    def equilibrium_convergence_figures(
+        self,
+        filename: str,
+        trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+        hide_first: bool = False,
+    ) -> dict[str, Path]:
+        input_path, output_paths = self._convergence_figure_paths(filename, trajectory_points, hide_first)
+        return self._generate_equilibrium_convergence_figures([input_path], output_paths, trajectory_points, hide_first)
+
+    def _generate_equilibrium_convergence_figure(
+        self,
+        filename: str,
+        figure: str,
+        trajectory_points: int,
+        hide_first: bool,
+    ) -> dict[str, Path]:
+        input_path, output_paths = self._convergence_figure_paths(filename, trajectory_points, hide_first)
+        return self._generate_equilibrium_convergence_figures(
+            [input_path],
+            output_paths,
+            trajectory_points,
+            hide_first,
+            figure,
+        )
+
+    def group_equilibrium_convergence_figures(
+        self,
+        group_id: str,
+        trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+        hide_first: bool = False,
+    ) -> dict[str, Path]:
+        input_paths, output_paths, _ = self._group_convergence_figure_paths(group_id, trajectory_points, hide_first)
+        return self._generate_equilibrium_convergence_figures(input_paths, output_paths, trajectory_points, hide_first)
+
+    def _generate_group_equilibrium_convergence_figure(
+        self,
+        group_id: str,
+        figure: str,
+        trajectory_points: int,
+        hide_first: bool,
+    ) -> dict[str, Path]:
+        input_paths, output_paths, _ = self._group_convergence_figure_paths(group_id, trajectory_points, hide_first)
+        return self._generate_equilibrium_convergence_figures(
+            input_paths,
+            output_paths,
+            trajectory_points,
+            hide_first,
+            figure,
+        )
+
+    def _generate_equilibrium_convergence_figures(
+        self,
+        input_paths: list[Path],
+        output_paths: dict[str, Path],
+        trajectory_points: int,
+        hide_first: bool,
+        requested_figure: str | None = None,
+    ) -> dict[str, Path]:
+        with self._detail_figure_lock:
+            input_state = {path: path.stat().st_mtime_ns for path in input_paths}
+            input_mtime = max(input_state.values())
+            needed = {
+                name
+                for name, path in output_paths.items()
+                if not path.is_file() or path.stat().st_mtime_ns < input_mtime
+            }
+            if requested_figure is not None:
+                if requested_figure not in output_paths:
+                    raise ValueError(f"unknown equilibrium convergence figure: {requested_figure}")
+                needed &= {requested_figure}
+            if not needed:
+                return output_paths
+            generation = self._detail_figure_generation
+            self.detail_figure_dir.mkdir(parents=True, exist_ok=True)
+
+        from experiments.plots.plot_equilibrium_convergence import (
+            plot_result_equilibrium_convergence,
+            plot_result_equilibrium_distance,
+            plot_result_equilibrium_trajectory,
+        )
+
+        with tempfile.TemporaryDirectory(prefix=".equilibrium-convergence-", dir=self.detail_figure_dir) as temporary_directory:
+            temporary_paths = {name: Path(temporary_directory) / path.name for name, path in output_paths.items()}
+            game_label = self.game_presentations[next(iter_result_rows(input_paths[0]))["game"]]["label"]
+
+            def publish(name: str) -> None:
+                with self._detail_figure_lock:
+                    if generation != self._detail_figure_generation:
+                        raise RuntimeError("equilibrium convergence figure generation was invalidated")
+                    if any(not path.is_file() or path.stat().st_mtime_ns != mtime for path, mtime in input_state.items()):
+                        raise RuntimeError("experiment group changed while equilibrium convergence figures were generated")
+                    os.replace(temporary_paths[name], output_paths[name])
+
+            if needed == {"distance", "trajectory"}:
+                plot_result_equilibrium_convergence(
+                    input_paths,
+                    temporary_paths["distance"],
+                    temporary_paths["trajectory"],
+                    trajectory_points=trajectory_points,
+                    game_label=game_label,
+                    distance_ready=lambda: publish("distance"),
+                    custom_game_dir=self.game_catalog.custom_game_dir,
+                    hide_first=hide_first,
+                )
+            elif needed == {"distance"}:
+                plot_result_equilibrium_distance(
+                    input_paths, temporary_paths["distance"], game_label=game_label,
+                    custom_game_dir=self.game_catalog.custom_game_dir,
+                )
+            else:
+                plot_result_equilibrium_trajectory(
+                    input_paths,
+                    temporary_paths["trajectory"],
+                    trajectory_points=trajectory_points,
+                    game_label=game_label,
+                    custom_game_dir=self.game_catalog.custom_game_dir,
+                    hide_first=hide_first,
+                )
+            with self._detail_figure_lock:
+                if generation != self._detail_figure_generation:
+                    raise RuntimeError("equilibrium convergence figure generation was invalidated")
+                if any(not path.is_file() or path.stat().st_mtime_ns != mtime for path, mtime in input_state.items()):
+                    raise RuntimeError("experiment group changed while equilibrium convergence figures were generated")
+                for name, temporary_path in temporary_paths.items():
+                    if temporary_path.is_file():
+                        os.replace(temporary_path, output_paths[name])
+        return output_paths
+
+    def _invalidate_detail_figures(self) -> None:
+        with self._convergence_future_lock:
+            for future in self._convergence_futures.values():
+                future.cancel()
+            self._convergence_futures.clear()
+        with self._detail_figure_lock:
+            self._detail_figure_generation += 1
+            if self.detail_figure_dir.exists():
+                for path in self.detail_figure_dir.glob("*.png"):
+                    path.unlink()
 
     def delete_experiment(self, filename: str) -> None:
         filename = validate_leaf_filename(filename, ".csv")
@@ -593,8 +675,8 @@ class DashboardService:
             if not csv_path.is_file():
                 raise FileNotFoundError(f"experiment {filename} does not exist")
 
+            self._invalidate_detail_figures()
             csv_path.unlink()
-            (self.detail_figure_dir / f"{csv_path.stem}_joint_actions.png").unlink(missing_ok=True)
             try:
                 self._publish_plots()
             except Exception as error:
@@ -608,11 +690,12 @@ class DashboardService:
 
     def clear_results(self) -> None:
         def operation() -> None:
+            self._invalidate_detail_figures()
             if self.raw_dir.exists():
                 for path in self.raw_dir.glob("*.csv"):
                     path.unlink()
             if self.figure_dir.exists():
-                for path in self.figure_dir.rglob("*.png"):
+                for path in self.figure_dir.glob("*.png"):
                     path.unlink()
 
             report_path = self.results_dir / "index.html"
@@ -620,9 +703,6 @@ class DashboardService:
                 report_path.unlink()
 
         self.jobs.run_maintenance(operation)
-
-    def experiment_filenames(self) -> list[str]:
-        return self.result_snapshot().filenames
 
     def result_snapshot(self) -> ResultSnapshot:
         return self.result_index.snapshot()
@@ -667,10 +747,6 @@ class DashboardService:
                 "view": "average" if average_match else "sqrt_scaling",
             }
         return None
-
-    def experiment_summaries(self) -> tuple[list[dict], list[str]]:
-        snapshot = self.result_snapshot()
-        return snapshot.summaries, snapshot.warnings
 
     def validate_csv_filename(self, filename: str) -> str:
         return validate_leaf_filename(filename, ".csv")

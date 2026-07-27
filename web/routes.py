@@ -11,8 +11,11 @@ from flask import (
     url_for,
 )
 
-from web.services import DashboardService, PlotUpdateError, ServiceBusyError
-from web.validation import ExperimentForm, parse_experiment_form
+from experiments.game_catalog import MAX_CUSTOM_ACTIONS_PER_PLAYER, MAX_CUSTOM_PLAYERS
+from web.jobs import ServiceBusyError
+from web.services import DashboardService, PlotUpdateError
+from web.validation import DEFAULT_TRAJECTORY_POINTS, ExperimentForm, parse_experiment_form, parse_non_negative_integer, parse_positive_integer, parse_trajectory_hide_first, parse_trajectory_points
+from web.view_models import custom_games_context, dashboard_context, figure_data as build_figure_data
 
 
 dashboard = Blueprint("dashboard", __name__)
@@ -22,79 +25,32 @@ def get_service() -> DashboardService:
     return current_app.extensions["dashboard_service"]
 
 
-def _figure_data() -> list[dict]:
-    return [{**figure, "url": url_for("dashboard.serve_figure", filename=figure["filename"])} for figure in get_service().figure_records()]
-
-
-def _equilibrium_figure_data() -> dict[str, dict[str, str]]:
-    return {
-        game_name: {
-            equilibrium: url_for(
-                "dashboard.equilibrium_figure",
-                game_name=game_name,
-                equilibrium=equilibrium,
-            )
-            for equilibrium in ("ce", "cce")
-        }
-        for game_name in get_service().games
-    }
-
-
 def _dashboard_context(form_state: dict | None = None, inline_error: str | None = None) -> dict:
-    service = get_service()
-    results = service.result_snapshot()
-    jobs = service.jobs.recent()
-    group_fields = ("game", "feedback_mode", "algorithm_player_0", "algorithm_player_1", "horizon", "seed", "stationary_method")
-    replicates_by_group = {}
-    for summary in results.summaries:
-        key = tuple(summary[field] for field in group_fields)
-        replicates_by_group.setdefault(key, set()).add(summary["replicate"])
-    summaries = [
-        {
-            **summary,
-            "replicate_count": len(replicates_by_group[tuple(summary[field] for field in group_fields)]),
-            "download_url": url_for("dashboard.download_experiment", filename=summary["experiment"]),
-            "joint_actions_url": url_for("dashboard.joint_actions", filename=summary["experiment"]),
-        }
-        for summary in results.summaries
-    ]
-
-    job_data = [
-        {
-            **job.public_data(),
-            "url": url_for("dashboard.job_status", job_id=job.id),
-        }
-        for job in jobs
-    ]
-    return {
-        "games": service.games,
-        "game_presentations": service.game_presentations,
-        "feedback_modes": service.feedback_modes,
-        "algorithms_by_feedback_mode": service.algorithms_by_feedback_mode,
-        "algorithm_labels": service.algorithm_labels,
-        "experiments": results.filenames,
-        "figures": _figure_data(),
-        "equilibrium_figures": _equilibrium_figure_data(),
-        "summaries": summaries,
-        "warnings": results.warnings,
-        "jobs": job_data,
-        "busy": service.jobs.is_busy(),
-        "form_state": form_state or service.default_form_state(),
-        "inline_error": inline_error,
-        "max_horizon": current_app.config["MAX_HORIZON"],
-        "max_replicates": current_app.config["MAX_REPLICATES"],
-    }
+    return dashboard_context(get_service(), form_state, inline_error)
 
 
 def _parse_form() -> ExperimentForm:
     service = get_service()
     return parse_experiment_form(
         request.form,
-        games=set(service.games),
+        games=service.game_player_counts,
         algorithms_by_feedback_mode=service.algorithms_by_feedback_mode,
         max_horizon=current_app.config["MAX_HORIZON"],
         max_replicates=current_app.config["MAX_REPLICATES"],
     )
+
+
+def _submitted_form_state() -> dict:
+    service = get_service()
+    state = service.default_form_state() | dict(request.form)
+    algorithm_names = request.form.getlist("algorithm_names")
+    if algorithm_names:
+        state["algorithm_names"] = algorithm_names
+    return state
+
+
+def _custom_games_context(form_state: dict | None = None, inline_error: str | None = None, inspection: dict | None = None) -> dict:
+    return custom_games_context(get_service(), form_state, inline_error, inspection)
 
 
 @dashboard.route("/", methods=["GET", "POST"])
@@ -106,11 +62,10 @@ def index():
         form = _parse_form()
         job = get_service().submit_experiment(form)
     except (FileExistsError, ServiceBusyError, ValueError) as error:
-        raw_state = get_service().default_form_state() | dict(request.form)
         return (
             render_template(
                 "index.html",
-                **_dashboard_context(raw_state, str(error)),
+                **_dashboard_context(_submitted_form_state(), str(error)),
             ),
             400,
         )
@@ -125,17 +80,85 @@ def run_all_pairs():
         form = _parse_form()
         job, scheduled_count, skipped_count = get_service().submit_all_pairs(form)
     except (FileExistsError, ServiceBusyError, ValueError) as error:
-        raw_state = get_service().default_form_state() | dict(request.form)
         return (
             render_template(
                 "index.html",
-                **_dashboard_context(raw_state, str(error)),
+                **_dashboard_context(_submitted_form_state(), str(error)),
             ),
             400,
         )
 
     flash(f"Queued job {job.id[:8]} for {scheduled_count} runs; {skipped_count} already exist or are queued.", "success")
     return redirect(url_for("dashboard.index"))
+
+
+@dashboard.route("/custom-games", methods=["GET", "POST"])
+def custom_games():
+    service = get_service()
+    if request.method == "POST":
+        try:
+            n_players = parse_positive_integer(request.form["n_players"], "number of players", MAX_CUSTOM_PLAYERS)
+            action_counts = [
+                parse_positive_integer(value, f"player {player} actions", MAX_CUSTOM_ACTIONS_PER_PLAYER)
+                for player, value in enumerate(request.form.getlist("action_counts"))
+            ]
+            seed = parse_non_negative_integer(request.form["seed"], "seed")
+            definition = service.create_custom_game(request.form["name"], n_players, action_counts, seed)
+        except (FileExistsError, KeyError, OSError, ValueError) as error:
+            form_state = dict(request.form)
+            form_state["action_counts"] = request.form.getlist("action_counts")
+            return render_template("custom_games.html", **_custom_games_context(form_state, str(error))), 400
+        flash(f"Created custom game {definition.label}.", "success")
+        return redirect(url_for("dashboard.custom_games"))
+
+    return render_template("custom_games.html", **_custom_games_context())
+
+
+@dashboard.get("/custom-games/<game_id>")
+def inspect_custom_game(game_id: str):
+    try:
+        inspection = get_service().custom_game_inspection(game_id)
+    except (FileNotFoundError, KeyError, ValueError):
+        abort(404)
+    return render_template("custom_games.html", **_custom_games_context(inspection=inspection))
+
+
+@dashboard.get("/custom-games/<game_id>/payoff-slice")
+def custom_game_payoff_slice(game_id: str):
+    try:
+        payoff_player = int(request.args.get("payoff_player", ""))
+        row_player = int(request.args.get("row_player", ""))
+        column_player = int(request.args.get("column_player", ""))
+        fixed_actions = [int(value) for value in request.args.getlist("fixed_action")]
+    except ValueError as error:
+        return jsonify({"error": f"invalid payoff-slice parameters: {error}"}), 400
+    try:
+        data = get_service().custom_game_payoff_slice(game_id, payoff_player, row_player, column_player, fixed_actions)
+    except (FileNotFoundError, KeyError):
+        abort(404)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    return jsonify(data)
+
+
+@dashboard.get("/custom-games/<game_id>/download")
+def download_custom_game(game_id: str):
+    try:
+        path = get_service().custom_game_file(game_id)
+    except (FileNotFoundError, KeyError, ValueError):
+        abort(404)
+    return send_from_directory(path.parent.resolve(), path.name, as_attachment=True)
+
+
+@dashboard.post("/custom-games/delete")
+def delete_custom_game():
+    try:
+        definition = get_service().delete_custom_game(request.form["game_id"])
+    except (FileNotFoundError, KeyError, OSError, ServiceBusyError, ValueError) as error:
+        flash(str(error), "error")
+    else:
+        flash(f"Deleted custom game {definition.label}.", "success")
+    return redirect(url_for("dashboard.custom_games"))
 
 
 @dashboard.post("/plots/rebuild")
@@ -164,7 +187,7 @@ def job_status(job_id: str):
 
 @dashboard.get("/figures")
 def figure_data():
-    return jsonify(_figure_data())
+    return jsonify(build_figure_data(get_service()))
 
 
 @dashboard.post("/jobs/<job_id>/cancel")
@@ -197,12 +220,11 @@ def serve_figure(filename: str):
 )
 def equilibrium_figure(game_name: str, equilibrium: str):
     try:
-        path = get_service().equilibrium_figure(
-            game_name,
-            equilibrium,
-        )
+        path = get_service().precomputed_equilibrium_figure(game_name, equilibrium)
     except (KeyError, ValueError):
         abort(404)
+    except FileNotFoundError as error:
+        return jsonify({"status": "failed", "error": str(error)}), 500
     return send_from_directory(path.parent.resolve(), path.name)
 
 
@@ -226,6 +248,77 @@ def joint_actions(filename: str):
     except (FileNotFoundError, KeyError, ValueError):
         abort(404)
     return send_from_directory(path.parent.resolve(), path.name)
+
+
+@dashboard.get("/experiment-groups/<group_id>/joint-actions.png")
+def group_joint_actions(group_id: str):
+    try:
+        path = get_service().group_joint_action_figure(group_id)
+    except (FileNotFoundError, KeyError, ValueError):
+        abort(404)
+    return send_from_directory(path.parent.resolve(), path.name)
+
+
+def _equilibrium_convergence_figure(filename: str, figure: str, trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+                                    hide_first: bool = False):
+    try:
+        path, error = get_service().request_equilibrium_convergence_figure(filename, figure, trajectory_points, hide_first)
+    except (FileNotFoundError, KeyError, ValueError):
+        abort(404)
+    if error is not None:
+        return jsonify({"status": "failed", "error": error}), 500
+    if path is None:
+        response = jsonify({"status": "generating", "message": "Computing equilibrium convergence…"})
+        response.status_code = 202
+        response.headers["Retry-After"] = "2"
+        return response
+    return send_from_directory(path.parent.resolve(), path.name)
+
+
+def _group_equilibrium_convergence_figure(group_id: str, figure: str, trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
+                                          hide_first: bool = False):
+    try:
+        path, error = get_service().request_group_equilibrium_convergence_figure(group_id, figure, trajectory_points, hide_first)
+    except (FileNotFoundError, KeyError, ValueError):
+        abort(404)
+    if error is not None:
+        return jsonify({"status": "failed", "error": error}), 500
+    if path is None:
+        response = jsonify({"status": "generating", "message": "Computing replicate equilibrium convergence…"})
+        response.status_code = 202
+        response.headers["Retry-After"] = "2"
+        return response
+    return send_from_directory(path.parent.resolve(), path.name)
+
+
+@dashboard.get("/experiments/<filename>/equilibrium-distance.png")
+def equilibrium_distance(filename: str):
+    return _equilibrium_convergence_figure(filename, "distance")
+
+
+@dashboard.get("/experiments/<filename>/equilibrium-trajectory.png")
+def equilibrium_trajectory(filename: str):
+    try:
+        trajectory_points = parse_trajectory_points(request.args.get("points"))
+        hide_first = parse_trajectory_hide_first(request.args.get("hide_first"))
+    except ValueError as error:
+        abort(400, description=str(error))
+    return _equilibrium_convergence_figure(filename, "trajectory", trajectory_points, hide_first)
+
+
+@dashboard.get("/experiment-groups/<group_id>/equilibrium-distance.png")
+def group_equilibrium_distance(group_id: str):
+    return _group_equilibrium_convergence_figure(group_id, "distance")
+
+
+@dashboard.get("/experiment-groups/<group_id>/equilibrium-trajectory.png")
+def group_equilibrium_trajectory(group_id: str):
+    try:
+        trajectory_points = parse_trajectory_points(request.args.get("points"))
+        hide_first = parse_trajectory_hide_first(request.args.get("hide_first"))
+    except ValueError as error:
+        abort(400, description=str(error))
+    return _group_equilibrium_convergence_figure(group_id, "trajectory", trajectory_points, hide_first)
 
 
 @dashboard.post("/delete-experiment")

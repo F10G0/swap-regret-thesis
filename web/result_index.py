@@ -4,8 +4,8 @@ import math
 from pathlib import Path
 from threading import Lock
 
-from experiments.results import EXPERIMENT_PLAYERS, load_final_result_rows
-from experiments.scenarios.fieldnames import EXPECTED_REGRET_FIELDNAMES, REALIZED_REGRET_FIELDNAMES
+from experiments.result_schema import EXPECTED_REGRET_FIELDNAMES, REALIZED_REGRET_FIELDNAMES
+from experiments.results import load_final_result_rows, result_algorithm_profile, result_player_algorithm, result_regret_evaluation
 
 
 SUMMARY_REGRET_FIELDS = tuple(field for field in EXPECTED_REGRET_FIELDNAMES + REALIZED_REGRET_FIELDNAMES if field.startswith("average_"))
@@ -59,7 +59,9 @@ class ResultIndex:
             rows = load_final_result_rows(path)
             if not rows:
                 raise ValueError("file has no result rows")
-            if {int(row["player"]) for row in rows} != set(range(EXPERIMENT_PLAYERS)):
+            n_players = len(result_algorithm_profile(rows[0]))
+            players = sorted(int(row["player"]) for row in rows)
+            if players != list(range(n_players)):
                 raise ValueError("file has incomplete final player rows")
 
             summaries = []
@@ -73,17 +75,24 @@ class ResultIndex:
             return [], f"Skipped {path.name}: {error}"
 
     def _summary_from_row(self, filename: str, row: dict[str, str]) -> dict:
+        algorithm_profile = result_algorithm_profile(row)
+        player = int(row["player"])
         result = {
             "experiment": filename,
             "game": row["game"],
             "run_id": row["run_id"],
             "feedback_mode": row["feedback_mode"],
+            "regret_evaluation": result_regret_evaluation(row),
             "seed": int(row["seed"]),
             "replicate": int(row["replicate"]),
             "stationary_method": row["stationary_method"],
-            "player": int(row["player"]),
-            "algorithm_player_0": row["algorithm_player_0"],
-            "algorithm_player_1": row["algorithm_player_1"],
+            "player": player,
+            "n_players": len(algorithm_profile),
+            "algorithm_profile": list(algorithm_profile),
+            "player_algorithm": result_player_algorithm(row),
+            "co_player_algorithms": [algorithm for position, algorithm in enumerate(algorithm_profile) if position != player],
+            "algorithm_player_0": algorithm_profile[0],
+            "algorithm_player_1": algorithm_profile[1],
             "horizon": int(row["horizon"]),
         }
         for field in SUMMARY_REGRET_FIELDS:

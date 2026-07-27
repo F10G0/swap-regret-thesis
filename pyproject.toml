@@ -12,6 +12,9 @@ dependencies = [
     "flask",
     "matplotlib",
     "numpy",
+    # games_learning's pinned editable checkout is installed by the Makefile
+    # because its wheel omits the game and utils subpackages used here.
+    "PuLP==2.9.0",
     "scipy",
 ]
 
@@ -42,6 +45,7 @@ web = [
     "templates/*.html",
     "static/*.css",
     "static/*.js",
+    "static/equilibria/*.png",
 ]
 
 [tool.pytest.ini_options]

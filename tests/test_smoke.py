@@ -88,6 +88,63 @@ def test_bandit_experiment_smoke(tmp_path, monkeypatch) -> None:
     assert "expected_swap_regret" not in rows[0]
 
 
+@pytest.mark.parametrize(
+    ("feedback_mode", "regret_evaluation", "expected_sources"),
+    [
+        ("full_information", "expected", {"expected"}),
+        ("full_information", "realized", {"realized"}),
+        ("full_information", "both", {"expected", "realized"}),
+        ("bandit", "expected", {"expected"}),
+        ("bandit", "realized", {"realized"}),
+        ("bandit", "both", {"expected", "realized"}),
+    ],
+)
+def test_regret_evaluation_is_independent_of_feedback_mode(
+    tmp_path,
+    feedback_mode: str,
+    regret_evaluation: str,
+    expected_sources: set[str],
+) -> None:
+    if feedback_mode == "full_information":
+        output_path = full_information_cross_play.run_full_information_cross_play_experiment(
+            game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, seed=7,
+            output_dir=tmp_path, regret_evaluation=regret_evaluation,
+        )
+    else:
+        output_path = bandit_cross_play.run_bandit_cross_play_experiment(
+            game_name="rps", algorithm_names=["exp3", "exp3"], horizon=2, seed=7,
+            output_dir=tmp_path, regret_evaluation=regret_evaluation,
+        )
+
+    rows = _read_rows(output_path)
+    assert {row["regret_evaluation"] for row in rows} == {regret_evaluation}
+    for source in ("expected", "realized"):
+        assert (f"{source}_swap_regret" in rows[0]) == (source in expected_sources)
+
+
+def test_regret_evaluation_does_not_change_bandit_play(tmp_path) -> None:
+    expected_path = bandit_cross_play.run_bandit_cross_play_experiment(
+        game_name="rps", algorithm_names=["exp3", "exp3"], horizon=10, seed=7,
+        output_dir=tmp_path, regret_evaluation="expected",
+    )
+    both_path = bandit_cross_play.run_bandit_cross_play_experiment(
+        game_name="rps", algorithm_names=["exp3", "exp3"], horizon=10, seed=7,
+        output_dir=tmp_path, regret_evaluation="both",
+    )
+
+    expected_rows = _read_rows(expected_path)
+    both_rows = _read_rows(both_path)
+    behavior_fields = ("t", "player", "action", "payoff")
+    assert expected_path != both_path
+    assert [
+        tuple(row[field] for field in behavior_fields)
+        for row in expected_rows
+    ] == [
+        tuple(row[field] for field in behavior_fields)
+        for row in both_rows
+    ]
+
+
 def test_cancelled_experiment_does_not_publish_partial_result(tmp_path) -> None:
     with pytest.raises(ExperimentCancelled):
         bandit_cross_play.run_bandit_cross_play_experiment(

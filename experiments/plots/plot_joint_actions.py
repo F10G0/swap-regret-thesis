@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from itertools import chain
 from pathlib import Path
 
@@ -10,12 +11,11 @@ import numpy as np
 
 from experiments.games import PAYOFF_FACTORIES
 from experiments.plots import HEATMAP_COLORMAP
-from experiments.results import EXPERIMENT_PLAYERS, iter_result_rows
+from experiments.results import iter_result_rows
 
 
-def plot_joint_actions(input_path: str | Path, output_path: str | Path) -> None:
+def joint_action_distribution(input_path: str | Path) -> tuple[str, np.ndarray]:
     input_path = Path(input_path)
-    output_path = Path(output_path)
     rows = iter_result_rows(input_path)
     first_row = next(rows, None)
     if first_row is None:
@@ -23,6 +23,7 @@ def plot_joint_actions(input_path: str | Path, output_path: str | Path) -> None:
 
     game_name = first_row["game"]
     action_counts = PAYOFF_FACTORIES[game_name]().shape[1:]
+    n_players = len(action_counts)
     counts = np.zeros(action_counts, dtype=int)
     current_time = None
     actions = {}
@@ -30,23 +31,40 @@ def plot_joint_actions(input_path: str | Path, output_path: str | Path) -> None:
     for row in chain((first_row,), rows):
         time = int(row["t"])
         if current_time is not None and time != current_time:
-            if len(actions) != EXPERIMENT_PLAYERS:
+            if len(actions) != n_players:
                 raise ValueError(f"round {current_time} has incomplete actions")
             counts[actions[0], actions[1]] += 1
             actions = {}
         current_time = time
         actions[int(row["player"])] = int(row["action"])
 
-    if len(actions) != EXPERIMENT_PLAYERS:
+    if len(actions) != n_players:
         raise ValueError(f"round {current_time} has incomplete actions")
     counts[actions[0], actions[1]] += 1
+    return game_name, counts / np.sum(counts)
 
-    frequencies = counts / np.sum(counts)
+
+def mean_joint_action_distribution(input_paths: Iterable[str | Path]) -> tuple[str, np.ndarray, int]:
+    distributions = [joint_action_distribution(path) for path in input_paths]
+    if not distributions:
+        raise ValueError("at least one result file is required")
+    game_name = distributions[0][0]
+    if any(game != game_name for game, _ in distributions):
+        raise ValueError("joint-action results must use the same game")
+    return game_name, np.mean([distribution for _, distribution in distributions], axis=0), len(distributions)
+
+
+def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_path: str | Path) -> None:
+    paths = [input_paths] if isinstance(input_paths, (str, Path)) else list(input_paths)
+    game_name, frequencies, n_replicates = mean_joint_action_distribution(paths)
+    action_counts = frequencies.shape
+    output_path = Path(output_path)
     figure, axes = plt.subplots(figsize=(6.5, 5.5))
-    image = axes.imshow(frequencies, cmap=HEATMAP_COLORMAP, vmin=0.0, vmax=max(float(np.max(frequencies)), 1.0 / frequencies.size))
+    image = axes.imshow(frequencies, cmap=HEATMAP_COLORMAP, origin="lower", vmin=0.0, vmax=max(float(np.max(frequencies)), 1.0 / frequencies.size))
     axes.set_xlabel("Player 1 action")
     axes.set_ylabel("Player 0 action")
-    axes.set_title(f"{game_name}: empirical joint-action distribution")
+    title = "empirical joint-action distribution" if n_replicates == 1 else f"mean empirical joint-action distribution ({n_replicates} replicates)"
+    axes.set_title(f"{game_name}: {title}")
     axes.set_xticks(range(action_counts[1]))
     axes.set_yticks(range(action_counts[0]))
 

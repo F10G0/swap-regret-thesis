@@ -14,3 +14,4 @@ EQUILIBRIUM_LP_TOLERANCE = 1e-8
 RESULTS_DIR = Path("results")
 RAW_DIR = RESULTS_DIR / "raw"
 FIGURE_DIR = RESULTS_DIR / "figures"
+CUSTOM_GAME_DIR = Path("data") / "custom_games"

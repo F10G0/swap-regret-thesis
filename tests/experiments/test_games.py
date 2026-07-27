@@ -1,14 +1,31 @@
+from games_learning.game.econ_game import (
+    BertrandLinear,
+    BertrandLogit,
+    BertrandStandard,
+)
+from games_learning.game.matrix_game import ExampleMatrixGames
 import numpy as np
 import pytest
 
 from experiments.games import (
     PAYOFF_FACTORIES,
-    create_cyclic_dominance_payoffs,
     create_linear_bertrand_payoffs,
     create_logit_bertrand_payoffs,
+    create_matching_pennies_payoffs,
+    create_rock_paper_scissors_payoffs,
+    create_rock_paper_scissors_lizard_spock_payoffs,
     create_standard_bertrand_payoffs,
     normalize_payoffs,
 )
+
+
+def normalized_upstream_payoffs(game) -> np.ndarray:
+    return np.stack(
+        [
+            normalize_payoffs(game.payoff_matrix[player])
+            for player in range(game.n_agents)
+        ]
+    )
 
 
 def test_benchmark_payoffs_are_valid_two_player_games() -> None:
@@ -16,14 +33,53 @@ def test_benchmark_payoffs_are_valid_two_player_games() -> None:
         payoffs = factory()
         assert payoffs.shape[0] == 2
         assert payoffs.ndim == 3
+        assert np.all(np.isfinite(payoffs))
         assert np.all((0.0 <= payoffs) & (payoffs <= 1.0))
 
 
-def test_cyclic_dominance_is_balanced() -> None:
-    payoffs = create_cyclic_dominance_payoffs(5)
+def test_rps_is_sourced_from_games_learning() -> None:
+    upstream = ExampleMatrixGames("rock_paper_scissors")
+
+    assert np.array_equal(
+        create_rock_paper_scissors_payoffs(),
+        normalized_upstream_payoffs(upstream),
+    )
+
+
+def test_literature_benchmark_suite_has_only_role_driven_games() -> None:
+    assert set(PAYOFF_FACTORIES) == {
+        "rps",
+        "rpsls",
+        "matching_pennies",
+        "bertrand_standard_o1",
+        "bertrand_linear_o2",
+        "bertrand_logit_o3",
+        "bertrand_linear_o2_prime",
+        "bertrand_logit_o3_prime",
+    }
+
+
+def test_rpsls_is_balanced_symmetric_zero_sum_equivalent() -> None:
+    payoffs = create_rock_paper_scissors_lizard_spock_payoffs()
+
+    assert payoffs.shape == (2, 5, 5)
+    assert np.all(np.diag(payoffs[0]) == 0.5)
     assert np.all(np.sum(payoffs[0] == 1.0, axis=1) == 2)
     assert np.all(np.sum(payoffs[0] == 0.0, axis=1) == 2)
+    assert np.allclose(payoffs[0], payoffs[1].T)
+    assert payoffs[0, 0, 2] == 1.0
+    assert payoffs[0, 3, 4] == 1.0
+    assert payoffs[0, 4, 1] == 0.0
+
+
+def test_matching_pennies_is_sourced_from_games_learning() -> None:
+    upstream = ExampleMatrixGames("matching_pennies")
+    payoffs = create_matching_pennies_payoffs()
+
+    assert np.array_equal(payoffs, normalized_upstream_payoffs(upstream))
+    assert payoffs.shape == (2, 2, 2)
     assert np.allclose(payoffs[0] + payoffs[1], 1.0)
+    assert not np.allclose(payoffs[0], payoffs[1].T)
 
 
 def test_normalize_payoffs_rejects_constant_values() -> None:
@@ -31,16 +87,103 @@ def test_normalize_payoffs_rejects_constant_values() -> None:
         normalize_payoffs(np.ones((2, 2)))
 
 
-def test_standard_bertrand_payoffs_have_expected_shape_and_range() -> None:
-    payoffs = create_standard_bertrand_payoffs(
-        n_actions=5,
-        cost=(0.0, 0.0),
-        interval=(0.1, 1.0),
+def test_standard_bertrand_matches_games_learning() -> None:
+    parameters = {
+        "n_actions": 5,
+        "cost": (0.1, 0.2),
+        "interval": (0.1, 1.0),
+        "maximum_demand": 2.0,
+    }
+    upstream = BertrandStandard(
+        n_agents=2,
+        n_discr=parameters["n_actions"],
+        cost=parameters["cost"],
+        interval=parameters["interval"],
+        maximum_demand=parameters["maximum_demand"],
     )
 
+    payoffs = create_standard_bertrand_payoffs(**parameters)
+
     assert payoffs.shape == (2, 5, 5)
-    assert np.all(np.isfinite(payoffs))
-    assert np.all((0.0 <= payoffs) & (payoffs <= 1.0))
+    assert np.allclose(payoffs, normalized_upstream_payoffs(upstream))
+
+
+def test_standard_bertrand_uses_upstream_price_sensitive_demand() -> None:
+    maximum_demand = 2.0
+    game = BertrandStandard(
+        n_agents=2,
+        n_discr=3,
+        cost=(0.0, 0.0),
+        interval=(0.2, 1.0),
+        maximum_demand=maximum_demand,
+    )
+    prices = game.actions
+
+    lower_price_profit = prices[0] * maximum_demand * (1.0 - prices[0])
+    tied_price_profit = (
+        prices[1]
+        * maximum_demand
+        * (1.0 - prices[1])
+        / 2.0
+    )
+    assert game.payoff_matrix[0, 0, 1] == pytest.approx(
+        lower_price_profit
+    )
+    assert game.payoff_matrix[1, 0, 1] == pytest.approx(0.0)
+    assert game.payoff_matrix[0, 1, 1] == pytest.approx(
+        tied_price_profit
+    )
+    assert game.payoff_matrix[1, 1, 1] == pytest.approx(
+        tied_price_profit
+    )
+    assert game.payoff_matrix[0, 2, 2] == pytest.approx(0.0)
+    assert game.payoff_matrix[1, 2, 2] == pytest.approx(0.0)
+
+
+def test_linear_bertrand_matches_games_learning() -> None:
+    parameters = {
+        "n_actions": 4,
+        "cost": (0.1, 0.2),
+        "interval": (0.0, 1.0),
+        "alpha": (0.48, 0.6),
+        "beta": (0.9, 0.8),
+        "gamma": 0.6,
+    }
+    upstream = BertrandLinear(
+        n_agents=2,
+        n_discr=parameters["n_actions"],
+        cost=parameters["cost"],
+        interval=parameters["interval"],
+        alpha=parameters["alpha"],
+        beta=parameters["beta"],
+        gamma=parameters["gamma"],
+    )
+
+    payoffs = create_linear_bertrand_payoffs(**parameters)
+
+    assert np.allclose(payoffs, normalized_upstream_payoffs(upstream))
+
+
+def test_logit_bertrand_matches_games_learning() -> None:
+    parameters = {
+        "n_actions": 4,
+        "cost": (0.5, 1.0),
+        "interval": (0.5, 2.0),
+        "alpha": (1.5, 2.0),
+        "mu": (0.25, 0.3),
+    }
+    upstream = BertrandLogit(
+        n_agents=2,
+        n_discr=parameters["n_actions"],
+        cost=parameters["cost"],
+        interval=parameters["interval"],
+        alpha=parameters["alpha"],
+        mu=parameters["mu"],
+    )
+
+    payoffs = create_logit_bertrand_payoffs(**parameters)
+
+    assert np.allclose(payoffs, normalized_upstream_payoffs(upstream))
 
 
 def test_standard_bertrand_is_symmetric_with_equal_costs() -> None:
@@ -54,40 +197,20 @@ def test_standard_bertrand_is_symmetric_with_equal_costs() -> None:
     assert np.allclose(payoffs[0], payoffs[1].T)
 
 
-def test_standard_bertrand_matches_raw_profit_rules_before_normalization() -> None:
-    n_actions = 3
-    maximum_demand = 2.0
-    prices = np.linspace(0.2, 1.0, n_actions)
-    expected_player_0 = np.zeros((n_actions, n_actions))
-    expected_player_1 = np.zeros((n_actions, n_actions))
-    for action_0, price_0 in enumerate(prices):
-        for action_1, price_1 in enumerate(prices):
-            if price_0 < price_1:
-                demand_0, demand_1 = maximum_demand, 0.0
-            elif price_1 < price_0:
-                demand_0, demand_1 = 0.0, maximum_demand
-            else:
-                demand_0 = demand_1 = maximum_demand / 2.0
-            expected_player_0[action_0, action_1] = price_0 * demand_0
-            expected_player_1[action_0, action_1] = price_1 * demand_1
-
-    payoffs = create_standard_bertrand_payoffs(
-        n_actions=n_actions,
-        cost=(0.0, 0.0),
-        interval=(0.2, 1.0),
-        maximum_demand=maximum_demand,
-    )
-
-    assert expected_player_0[0, 1] > 0.0
-    assert expected_player_1[0, 1] == 0.0
-    assert expected_player_0[1, 1] == pytest.approx(prices[1])
-    assert expected_player_1[1, 1] == pytest.approx(prices[1])
-    assert np.allclose(payoffs[0], normalize_payoffs(expected_player_0))
-    assert np.allclose(payoffs[1], normalize_payoffs(expected_player_1))
-
-
-def test_o1_bertrand_factory_has_21_actions_per_player() -> None:
-    payoffs = PAYOFF_FACTORIES["bertrand_standard_o1"]()
+@pytest.mark.parametrize(
+    "factory_name",
+    [
+        "bertrand_standard_o1",
+        "bertrand_linear_o2",
+        "bertrand_logit_o3",
+        "bertrand_linear_o2_prime",
+        "bertrand_logit_o3_prime",
+    ],
+)
+def test_bertrand_factories_have_21_actions_per_player(
+    factory_name: str,
+) -> None:
+    payoffs = PAYOFF_FACTORIES[factory_name]()
 
     assert payoffs.shape == (2, 21, 21)
 
@@ -95,27 +218,14 @@ def test_o1_bertrand_factory_has_21_actions_per_player() -> None:
 @pytest.mark.parametrize(
     "factory_name",
     [
+        "bertrand_standard_o1",
         "bertrand_linear_o2",
         "bertrand_logit_o3",
-        "bertrand_linear_o2_prime",
-        "bertrand_logit_o3_prime",
     ],
 )
-def test_additional_bertrand_factories_have_21_actions_per_player(
+def test_symmetric_bertrand_variants_are_symmetric(
     factory_name: str,
 ) -> None:
-    payoffs = PAYOFF_FACTORIES[factory_name]()
-
-    assert payoffs.shape == (2, 21, 21)
-    assert np.all(np.isfinite(payoffs))
-    assert np.all((0.0 <= payoffs) & (payoffs <= 1.0))
-
-
-@pytest.mark.parametrize(
-    "factory_name",
-    ["bertrand_linear_o2", "bertrand_logit_o3"],
-)
-def test_symmetric_bertrand_variants_are_symmetric(factory_name: str) -> None:
     payoffs = PAYOFF_FACTORIES[factory_name]()
 
     assert np.allclose(payoffs[0], payoffs[1].T)
@@ -123,7 +233,10 @@ def test_symmetric_bertrand_variants_are_symmetric(factory_name: str) -> None:
 
 @pytest.mark.parametrize(
     "factory_name",
-    ["bertrand_linear_o2_prime", "bertrand_logit_o3_prime"],
+    [
+        "bertrand_linear_o2_prime",
+        "bertrand_logit_o3_prime",
+    ],
 )
 def test_asymmetric_bertrand_variants_are_genuinely_asymmetric(
     factory_name: str,
@@ -131,80 +244,6 @@ def test_asymmetric_bertrand_variants_are_genuinely_asymmetric(
     payoffs = PAYOFF_FACTORIES[factory_name]()
 
     assert not np.allclose(payoffs[0], payoffs[1].T)
-
-
-def test_linear_bertrand_matches_unclipped_demand_equation() -> None:
-    n_actions = 3
-    cost = (0.1, 0.2)
-    alpha = (0.48, 0.6)
-    beta = (0.9, 0.8)
-    gamma = 0.6
-    prices = np.linspace(0.0, 1.0, n_actions)
-    prices_0 = prices[:, None]
-    prices_1 = prices[None, :]
-    demand_0 = alpha[0] - beta[0] * prices_0 + gamma * prices_1
-    demand_1 = alpha[1] - beta[1] * prices_1 + gamma * prices_0
-    expected_player_0 = (prices_0 - cost[0]) * demand_0
-    expected_player_1 = (prices_1 - cost[1]) * demand_1
-
-    payoffs = create_linear_bertrand_payoffs(
-        n_actions=n_actions,
-        cost=cost,
-        interval=(0.0, 1.0),
-        alpha=alpha,
-        beta=beta,
-        gamma=gamma,
-    )
-
-    assert demand_0[-1, 0] < 0.0
-    assert np.allclose(payoffs[0], normalize_payoffs(expected_player_0))
-    assert np.allclose(payoffs[1], normalize_payoffs(expected_player_1))
-
-
-def test_logit_bertrand_matches_outside_good_demand_equation() -> None:
-    n_actions = 3
-    cost = (0.5, 1.0)
-    alpha = (1.5, 2.0)
-    mu = 0.25
-    alpha0 = 0.0
-    prices = np.linspace(0.5, 2.0, n_actions)
-    prices_0 = prices[:, None]
-    prices_1 = prices[None, :]
-    exp_0 = np.exp((alpha[0] - prices_0) / mu)
-    exp_1 = np.exp((alpha[1] - prices_1) / mu)
-    exp_outside = np.exp(alpha0 / mu)
-    denominator = exp_0 + exp_1 + exp_outside
-    demand_0 = exp_0 / denominator
-    demand_1 = exp_1 / denominator
-    expected_player_0 = (prices_0 - cost[0]) * demand_0
-    expected_player_1 = (prices_1 - cost[1]) * demand_1
-
-    payoffs = create_logit_bertrand_payoffs(
-        n_actions=n_actions,
-        cost=cost,
-        interval=(0.5, 2.0),
-        alpha=alpha,
-        mu=mu,
-        alpha0=alpha0,
-    )
-
-    assert np.all(demand_0 + demand_1 < 1.0)
-    assert np.allclose(payoffs[0], normalize_payoffs(expected_player_0))
-    assert np.allclose(payoffs[1], normalize_payoffs(expected_player_1))
-
-
-def test_logit_bertrand_softmax_is_numerically_stable() -> None:
-    payoffs = create_logit_bertrand_payoffs(
-        n_actions=5,
-        cost=(0.0, 0.0),
-        interval=(1.0, 2.0),
-        alpha=(1000.0, 1000.0),
-        mu=0.01,
-        alpha0=999.0,
-    )
-
-    assert np.all(np.isfinite(payoffs))
-    assert np.all((0.0 <= payoffs) & (payoffs <= 1.0))
 
 
 @pytest.mark.parametrize(
@@ -224,12 +263,10 @@ def test_logit_bertrand_softmax_is_numerically_stable() -> None:
         ({"maximum_demand": 0.0}, "positive"),
         ({"maximum_demand": -1.0}, "positive"),
         ({"maximum_demand": np.nan}, "finite"),
-        ({"maximum_demand": np.inf}, "finite"),
-        ({"maximum_demand": 1e-300}, "constant"),
     ],
 )
 def test_standard_bertrand_rejects_invalid_configuration(
-    kwargs: dict,
+    kwargs,
     message: str,
 ) -> None:
     parameters = {
@@ -247,18 +284,17 @@ def test_standard_bertrand_rejects_invalid_configuration(
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"alpha": (0.48,)}, "alpha"),
-        ({"alpha": (0.48, np.nan)}, "finite numeric"),
-        ({"alpha": 0.0}, "positive"),
-        ({"beta": (0.9,)}, "beta"),
-        ({"beta": 0.0}, "positive"),
+        ({"alpha": 0.0}, "alpha"),
+        ({"alpha": np.nan}, "alpha"),
+        ({"beta": 0.0}, "beta"),
+        ({"beta": (0.9, np.inf)}, "beta"),
         ({"gamma": -0.1}, "non-negative"),
         ({"gamma": 0.9}, "less than"),
-        ({"gamma": np.inf}, "finite"),
+        ({"gamma": np.nan}, "finite"),
     ],
 )
 def test_linear_bertrand_rejects_invalid_demand_parameters(
-    kwargs: dict,
+    kwargs,
     message: str,
 ) -> None:
     parameters = {
@@ -278,17 +314,17 @@ def test_linear_bertrand_rejects_invalid_demand_parameters(
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"alpha": (2.0,)}, "alpha"),
-        ({"alpha": (2.0, np.nan)}, "finite numeric"),
-        ({"alpha": (0.0, 2.0)}, "positive"),
-        ({"mu": 0.0}, "positive"),
-        ({"mu": -0.25}, "positive"),
-        ({"mu": np.nan}, "finite"),
-        ({"alpha0": np.inf}, "finite"),
+        ({"alpha": 0.0}, "alpha"),
+        ({"alpha": (2.0, np.inf)}, "alpha"),
+        ({"mu": 0.0}, "mu"),
+        ({"mu": (0.25, -0.1)}, "mu"),
+        ({"mu": np.nan}, "mu"),
+        ({"alpha0": 1.0}, "must be zero"),
+        ({"alpha0": np.nan}, "finite"),
     ],
 )
 def test_logit_bertrand_rejects_invalid_demand_parameters(
-    kwargs: dict,
+    kwargs,
     message: str,
 ) -> None:
     parameters = {
@@ -297,7 +333,6 @@ def test_logit_bertrand_rejects_invalid_demand_parameters(
         "interval": (1.0, 2.0),
         "alpha": (2.0, 2.0),
         "mu": 0.25,
-        "alpha0": 0.0,
     }
     parameters.update(kwargs)
 

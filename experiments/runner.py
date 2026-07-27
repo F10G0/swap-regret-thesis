@@ -3,7 +3,8 @@ from collections.abc import Callable
 from algorithms.base import Algorithm
 from environments.base import FixedGameEnvironment
 from experiments.recorder import CsvRecorder
-from metrics import RegretBundles
+from experiments.result_schema import regret_sources, resolve_regret_evaluation
+from metrics.regret import RegretBundles
 
 
 class ExperimentCancelled(RuntimeError):
@@ -11,7 +12,8 @@ class ExperimentCancelled(RuntimeError):
 
 
 def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, algorithm_name: str, players: list[Algorithm], recorder: CsvRecorder, horizon: int,
-             metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None) -> None:
+             metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None, algorithm_names: tuple[str, ...] | None = None,
+             regret_evaluation: str = "feedback_aligned") -> None:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     if feedback_mode not in {"full_information", "bandit"}:
@@ -21,8 +23,12 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
     for player_id, player in enumerate(players):
         if player.n_actions != game.n_actions[player_id]:
             raise ValueError(f"player {player_id} action count does not match the environment")
+    if algorithm_names is not None and len(algorithm_names) != game.n_players:
+        raise ValueError("number of algorithm names must match game.n_players")
 
     metadata = metadata or {}
+    algorithm_names = algorithm_names or tuple(algorithm_name for _ in players)
+    regret_evaluation = resolve_regret_evaluation(feedback_mode, regret_evaluation)
     regrets = [RegretBundles(n_actions) for n_actions in game.n_actions]
 
     for t in range(1, horizon + 1):
@@ -39,22 +45,24 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
             if feedback_mode == "full_information":
                 payoff = float(feedback[action])
                 deviation_payoffs = feedback
-                reported_regret = regret.expected
             else:
                 payoff = feedback
                 deviation_payoffs = game.deviation_payoffs(player_id)
-                reported_regret = regret.realized
 
             regret.update(strategy, action, deviation_payoffs)
             player.update(feedback)
+            regret_summary = {}
+            for source in regret_sources(regret_evaluation):
+                regret_summary.update(getattr(regret, source).summary(t))
 
             recorder.record({
                 "game": game_name,
                 "algorithm": algorithm_name,
+                "player_algorithm": algorithm_names[player_id],
                 **metadata,
                 "t": t,
                 "player": player_id,
                 "action": action,
                 "payoff": payoff,
-                **reported_regret.summary(t),
+                **regret_summary,
             })

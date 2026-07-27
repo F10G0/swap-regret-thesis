@@ -1,156 +1,102 @@
 # Algorithms
 
-Regret-minimization algorithms used by the repeated-game experiments.
+Regret-minimizing learners used by the repeated-game runner.
 
-## Structure
+## Available Learners
 
-```text
-algorithms/
-├── __init__.py
-├── base.py
-├── stationary.py
-├── external_regret/
-│   ├── __init__.py
-│   ├── base.py
-│   ├── exp3.py
-│   └── hedge.py
-├── internal_regret/
-│   ├── __init__.py
-│   ├── base.py
-│   └── regret_matching.py
-└── swap_regret/
-    ├── __init__.py
-    ├── base.py
-    ├── blum_mansour.py
-    ├── ito.py
-    └── lce_ix.py
-```
+| Registry name | Feedback | Objective |
+|---|---|---|
+| `hedge` | Reward vector | External regret |
+| `exp3` | Realized reward | External regret |
+| `exp3_ix` | Realized reward | External regret with implicit exploration |
+| `regret_matching` | Reward vector | Internal regret |
+| `stationary_regret_matching` | Reward vector | Internal regret |
+| `bm` | Mode-dependent | Swap-regret reduction |
+| `ito` | Mode-dependent | Swap-regret reduction |
+| `lce_ix` | Realized reward | Bandit swap-regret reduction |
 
-## Common Lifecycle
+The full-information and bandit registries map `bm` and `ito` to their corresponding classes. The UI and figures abbreviate Regret Matching as RM and Stationary Regret Matching as SRM.
 
-`Algorithm` owns the action count, optional horizon, random generator, local update count, current action, and current strategy.
+Regret evaluation is not a learner input. Expected, realized, or both changes only the offline metrics recorded by the runner.
+
+## Lifecycle
+
+Every learner derives from `Algorithm`:
 
 ```python
 action = learner.sample_action()
 learner.update(feedback)
+strategy = learner.strategy()
 ```
 
-- `reset()` restores algorithm-specific state, sets `t = 0`, clears `current_action`, and installs the uniform strategy.
-- `sample_action()` samples from `current_strategy` and normally stores the result in `current_action`.
-- `update(feedback)` validates the reward feedback, updates algorithm-specific state, increments `t`, computes the next strategy, and validates the resulting distribution.
-- `strategy()` returns a copy of the current action distribution.
+- `n_actions` must be positive and `horizon` non-negative.
+- `reset()` restores uniform strategy and clears state.
+- `sample_action()` stores the sampled action.
+- `update()` validates feedback, updates state, advances local time, and validates the new strategy.
+- `strategy()` returns a copy.
 
-The experiment runner guarantees that an ordinary learner is sampled before it is updated. Bandit BM and LCE-IX explicitly assign the outer sampled action to their inner learners before forwarding transformed feedback. Ito instead samples through one selected inner learner, whose own `sample_action()` stores the final action.
+Strategies must be finite, non-negative, correctly shaped, and normalized. Full-information feedback is a reward vector in `[0, 1]`; bandit feedback is one realized reward.
 
-## Horizon-Dependent Rates
+The experiment layer creates one learner per player and derives distinct deterministic seeds.
 
-Learning rates are internal algorithm properties; experiments never pass a learning rate.
+## Learning Rates
 
-Exponential-weights learners use
+Exponential-weights learners use:
 
 ```text
-rate_horizon = max(configured_horizon, t + 1).
+rate_horizon = max(configured_horizon, t + 1)
 ```
 
-Consequently:
+Thus a positive horizon gives a known-horizon rate and `horizon=0` gives an anytime rate.
 
-- `horizon > 0` uses the theoretically motivated known-horizon rate through the configured horizon and continues safely with the elapsed-round horizon if execution runs longer;
-- `horizon == 0` gives an anytime schedule based entirely on the learner's local update count.
+| Learner | Update |
+|---|---|
+| Hedge | `eta = sqrt(8 log(K) / rate_horizon)` |
+| Exp3 | `eta = sqrt(log(K) / (K * rate_horizon))` and importance-weighted reward |
+| Exp3-IX | `eta = sqrt(log(K) / rate_horizon)`, `gamma = eta / 2`, implicit-exploration loss |
 
-The local count matters for reductions such as Ito and LCE-IX, where an inner learner's effective horizon is not known in advance.
-
-## External Regret
-
-### `external_regret/base.py`
-
-`ExponentialWeightsAlgorithm` provides shared cumulative-score state and a numerically stable softmax computation. The resulting probabilities are floored at `NUMERICAL_TOLERANCE` and renormalized to prevent floating-point underflow from producing zero importance-weight denominators. Subclasses define their learning-rate property and feedback update.
-
-### Hedge
-
-`Hedge` receives a full reward vector and updates cumulative rewards:
-
-```text
-eta = sqrt(8 log(K) / rate_horizon).
-```
-
-### Exp3
-
-`Exp3` receives one realized reward and applies the standard importance-weighted reward estimate to the sampled action:
-
-```text
-eta = sqrt(log(K) / (K * rate_horizon)).
-```
-
-### Exp3-IX
-
-`Exp3IX` also receives one realized reward, converts it to a loss internally, and applies implicit exploration:
-
-```text
-eta   = sqrt(log(K) / rate_horizon)
-gamma = eta / 2
-```
-
-Its cumulative score is the negative estimated cumulative loss. Exp3 and Exp3-IX share the exponential-weights strategy computation but keep separate update rules.
+The shared stable softmax floors probabilities at `NUMERICAL_TOLERANCE` before renormalizing.
 
 ## Internal Regret
 
-### `internal_regret/base.py`
-
-`RegretMatchingBase` maintains the cumulative pairwise-regret matrix. On each round it updates only the row corresponding to the action sampled in that round:
+Regret Matching maintains:
 
 ```text
-R[a_t, :] += reward_vector - reward_vector[a_t].
+R[a_t, :] += reward_vector - reward_vector[a_t]
 ```
 
-Its regret-induced transition matrix scales the positive cumulative regrets by `K * t` and assigns each remaining row probability to the diagonal.
+Positive regret forms a row-stochastic transition matrix.
 
-### Regret Matching
+- RM uses the transition row of the latest sampled action.
+- SRM uses a stationary distribution of the complete transition matrix.
 
-`RegretMatching` is the inertia-based Hart–Mas-Colell procedure from equation (2.2). Its next strategy is the transition row corresponding to the most recently sampled action.
+## Swap-Regret Reductions
 
-### Stationary Regret Matching
+Each reduction owns one external-regret learner per outer action. Their strategies form a transition matrix whose stationary distribution is the outer strategy.
 
-`StationaryRegretMatching` is the invariant-distribution procedure from equation (3.1). It computes a stationary distribution of the complete regret-induced transition matrix.
-
-The two procedures share the same realized pairwise-regret update and differ only in strategy computation.
-
-## Swap Regret
-
-### `swap_regret/base.py`
-
-`StationaryReduction` manages one external-regret learner per action. Their current strategies form a row-stochastic transition matrix, and the outer strategy is one stationary distribution of that matrix. Inner learners receive reproducible seeds drawn from the outer learner's random generator.
-
-### Blum–Mansour
-
-- `FullBM` uses known-horizon Hedge learners and updates every inner learner with its weighted full-information reward vector.
-- `BanditBM` uses known-horizon Exp3 learners and updates every inner learner with its importance-weighted observed reward.
-
-Because every inner learner is updated each round, the experiment horizon is also the local inner horizon.
-
-### Ito
-
-- `FullIto` uses anytime Hedge learners.
-- `BanditIto` uses anytime Exp3 learners.
-
-Ito first samples an inner learner from the outer stationary distribution and then samples the final action from that learner. Only the selected learner is updated, so its local horizon is unknown and it is constructed with `horizon=0`.
-
-### LCE-IX
-
-`LCEIX` is the bandit-feedback learning-for-correlated-equilibrium reduction with implicit exploration. It uses one anytime Exp3-IX learner per action, transforms the realized outer reward into each learner's weighted observed loss, and updates every inner learner. The inner schedules use their local counts:
-
-```text
-eta_t   = sqrt(log(K) / (t + 1))
-gamma_t = eta_t / 2
-```
-
-Here the displayed `t + 1` is the rate horizon used while processing the next update.
+- **BM:** updates every inner learner; Hedge under full information and Exp3 under bandit feedback.
+- **Ito:** samples and updates one anytime inner learner per round.
+- **LCE-IX:** updates anytime Exp3-IX learners with transformed bandit losses.
 
 ## Stationary Distributions
 
-`stationary.py` provides three selectable methods:
+`stationary_distribution(transition_matrix, method=...)` supports:
 
-- `solve`: direct linear solve, with automatic pseudoinverse fallback when the system is singular or numerically invalid;
-- `pinv`: pseudoinverse solve;
-- `iteration`: fixed-point iteration.
+- `solve`: direct solve with pseudoinverse fallback;
+- `pinv`: pseudoinverse;
+- `iteration`: fixed-point iteration from uniform.
 
-The default is configured by `STATIONARY_METHOD` in `config.py`. Every result is checked for shape, finiteness, probability bounds, normalization, and the stationarity residual `||pQ - p||_1`.
+Inputs must be finite row-stochastic square matrices. Outputs use `NUMERICAL_TOLERANCE = 1e-10` for bounds, normalization, and `||pQ - p||_1`.
+
+## Structure and Ownership
+
+```text
+algorithms/
+├── base.py
+├── stationary.py
+├── external_regret/
+├── internal_regret/
+└── swap_regret/
+```
+
+This package owns learner state and stationary computation. Games and feedback belong to `environments/`; construction and seeding to `experiments/`; regret measurement to `metrics/regret.py`.

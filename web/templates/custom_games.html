@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}Custom Games · Swap Regret{% endblock %}
+
+{% block content %}
+    <select id="primary-theme" class="page-theme" aria-label="Primary color theme">
+        <option value="green">Green</option>
+        <option value="blue">Blue</option>
+        <option value="purple">Purple</option>
+        <option value="orange">Orange</option>
+        <option value="red">Red</option>
+    </select>
+
+    <main id="main-content" class="builder-shell">
+        <header class="builder-heading">
+            <div>
+                <p class="eyebrow">Game library</p>
+                <h1>Custom Random Games</h1>
+                <p>Create reproducible finite games for regret experiments with any supported player count and action shape.</p>
+            </div>
+            <a class="button-anchor" href="{{ url_for('dashboard.index') }}">Back to dashboard</a>
+        </header>
+
+        {% if inline_error %}
+            <div class="notice notice-error" role="alert">{{ inline_error }}</div>
+        {% endif %}
+        {% if warnings %}
+            <section class="warning-panel">
+                <h2>Game file warnings</h2>
+                <ul>{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+            </section>
+        {% endif %}
+
+        <div class="builder-grid">
+            <section class="panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Generator</p>
+                        <h2>Create a payoff tensor</h2>
+                    </div>
+                </div>
+                <form id="custom-game-form" method="post" action="{{ url_for('dashboard.custom_games') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <div class="field">
+                        <label for="custom-game-name">Game name</label>
+                        <input id="custom-game-name" name="name" value="{{ form_state.name }}" maxlength="64" required>
+                        <span class="hint">Letters, numbers, spaces, hyphens, and underscores.</span>
+                    </div>
+                    <div class="field-grid field-grid-two">
+                        <div class="field">
+                            <label for="custom-player-count">Players</label>
+                            <input id="custom-player-count" name="n_players" type="number" value="{{ form_state.n_players }}" min="2" max="{{ max_players }}" required>
+                        </div>
+                        <div class="field">
+                            <label for="custom-game-seed">Random seed</label>
+                            <input id="custom-game-seed" name="seed" type="number" value="{{ form_state.seed }}" min="0" required>
+                        </div>
+                    </div>
+                    <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson }}"></div>
+                    <p class="hint">The complete tensor is limited to {{ "{:,}".format(max_payoff_values) }} payoff values. Payoffs are sampled uniformly in [0, 1].</p>
+                    <button class="button-primary" type="submit">Generate and save game</button>
+                </form>
+            </section>
+
+            <section class="panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Stored inputs</p>
+                        <h2>Other games</h2>
+                    </div>
+                    <span>{{ custom_games | length }} game{% if custom_games | length != 1 %}s{% endif %}</span>
+                </div>
+                {% if custom_games %}
+                    <ul class="custom-game-list">
+                        {% for game in custom_games %}
+                            <li>
+                                <div class="custom-game-details">
+                                    <strong>{{ game.label }}</strong>
+                                    <span>{{ game.n_players }} players · actions {{ game.action_counts | join(" × ") }} · seed {{ game.seed }}</span>
+                                    <code>{{ game.id }}</code>
+                                </div>
+                                <div class="custom-game-actions">
+                                    <a class="small-button" href="{{ url_for('dashboard.inspect_custom_game', game_id=game.id) }}">View payoffs</a>
+                                    <form method="post" action="{{ url_for('dashboard.delete_custom_game') }}" data-confirm="Delete custom game {{ game.label }}?">
+                                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="game_id" value="{{ game.id }}">
+                                        <button class="icon-button" type="submit">Delete</button>
+                                    </form>
+                                </div>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="empty">No custom games have been created yet.</p>
+                {% endif %}
+                <p class="hint">Files are stored under <code>data/custom_games/</code> and are preserved when experiment results are reset.</p>
+            </section>
+        </div>
+
+        {% if inspection %}
+            {% set selected = inspection.definition %}
+            <section
+                id="payoff-inspector"
+                class="panel payoff-inspector"
+                data-action-counts="{{ selected.action_counts | tojson }}"
+                data-slice-url="{{ url_for('dashboard.custom_game_payoff_slice', game_id=selected.id) }}"
+            >
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Payoff tensor</p>
+                        <h2>{{ selected.label }}</h2>
+                    </div>
+                    <a href="{{ url_for('dashboard.download_custom_game', game_id=selected.id) }}" download>Download NPZ</a>
+                </div>
+
+                <dl class="payoff-metadata">
+                    <div><dt>Shape</dt><dd>{{ inspection.shape | join(" × ") }}</dd></div>
+                    <div><dt>Minimum</dt><dd>{{ "%.6f" | format(inspection.minimum) }}</dd></div>
+                    <div><dt>Maximum</dt><dd>{{ "%.6f" | format(inspection.maximum) }}</dd></div>
+                    <div><dt>Mean</dt><dd>{{ "%.6f" | format(inspection.mean) }}</dd></div>
+                </dl>
+
+                <div class="payoff-control-grid">
+                    <div class="field">
+                        <label for="payoff-player">Displayed payoff</label>
+                        <select id="payoff-player">
+                            {% for player in range(selected.n_players) %}<option value="{{ player }}">Player {{ player }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="payoff-row-player">Row-axis player</label>
+                        <select id="payoff-row-player">
+                            {% for player in range(selected.n_players) %}<option value="{{ player }}">Player {{ player }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="payoff-column-player">Column-axis player</label>
+                        <select id="payoff-column-player">
+                            {% for player in range(selected.n_players) %}<option value="{{ player }}" {% if player == 1 %}selected{% endif %}>Player {{ player }}</option>{% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div id="payoff-fixed-actions" class="action-count-grid"></div>
+                <p class="hint">Choose two players as matrix axes and fix one action for every remaining player. Row action 0 is shown at the top.</p>
+                <p id="payoff-slice-status" class="payoff-slice-status" aria-live="polite">Loading payoff slice…</p>
+                <div id="payoff-table-scroll" class="payoff-table-scroll" aria-busy="true"></div>
+            </section>
+        {% endif %}
+    </main>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='custom_games.js') }}" defer></script>
+{% endblock %}

@@ -11,8 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from config import FIGURE_DIR, RAW_DIR
+from experiments.algorithm_labels import algorithm_profile_label
 from experiments.results import average_regret_column, iter_result_rows, regret_column
-from experiments.scenarios.fieldnames import REGRET_NAMES
+from experiments.result_schema import REGRET_NAMES
 
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,8 @@ REGRET_TYPES = {
 REPLICATE_GROUP_COLUMNS = (
     "game",
     "feedback_mode",
+    "regret_evaluation",
     "algorithm",
-    "algorithm_player_0",
-    "algorithm_player_1",
     "horizon",
     "seed",
     "stationary_method",
@@ -124,10 +124,15 @@ def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column
     return times, means, confidence
 
 
-def run_label(rows: list[dict], n_replicates: int, include_solver: bool = False) -> str:
+def run_label(rows: list[dict], n_replicates: int, include_solver: bool = False, include_feedback: bool = False,
+              include_evaluation: bool = False) -> str:
     first_row = rows[0]
-    profile = first_row["algorithm"].replace("_vs_", " vs ").replace("_", " ")
+    profile = algorithm_profile_label(first_row["algorithm"].split("_vs_"))
     label = f"{profile} · seed {first_row['seed']}"
+    if include_feedback:
+        label += f" · {first_row['feedback_mode'].replace('_', ' ')}"
+    if include_evaluation:
+        label += f" · evaluation {first_row['regret_evaluation']}"
     if include_solver:
         label += f" · solver {first_row['stationary_method']}"
     if n_replicates > 1:
@@ -155,13 +160,17 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
 
     color_map = plt.get_cmap("tab20")
     include_solver = len({group[0][0]["stationary_method"] for group in replicate_groups}) > 1
+    include_feedback = len({group[0][0]["feedback_mode"] for group in replicate_groups}) > 1
+    include_evaluation = len({group[0][0]["regret_evaluation"] for group in replicate_groups}) > 1
     for group_index, replicate_runs in enumerate(replicate_groups):
         times, means, confidence = aggregate_metric_curve(replicate_runs, player, column, divide_by_sqrt_time=not average)
         if len(times) == 0:
             continue
         plotted = True
         color = color_map(group_index % color_map.N)
-        axes.plot(times, means, color=color, label=run_label(replicate_runs[0], len(replicate_runs), include_solver))
+        axes.plot(times, means, color=color, label=run_label(
+            replicate_runs[0], len(replicate_runs), include_solver, include_feedback, include_evaluation
+        ))
         if len(replicate_runs) > 1:
             axes.fill_between(times, means - confidence, means + confidence, color=color, alpha=0.2)
 

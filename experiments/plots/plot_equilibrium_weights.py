@@ -38,6 +38,7 @@ def plot_equilibrium_profile_weights(
     image = axes.imshow(
         weights,
         cmap=HEATMAP_COLORMAP,
+        origin="lower",
         vmin=0.0,
         vmax=1.0,
     )

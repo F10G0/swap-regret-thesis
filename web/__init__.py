@@ -4,7 +4,7 @@ import secrets
 
 from flask import Flask, abort, request, session
 
-from config import FIGURE_DIR, RAW_DIR, RESULTS_DIR
+from config import CUSTOM_GAME_DIR, FIGURE_DIR, RAW_DIR, RESULTS_DIR
 from web.routes import dashboard
 from web.services import DashboardService
 
@@ -19,6 +19,7 @@ def create_app(
         RESULTS_DIR=RESULTS_DIR,
         RAW_DIR=RAW_DIR,
         FIGURE_DIR=FIGURE_DIR,
+        CUSTOM_GAME_DIR=CUSTOM_GAME_DIR,
         MAX_HORIZON=100_000,
         MAX_REPLICATES=100,
     )
@@ -31,6 +32,7 @@ def create_app(
             results_dir=Path(app.config["RESULTS_DIR"]),
             raw_dir=Path(app.config["RAW_DIR"]),
             figure_dir=Path(app.config["FIGURE_DIR"]),
+            custom_game_dir=Path(app.config["CUSTOM_GAME_DIR"]),
         )
 
     app.extensions["dashboard_service"] = service

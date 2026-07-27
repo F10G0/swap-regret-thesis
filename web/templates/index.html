@@ -5,12 +5,11 @@
         form_state.feedback_mode,
         algorithms_by_feedback_mode["full_information"]
     ) %}
-    {% set equilibrium_game = (
-        form_state.game
-        if form_state.game in equilibrium_figures
-        else games[0]
-    ) %}
-    {% set equilibrium_presentation = game_presentations[equilibrium_game] %}
+    {% set selected_game = form_state.game if form_state.game in game_definitions else games[0] %}
+    {% set selected_definition = game_definitions[selected_game] %}
+    {% set selected_algorithm_names = form_state.get("algorithm_names", []) %}
+    {% set equilibrium_presentation = game_presentations[selected_game] %}
+    {% set equilibrium_urls = equilibrium_figures.get(selected_game) %}
     {% set regret_summary_columns = [
         ("Exp ext", "average_expected_external_regret"),
         ("Exp int", "average_expected_internal_regret"),
@@ -34,6 +33,7 @@
                 <p class="eyebrow">Bachelor thesis laboratory</p>
                 <h1>Swap Regret</h1>
                 <p>Run reproducible cross-play experiments and inspect their final regret.</p>
+                <a href="{{ url_for('dashboard.custom_games') }}">Create or inspect custom games</a>
             </div>
 
             {% if inline_error %}
@@ -47,12 +47,18 @@
                     <div class="control-card control-card-game">
                         <label for="game">Game</label>
                         <select id="game" name="game" aria-describedby="game-description" required>
-                            {% for game in games %}
-                                <option
-                                    value="{{ game }}"
-                                    {% if game == form_state.game %}selected{% endif %}
-                                >{{ game_presentations[game].label }}</option>
-                            {% endfor %}
+                            <optgroup label="Built-in games">
+                                {% for game in built_in_games %}
+                                    <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
+                                {% endfor %}
+                            </optgroup>
+                            {% if custom_games %}
+                                <optgroup label="Other games">
+                                    {% for game in custom_games %}
+                                        <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
+                                    {% endfor %}
+                                </optgroup>
+                            {% endif %}
                         </select>
                         <span id="game-description" class="hint">
                             {{ equilibrium_presentation.description }}
@@ -73,53 +79,34 @@
                             Choose whether learners observe every action payoff or only their realized payoff.
                         </span>
                     </div>
+
+                    <div class="control-card">
+                        <label for="regret-evaluation">Regret evaluation</label>
+                        <select id="regret-evaluation" name="regret_evaluation" aria-describedby="regret-evaluation-description" required>
+                            {% for evaluation, label in regret_evaluations.items() %}
+                                <option value="{{ evaluation }}" {% if evaluation == form_state.regret_evaluation %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <span id="regret-evaluation-description" class="hint">
+                            Choose whether to record expected regret, realized regret, or both without changing learner feedback.
+                        </span>
+                    </div>
                 </div>
 
-                <div class="field">
-                    <label for="horizon">Horizon</label>
-                    <input
-                        id="horizon"
-                        name="horizon"
-                        type="number"
-                        value="{{ form_state.horizon }}"
-                        min="1"
-                        max="{{ max_horizon }}"
-                        required
-                    >
-                    <span class="hint">Maximum from the dashboard: {{ max_horizon }}</span>
-                </div>
-
-                <div class="player-heading">
-                    <h2>Players</h2>
-                    <button id="swap-players" class="button-link" type="button">Swap</button>
-                </div>
-
-                <div class="players">
-                    {% for player_id in [0, 1] %}
-                        {% set algorithm_field = "algorithm_player_" ~ player_id %}
-                        <fieldset>
-                            <legend>Player {{ player_id }}</legend>
-
-                            <div class="field">
-                                <label for="{{ algorithm_field }}">Algorithm</label>
-                                <select
-                                    id="{{ algorithm_field }}"
-                                    name="{{ algorithm_field }}"
-                                    required
-                                >
-                                    {% for algorithm in current_algorithms %}
-                                        <option
-                                            value="{{ algorithm }}"
-                                            {% if algorithm == form_state[algorithm_field] %}selected{% endif %}
-                                        >{{ algorithm_labels[algorithm] }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                        </fieldset>
-                    {% endfor %}
-                </div>
-
-                <div class="field-grid field-grid-two">
+                <div class="field-grid field-grid-two horizon-seed-grid">
+                    <div class="field">
+                        <label for="horizon">Horizon</label>
+                        <input
+                            id="horizon"
+                            name="horizon"
+                            type="number"
+                            value="{{ form_state.horizon }}"
+                            min="1"
+                            max="{{ max_horizon }}"
+                            required
+                        >
+                        <span class="hint">Number of rounds run by each experiment; the dashboard maximum is {{ max_horizon }}.</span>
+                    </div>
                     <div class="field">
                         <label for="seed">Seed</label>
                         <input
@@ -130,7 +117,44 @@
                             min="0"
                             required
                         >
+                        <span class="hint">Base seed used to derive reproducible random streams for every player and replicate.</span>
                     </div>
+                </div>
+
+                <div class="player-heading">
+                    <h2>Players</h2>
+                    <div class="player-heading-actions">
+                        <button id="synchronize-players" class="button-link" type="button">Player 0 → all</button>
+                    </div>
+                </div>
+
+                <div id="players" class="players">
+                    {% for player_id in range(selected_definition.n_players) %}
+                        {% set algorithm_field = "algorithm_player_" ~ player_id %}
+                        <fieldset>
+                            <legend>Player {{ player_id }}</legend>
+
+                            <div class="field">
+                                <label for="{{ algorithm_field }}">Algorithm</label>
+                                <select
+                                    id="{{ algorithm_field }}"
+                                    name="algorithm_names"
+                                    class="player-algorithm"
+                                    required
+                                >
+                                    {% for algorithm in current_algorithms %}
+                                        <option
+                                            value="{{ algorithm }}"
+                                            {% if algorithm == selected_algorithm_names[player_id] | default(current_algorithms[0]) %}selected{% endif %}
+                                        >{{ algorithm_labels[algorithm] }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </fieldset>
+                    {% endfor %}
+                </div>
+
+                <div class="field-grid field-grid-two replicate-grid{% if form_state.feedback_mode != "bandit" %} replicate-grid-single{% endif %}">
                     <div class="field">
                         <label for="replicate">Starting replicate</label>
                         <input
@@ -141,13 +165,13 @@
                             min="0"
                             required
                         >
+                        <span class="hint">First replicate index; bandit batches continue consecutively from this value.</span>
                     </div>
-                </div>
-
-                <div id="replicates-field" class="field" {% if form_state.feedback_mode != "bandit" %}hidden{% endif %}>
-                    <label for="replicates">Bandit replicates</label>
-                    <input id="replicates" name="replicates" type="number" value="{{ form_state.replicates }}" min="1" max="{{ max_replicates }}" required>
-                    <span class="hint">Run consecutive replicates and plot their mean with a 95% confidence band.</span>
+                    <div id="replicates-field" class="field" {% if form_state.feedback_mode != "bandit" %}hidden{% endif %}>
+                        <label for="replicates">Bandit replicates</label>
+                        <input id="replicates" name="replicates" type="number" value="{{ form_state.replicates }}" min="1" max="{{ max_replicates }}" required>
+                        <span class="hint">Run consecutive replicates and plot their mean with a 95% confidence band.</span>
+                    </div>
                 </div>
 
                 <div class="button-stack">
@@ -158,6 +182,7 @@
                         id="queue-all-pairs"
                         type="submit"
                         formaction="{{ url_for('dashboard.run_all_pairs') }}"
+                        {% if selected_definition.source != "builtin" or selected_definition.n_players != 2 %}hidden{% endif %}
                     >Queue missing algorithm pairs</button>
                 </div>
             </form>
@@ -260,7 +285,7 @@
                 {% endif %}
             </section>
 
-            <section class="panel equilibrium-panel" aria-labelledby="equilibrium-heading">
+            <section id="equilibrium-panel" class="panel equilibrium-panel" aria-labelledby="equilibrium-heading">
                 <div class="section-heading">
                     <div>
                         <p class="eyebrow">Theoretical game properties</p>
@@ -268,37 +293,44 @@
                     </div>
                     <span id="equilibrium-game">{{ equilibrium_presentation.label }}</span>
                 </div>
-                <p class="equilibrium-explanation">
+                <p id="equilibrium-unavailable" class="equilibrium-explanation" {% if equilibrium_urls %}hidden{% endif %}>
+                    Equilibrium visualizations are available for built-in two-player benchmarks.
+                </p>
+                <p id="equilibrium-explanation" class="equilibrium-explanation" {% if not equilibrium_urls %}hidden{% endif %}>
                     Each cell is optimized independently over the corresponding
                     equilibrium polytope. The displayed matrix is not itself an
                     equilibrium distribution and generally does not sum to one.
                 </p>
-                <div class="equilibrium-grid">
+                <div id="equilibrium-grid" class="equilibrium-grid" {% if not equilibrium_urls %}hidden{% endif %}>
                     <article class="equilibrium-card">
                         <h3>Maximum CE Profile Weight</h3>
-                        <img
-                            id="ce-equilibrium-image"
-                            src="{{ equilibrium_figures[equilibrium_game].ce }}"
-                            alt="Maximum CE profile weight for {{ equilibrium_presentation.label }}"
-                            loading="lazy"
-                        >
+                        <div class="heatmap-frame">
+                            <img
+                                id="ce-equilibrium-image"
+                                alt="Maximum CE profile weight for {{ equilibrium_presentation.label }}"
+                                loading="lazy"
+                            >
+                            <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                        </div>
                         <a
                             id="ce-equilibrium-download"
-                            href="{{ equilibrium_figures[equilibrium_game].ce }}"
+                            {% if equilibrium_urls %}href="{{ equilibrium_urls.ce }}"{% endif %}
                             download
                         >Download PNG</a>
                     </article>
                     <article class="equilibrium-card">
                         <h3>Maximum CCE Profile Weight</h3>
-                        <img
-                            id="cce-equilibrium-image"
-                            src="{{ equilibrium_figures[equilibrium_game].cce }}"
-                            alt="Maximum CCE profile weight for {{ equilibrium_presentation.label }}"
-                            loading="lazy"
-                        >
+                        <div class="heatmap-frame">
+                            <img
+                                id="cce-equilibrium-image"
+                                alt="Maximum CCE profile weight for {{ equilibrium_presentation.label }}"
+                                loading="lazy"
+                            >
+                            <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                        </div>
                         <a
                             id="cce-equilibrium-download"
-                            href="{{ equilibrium_figures[equilibrium_game].cce }}"
+                            {% if equilibrium_urls %}href="{{ equilibrium_urls.cce }}"{% endif %}
                             download
                         >Download PNG</a>
                     </article>
@@ -342,9 +374,8 @@
                     <div class="field">
                         <label for="filter-player">Player</label>
                         <select id="filter-player">
-                            <option value="all">Both players</option>
-                            <option value="0">Player 0</option>
-                            <option value="1">Player 1</option>
+                            <option value="all">All players</option>
+                            {% for player in players %}<option value="{{ player }}">Player {{ player }}</option>{% endfor %}
                         </select>
                     </div>
                     <div class="field">
@@ -387,7 +418,7 @@
                         <p class="eyebrow">Recorded outcomes</p>
                         <h2 id="summary-heading">Final regret summary</h2>
                     </div>
-                    <span>{{ summaries | length }} player records</span>
+                    <span>{{ summaries | length }} replicate-group player records</span>
                 </div>
 
                 {% if summaries %}
@@ -401,6 +432,13 @@
                             </select>
                         </div>
                         <div class="field">
+                            <label for="filter-regret-evaluation">Regret evaluation</label>
+                            <select id="filter-regret-evaluation">
+                                <option value="all">All evaluations</option>
+                                {% for evaluation, label in regret_evaluations.items() %}<option value="{{ evaluation }}">{{ label }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="field">
                             <label for="filter-player-algorithm">Player algorithm</label>
                             <select id="filter-player-algorithm">
                                 <option value="all">All algorithms</option>
@@ -408,9 +446,9 @@
                             </select>
                         </div>
                         <div class="field">
-                            <label for="filter-opponent-algorithm">Opponent algorithm</label>
-                            <select id="filter-opponent-algorithm">
-                                <option value="all">All opponents</option>
+                            <label for="filter-co-player-algorithm">Co-player algorithm</label>
+                            <select id="filter-co-player-algorithm">
+                                <option value="all">All co-players</option>
                                 {% for algorithm, label in algorithm_labels.items() %}<option value="{{ algorithm }}">{{ label }}</option>{% endfor %}
                             </select>
                         </div>
@@ -429,7 +467,8 @@
                                 <tr>
                                     <th>Game</th>
                                     <th>Feedback</th>
-                                    <th>Seed / rep.</th>
+                                    <th>Evaluation</th>
+                                    <th>Seed / replicates</th>
                                     <th>Player</th>
                                     <th>Profile</th>
                                     <th>Horizon</th>
@@ -445,25 +484,27 @@
                                         data-game="{{ row.game }}"
                                         data-player="{{ row.player }}"
                                         data-feedback="{{ row.feedback_mode }}"
-                                        data-player-algorithm="{{ row.algorithm_player_0 if row.player == 0 else row.algorithm_player_1 }}"
-                                        data-opponent-algorithm="{{ row.algorithm_player_1 if row.player == 0 else row.algorithm_player_0 }}"
+                                        data-regret-evaluation="{{ row.regret_evaluation }}"
+                                        data-player-algorithm="{{ row.player_algorithm }}"
+                                        data-co-player-algorithms="{{ row.co_player_algorithms | join(' ') }}"
                                         data-horizon="{{ row.horizon }}"
                                         data-seed="{{ row.seed }}"
-                                        data-replicate="{{ row.replicate }}"
                                         data-stationary-method="{{ row.stationary_method }}"
                                     >
                                         <td>{{ game_presentations[row.game].label }}</td>
                                         <td>{{ row.feedback_mode }}</td>
-                                        <td>{{ row.seed }} / {{ row.replicate }}</td>
+                                        <td>{{ regret_evaluations[row.regret_evaluation] }}</td>
+                                        <td>{{ row.seed }} / {{ row.replicate_label }}{% if row.replicate_count > 1 %} (n={{ row.replicate_count }}){% endif %}</td>
                                         <td>{{ row.player }}</td>
-                                        <td>
-                                            {{ algorithm_labels.get(row.algorithm_player_0, row.algorithm_player_0) }} vs {{ algorithm_labels.get(row.algorithm_player_1, row.algorithm_player_1) }}
-                                        </td>
+                                        <td>{{ row.profile_label }}</td>
                                         <td>{{ row.horizon }}</td>
                                         {% for label, field in regret_summary_columns %}
                                             <td data-metric="{{ field }}" {% if field in row %}data-value="{{ row[field] }}"{% endif %}>
                                                 {% if field in row %}
                                                     {{ "%.6f" | format(row[field]) }}
+                                                    {% if row.replicate_count > 1 %}
+                                                        <span class="metric-confidence">± {{ "%.6f" | format(row.confidence_intervals[field]) }}</span>
+                                                    {% endif %}
                                                 {% else %}
                                                     &mdash;
                                                 {% endif %}
@@ -478,18 +519,69 @@
                     <section id="experiment-detail" class="experiment-detail" hidden>
                         <div class="section-heading">
                             <div>
-                                <p class="eyebrow">Selected result</p>
+                                <p class="eyebrow">Selected replicate group</p>
                                 <h2 id="detail-title"></h2>
                             </div>
                             <button id="reuse-experiment" type="button">Reuse parameters</button>
                         </div>
                         <dl id="detail-metadata" class="detail-metadata"></dl>
                         <div id="detail-regrets" class="detail-regrets"></div>
-                        <div class="detail-actions">
-                            <a id="detail-download" href="" download>Download raw CSV</a>
-                            <a id="detail-heatmap-download" href="" download>Download heatmap</a>
-                        </div>
-                        <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
+                        <div id="detail-downloads" class="detail-actions"></div>
+                        <section id="detail-joint-actions">
+                            <div class="detail-subheading">
+                                <h3>Mean empirical joint-action heatmap</h3>
+                                <a id="detail-heatmap-download" href="" download>Download PNG</a>
+                            </div>
+                            <div class="heatmap-frame detail-heatmap-frame">
+                                <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
+                                <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                            </div>
+                        </section>
+                        <section id="detail-convergence" class="detail-convergence" aria-labelledby="detail-convergence-heading">
+                            <div class="detail-subheading">
+                                <div>
+                                    <h3 id="detail-convergence-heading">Equilibrium Convergence</h3>
+                                    <p>Distances are computed per replicate and then averaged with 95% confidence intervals. The mean distribution trajectory uses a shared two-dimensional projection for visualization only.</p>
+                                </div>
+                            </div>
+                            <div class="detail-figure-grid">
+                                <article id="detail-equilibrium-distance-card" class="detail-figure-card">
+                                    <h4>Mean equilibrium distance</h4>
+                                    <div class="heatmap-frame">
+                                        <img id="detail-equilibrium-distance" alt="CE and CCE L1 distance by horizon" loading="lazy">
+                                        <span class="heatmap-loading" role="status">Loading convergence figure…</span>
+                                    </div>
+                                    <a id="detail-equilibrium-distance-download" href="" download>Download PNG</a>
+                                </article>
+                                <article id="detail-equilibrium-trajectory-card" class="detail-figure-card">
+                                    <div class="trajectory-card-heading">
+                                        <h4>Mean joint-distribution trajectory</h4>
+                                        <div class="trajectory-controls">
+                                            <label for="trajectory-points">
+                                                Points
+                                                <input
+                                                    id="trajectory-points"
+                                                    type="number"
+                                                    value="{{ default_trajectory_points }}"
+                                                    min="{{ min_trajectory_points }}"
+                                                    max="{{ max_trajectory_points }}"
+                                                    step="1"
+                                                >
+                                            </label>
+                                            <label for="trajectory-hide-first">
+                                                <input id="trajectory-hide-first" type="checkbox">
+                                                Hide first
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="heatmap-frame">
+                                        <img id="detail-equilibrium-trajectory" alt="Projected empirical joint-distribution trajectory" loading="lazy">
+                                        <span class="heatmap-loading" role="status">Loading convergence figure…</span>
+                                    </div>
+                                    <a id="detail-equilibrium-trajectory-download" href="" download>Download PNG</a>
+                                </article>
+                            </div>
+                        </section>
                     </section>
                 {% else %}
                     <p class="empty">No valid summary rows are available.</p>
@@ -505,6 +597,7 @@
             "figures": figures,
             "figuresUrl": url_for("dashboard.figure_data"),
             "equilibriumFigures": equilibrium_figures,
+            "gameDefinitions": game_definitions,
             "gamePresentations": game_presentations,
             "jobs": jobs,
             "summaries": summaries,

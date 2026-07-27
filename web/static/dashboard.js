@@ -3,11 +3,25 @@
 const dashboardDataElement = document.getElementById("dashboard-data");
 const dashboardData = dashboardDataElement
     ? JSON.parse(dashboardDataElement.textContent)
-    : {figures: [], figuresUrl: "", equilibriumFigures: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
+    : {figures: [], figuresUrl: "", equilibriumFigures: {}, gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
 const formStorageKey = "swap-regret-experiment-form";
-const themeStorageKey = "swap-regret-primary-theme";
-const primaryThemes = new Set(["green", "blue", "purple", "orange", "red"]);
-const formFieldIds = ["game", "feedback-mode", "algorithm_player_0", "algorithm_player_1", "horizon", "seed", "replicate", "replicates"];
+const filterStorageKey = "swap-regret-result-filters";
+const trajectoryPointsStorageKey = "swap-regret-trajectory-points";
+const trajectoryHideFirstStorageKey = "swap-regret-trajectory-hide-first";
+const formFieldIds = ["game", "feedback-mode", "regret-evaluation", "horizon", "seed", "replicate", "replicates"];
+const filterFieldIds = [
+    "filter-game",
+    "filter-source",
+    "filter-regret",
+    "filter-player",
+    "filter-view",
+    "filter-feedback",
+    "filter-regret-evaluation",
+    "filter-player-algorithm",
+    "filter-co-player-algorithm",
+    "filter-horizon",
+    "filter-seed",
+];
 
 function element(id) {
     return document.getElementById(id);
@@ -20,38 +34,9 @@ function gamePresentation(game) {
     };
 }
 
-function applyPrimaryTheme(theme, persist = false) {
-    const selectedTheme = primaryThemes.has(theme) ? theme : "green";
-    document.documentElement.dataset.theme = selectedTheme;
-    const themeSelect = element("primary-theme");
-    if (themeSelect) {
-        themeSelect.value = selectedTheme;
-    }
-    if (!persist) {
-        return;
-    }
-    try {
-        window.localStorage.setItem(themeStorageKey, selectedTheme);
-    } catch (error) {
-        console.warn("Could not save the primary color", error);
-    }
-}
-
-function installThemeSelector() {
-    let storedTheme = "";
-    try {
-        storedTheme = window.localStorage.getItem(themeStorageKey) || "";
-    } catch (error) {
-        console.warn("Could not restore the primary color", error);
-    }
-    applyPrimaryTheme(storedTheme || document.documentElement.dataset.theme);
-    element("primary-theme")?.addEventListener("change", (event) => {
-        applyPrimaryTheme(event.target.value, true);
-    });
-}
-
 function saveFormState() {
     const state = Object.fromEntries(formFieldIds.map((id) => [id, element(id)?.value ?? ""]));
+    state.algorithmNames = playerAlgorithmSelects().map((select) => select.value);
     try {
         window.localStorage.setItem(formStorageKey, JSON.stringify(state));
     } catch (error) {
@@ -71,20 +56,14 @@ function restoreFormState() {
         return;
     }
 
-    for (const id of ["game", "feedback-mode"]) {
+    for (const id of ["game", "feedback-mode", "regret-evaluation"]) {
         const select = element(id);
         if (select && [...select.options].some((option) => option.value === state[id])) {
             select.value = state[id];
         }
     }
-    updateAlgorithmsForFeedbackMode();
-
-    for (const id of ["algorithm_player_0", "algorithm_player_1"]) {
-        const select = element(id);
-        if (select && [...select.options].some((option) => option.value === state[id])) {
-            select.value = state[id];
-        }
-    }
+    const legacyAlgorithms = [state.algorithm_player_0, state.algorithm_player_1].filter(Boolean);
+    updatePlayerControls(state.algorithmNames || legacyAlgorithms);
     for (const id of ["horizon", "seed", "replicate", "replicates"]) {
         const input = element(id);
         if (input && state[id] !== undefined) {
@@ -119,6 +98,50 @@ function updateAlgorithmSelect(select, algorithms) {
         : algorithms[0] || "";
 }
 
+function playerAlgorithmSelects() {
+    return [...document.querySelectorAll(".player-algorithm")];
+}
+
+function updatePlayerControls(preferredValues = null) {
+    const game = element("game")?.value;
+    const definition = dashboardData.gameDefinitions[game];
+    const container = element("players");
+    if (!definition || !container) {
+        return;
+    }
+    const existingValues = preferredValues || playerAlgorithmSelects().map((select) => select.value);
+    const algorithms = dashboardData.algorithms[element("feedback-mode")?.value] || [];
+    const fields = [];
+    for (let player = 0; player < definition.n_players; player += 1) {
+        const fieldset = document.createElement("fieldset");
+        const legend = document.createElement("legend");
+        const field = document.createElement("div");
+        const label = document.createElement("label");
+        const select = document.createElement("select");
+        const id = `algorithm_player_${player}`;
+        legend.textContent = `Player ${player}`;
+        field.className = "field";
+        label.htmlFor = id;
+        label.textContent = "Algorithm";
+        select.id = id;
+        select.name = "algorithm_names";
+        select.className = "player-algorithm";
+        select.required = true;
+        field.append(label, select);
+        fieldset.append(legend, field);
+        fields.push(fieldset);
+        updateAlgorithmSelect(select, algorithms);
+        if (algorithms.includes(existingValues[player])) {
+            select.value = existingValues[player];
+        }
+    }
+    container.replaceChildren(...fields);
+    const allPairsButton = element("queue-all-pairs");
+    if (allPairsButton) {
+        allPairsButton.hidden = definition.source !== "builtin" || definition.n_players !== 2;
+    }
+}
+
 function updateAlgorithmsForFeedbackMode() {
     const feedbackSelect = element("feedback-mode");
     if (!feedbackSelect) {
@@ -126,21 +149,117 @@ function updateAlgorithmsForFeedbackMode() {
     }
 
     const algorithms = dashboardData.algorithms[feedbackSelect.value] || [];
-    updateAlgorithmSelect(element("algorithm_player_0"), algorithms);
-    updateAlgorithmSelect(element("algorithm_player_1"), algorithms);
+    playerAlgorithmSelects().forEach((select) => updateAlgorithmSelect(select, algorithms));
 }
 
 function updateReplicateVisibility() {
     const field = element("replicates-field");
     if (field) {
-        field.hidden = element("feedback-mode")?.value !== "bandit";
+        const hidden = element("feedback-mode")?.value !== "bandit";
+        field.hidden = hidden;
+        field.closest(".replicate-grid")?.classList.toggle("replicate-grid-single", hidden);
     }
+}
+
+function alignedRegretEvaluation(feedbackMode) {
+    return feedbackMode === "bandit" ? "realized" : "expected";
+}
+
+function updateRegretEvaluationForFeedback(previousFeedbackMode) {
+    const feedback = element("feedback-mode")?.value;
+    const evaluation = element("regret-evaluation");
+    if (evaluation && evaluation.value === alignedRegretEvaluation(previousFeedbackMode)) {
+        evaluation.value = alignedRegretEvaluation(feedback);
+    }
+}
+
+function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loading heatmap…") {
+    if (!image || !source) {
+        return;
+    }
+    const frame = image.closest(".heatmap-frame");
+    if (!frame) {
+        image.src = source;
+        return;
+    }
+
+    const requestId = String(Number(image.dataset.loadRequest || 0) + 1);
+    const status = frame.querySelector(".heatmap-loading");
+    const previousObjectUrl = image.dataset.objectUrl;
+    if (previousObjectUrl) {
+        URL.revokeObjectURL(previousObjectUrl);
+        delete image.dataset.objectUrl;
+    }
+    image.removeAttribute("src");
+    image.dataset.loadRequest = requestId;
+    frame.classList.add("is-loading");
+    frame.classList.remove("has-error");
+    frame.setAttribute("aria-busy", "true");
+    if (status) {
+        status.textContent = loadingMessage;
+    }
+
+    const finish = (failed) => {
+        if (image.dataset.loadRequest !== requestId) {
+            return;
+        }
+        frame.classList.remove("is-loading");
+        frame.classList.toggle("has-error", failed);
+        frame.removeAttribute("aria-busy");
+        if (failed && status) {
+            status.textContent = "Heatmap unavailable";
+        }
+    };
+    const load = async () => {
+        try {
+            const response = await fetch(source, {cache: "no-store"});
+            if (image.dataset.loadRequest !== requestId) {
+                return;
+            }
+            if (response.status === 202) {
+                const payload = await response.json();
+                if (status) {
+                    status.textContent = payload.message || "Computing equilibrium heatmap…";
+                }
+                const retryAfter = Number(response.headers.get("Retry-After")) || 2;
+                window.setTimeout(load, Math.max(1, retryAfter) * 1000);
+                return;
+            }
+            if (!response.ok) {
+                throw new Error(`Heatmap request failed (${response.status})`);
+            }
+
+            const objectUrl = URL.createObjectURL(await response.blob());
+            if (image.dataset.loadRequest !== requestId) {
+                URL.revokeObjectURL(objectUrl);
+                return;
+            }
+            image.onload = () => {
+                if (image.dataset.loadRequest !== requestId) {
+                    URL.revokeObjectURL(objectUrl);
+                    return;
+                }
+                image.dataset.objectUrl = objectUrl;
+                finish(false);
+                onReady?.();
+            };
+            image.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                finish(true);
+            };
+            image.src = objectUrl;
+        } catch (error) {
+            console.warn("Could not load heatmap", error);
+            finish(true);
+        }
+    };
+    load();
 }
 
 function updateEquilibriumFigures() {
     const game = element("game")?.value;
     const urls = dashboardData.equilibriumFigures[game];
-    if (!game || !urls) {
+    if (!game) {
         return;
     }
 
@@ -153,24 +272,53 @@ function updateEquilibriumFigures() {
     if (gameDescription) {
         gameDescription.textContent = presentation.description;
     }
+    const grid = element("equilibrium-grid");
+    const explanation = element("equilibrium-explanation");
+    const unavailable = element("equilibrium-unavailable");
+    if (grid) {
+        grid.hidden = !urls;
+    }
+    if (explanation) {
+        explanation.hidden = !urls;
+    }
+    if (unavailable) {
+        unavailable.hidden = Boolean(urls);
+    }
+    if (!urls) {
+        return;
+    }
     for (const equilibrium of ["ce", "cce"]) {
         const image = element(`${equilibrium}-equilibrium-image`);
         const download = element(`${equilibrium}-equilibrium-download`);
-        if (image) {
-            image.src = urls[equilibrium];
-            image.alt = `Maximum ${equilibrium.toUpperCase()} profile weight for ${presentation.label}`;
-        }
         if (download) {
-            download.href = urls[equilibrium];
+            download.removeAttribute("href");
+            download.setAttribute("aria-disabled", "true");
+            download.classList.add("is-disabled");
+        }
+        if (image) {
+            setHeatmapSource(image, urls[equilibrium], () => {
+                if (download) {
+                    download.href = urls[equilibrium];
+                    download.removeAttribute("aria-disabled");
+                    download.classList.remove("is-disabled");
+                }
+            });
+            image.alt = `Maximum ${equilibrium.toUpperCase()} profile weight for ${presentation.label}`;
         }
     }
 }
 
-function swapPlayerValues() {
-    const playerZero = element("algorithm_player_0");
-    const playerOne = element("algorithm_player_1");
-    if (playerZero && playerOne) {
-        [playerZero.value, playerOne.value] = [playerOne.value, playerZero.value];
+function updateDashboardForGame(preferredAlgorithms = null) {
+    updatePlayerControls(preferredAlgorithms);
+    updateEquilibriumFigures();
+}
+
+function synchronizePlayerValues() {
+    const [playerZero, ...otherPlayers] = playerAlgorithmSelects();
+    if (playerZero) {
+        otherPlayers.forEach((select) => {
+            select.value = playerZero.value;
+        });
     }
 }
 
@@ -178,12 +326,61 @@ function selectedFilter(id) {
     return element(id)?.value || "all";
 }
 
+function saveFilterState() {
+    const state = Object.fromEntries(filterFieldIds.map((id) => [id, element(id)?.value ?? ""]));
+    try {
+        window.localStorage.setItem(filterStorageKey, JSON.stringify(state));
+    } catch (error) {
+        console.warn("Could not save result filters", error);
+    }
+}
+
+function restoreFilterState() {
+    let state;
+    try {
+        state = JSON.parse(window.localStorage.getItem(filterStorageKey));
+    } catch (error) {
+        console.warn("Could not restore result filters", error);
+        return;
+    }
+    if (!state) {
+        return;
+    }
+
+    filterFieldIds.forEach((id) => {
+        const control = element(id);
+        const value = state[id];
+        if (!control || value === undefined) {
+            return;
+        }
+        if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === value)) {
+            return;
+        }
+        control.value = value;
+    });
+}
+
+function installFilterPersistence() {
+    filterFieldIds.forEach((id) => {
+        const control = element(id);
+        if (!control) {
+            return;
+        }
+        const eventName = control instanceof HTMLSelectElement ? "change" : "input";
+        control.addEventListener(eventName, () => {
+            saveFilterState();
+            applyFilters();
+        });
+    });
+}
+
 function updateSummaryRows() {
     const game = selectedFilter("filter-game");
     const player = selectedFilter("filter-player");
     const feedback = selectedFilter("filter-feedback");
+    const regretEvaluation = selectedFilter("filter-regret-evaluation");
     const playerAlgorithm = selectedFilter("filter-player-algorithm");
-    const opponentAlgorithm = selectedFilter("filter-opponent-algorithm");
+    const coPlayerAlgorithm = selectedFilter("filter-co-player-algorithm");
     const horizon = element("filter-horizon")?.value || "";
     const seed = element("filter-seed")?.value || "";
 
@@ -191,11 +388,12 @@ function updateSummaryRows() {
         const gameMatches = game === "all" || row.dataset.game === game;
         const playerMatches = player === "all" || row.dataset.player === player;
         const feedbackMatches = feedback === "all" || row.dataset.feedback === feedback;
+        const evaluationMatches = regretEvaluation === "all" || row.dataset.regretEvaluation === regretEvaluation;
         const playerAlgorithmMatches = playerAlgorithm === "all" || row.dataset.playerAlgorithm === playerAlgorithm;
-        const opponentAlgorithmMatches = opponentAlgorithm === "all" || row.dataset.opponentAlgorithm === opponentAlgorithm;
+        const coPlayerAlgorithmMatches = coPlayerAlgorithm === "all" || row.dataset.coPlayerAlgorithms.split(" ").includes(coPlayerAlgorithm);
         const horizonMatches = !horizon || row.dataset.horizon === horizon;
         const seedMatches = !seed || row.dataset.seed === seed;
-        row.hidden = !(gameMatches && playerMatches && feedbackMatches && playerAlgorithmMatches && opponentAlgorithmMatches && horizonMatches && seedMatches);
+        row.hidden = !(gameMatches && playerMatches && feedbackMatches && evaluationMatches && playerAlgorithmMatches && coPlayerAlgorithmMatches && horizonMatches && seedMatches);
     });
     highlightBestValues();
 }
@@ -210,7 +408,7 @@ function highlightBestValues() {
         }
         const keyParts = [
             cell.dataset.metric, row.dataset.game, row.dataset.feedback, row.dataset.player, row.dataset.horizon,
-            row.dataset.seed, row.dataset.replicate, row.dataset.stationaryMethod,
+            row.dataset.seed, row.dataset.stationaryMethod, row.dataset.regretEvaluation,
         ];
         const key = keyParts.join("|");
         groups.set(key, [...(groups.get(key) || []), cell]);
@@ -302,6 +500,83 @@ function addDetail(metadata, label, value) {
 
 let selectedSummary = null;
 
+function trajectoryPoints() {
+    const input = element("trajectory-points");
+    if (!input) {
+        return 10;
+    }
+    const minimum = Number(input.min) || 2;
+    const maximum = Number(input.max) || 50;
+    const fallback = Number(input.defaultValue) || 10;
+    const parsed = Number(input.value);
+    const value = input.value !== "" && Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+    const normalized = Math.min(maximum, Math.max(minimum, value));
+    input.value = normalized;
+    return normalized;
+}
+
+function saveTrajectoryPoints() {
+    try {
+        window.localStorage.setItem(trajectoryPointsStorageKey, String(trajectoryPoints()));
+    } catch (error) {
+        console.warn("Could not save trajectory points", error);
+    }
+}
+
+function restoreTrajectoryPoints() {
+    const input = element("trajectory-points");
+    if (!input) {
+        return;
+    }
+    try {
+        const stored = window.localStorage.getItem(trajectoryPointsStorageKey);
+        if (stored !== null) {
+            input.value = stored;
+        }
+    } catch (error) {
+        console.warn("Could not restore trajectory points", error);
+    }
+    trajectoryPoints();
+}
+
+function trajectoryHideFirst() {
+    return element("trajectory-hide-first")?.checked ?? false;
+}
+
+function saveTrajectoryHideFirst() {
+    try {
+        window.localStorage.setItem(trajectoryHideFirstStorageKey, trajectoryHideFirst() ? "1" : "0");
+    } catch (error) {
+        console.warn("Could not save hide-first preference", error);
+    }
+}
+
+function restoreTrajectoryHideFirst() {
+    const input = element("trajectory-hide-first");
+    if (!input) {
+        return;
+    }
+    try {
+        input.checked = window.localStorage.getItem(trajectoryHideFirstStorageKey) === "1";
+    } catch (error) {
+        console.warn("Could not restore hide-first preference", error);
+    }
+}
+
+function loadEquilibriumTrajectory(summary) {
+    const image = element("detail-equilibrium-trajectory");
+    const download = element("detail-equilibrium-trajectory-download");
+    const points = trajectoryPoints();
+    const hideFirst = trajectoryHideFirst();
+    const source = new URL(summary.equilibrium_trajectory_url, window.location.href);
+    source.searchParams.set("points", points);
+    source.searchParams.set("hide_first", hideFirst ? "1" : "0");
+    setHeatmapSource(image, source.href, null, "Computing projected equilibrium regions…");
+    image.alt = `Projected mean joint-distribution trajectory for ${gamePresentation(summary.game).label} using ${points} points${hideFirst ? ", excluding round 1" : ""}`;
+    download.href = source.href;
+    download.download = `${summary.group_id}_mean_equilibrium_trajectory_p${points}${hideFirst ? "_hide_first" : ""}.png`;
+}
+
 function showExperimentDetail(index) {
     const summary = dashboardData.summaries[index];
     const panel = element("experiment-detail");
@@ -316,13 +591,11 @@ function showExperimentDetail(index) {
     const metadata = element("detail-metadata");
     metadata.replaceChildren();
     addDetail(metadata, "Feedback", summary.feedback_mode);
-    const playerZeroAlgorithm = dashboardData.algorithmLabels[summary.algorithm_player_0] || summary.algorithm_player_0;
-    const playerOneAlgorithm = dashboardData.algorithmLabels[summary.algorithm_player_1] || summary.algorithm_player_1;
-    addDetail(metadata, "Profile", `${playerZeroAlgorithm} vs ${playerOneAlgorithm}`);
+    addDetail(metadata, "Regret evaluation", summary.regret_evaluation);
+    addDetail(metadata, "Profile", summary.profile_label);
     addDetail(metadata, "Horizon", summary.horizon);
     addDetail(metadata, "Seed", summary.seed);
-    addDetail(metadata, "Replicate", summary.replicate);
-    addDetail(metadata, "Replicates in group", summary.replicate_count);
+    addDetail(metadata, "Replicates", `${summary.replicate_label} (n=${summary.replicate_count})`);
     addDetail(metadata, "Stationary solver", summary.stationary_method);
 
     const regrets = element("detail-regrets");
@@ -332,20 +605,49 @@ function showExperimentDetail(index) {
         const label = document.createElement("span");
         const number = document.createElement("strong");
         label.textContent = name.replaceAll("_", " ");
-        number.textContent = Number(value).toFixed(6);
+        const confidence = summary.confidence_intervals[name] || 0;
+        number.textContent = summary.replicate_count > 1
+            ? `${Number(value).toFixed(6)} ± ${Number(confidence).toFixed(6)}`
+            : Number(value).toFixed(6);
         metric.append(label, number);
         regrets.append(metric);
     });
 
-    const download = element("detail-download");
-    download.href = summary.download_url;
-    download.download = summary.experiment;
+    const downloads = element("detail-downloads");
+    downloads.replaceChildren(...summary.runs.map((run) => {
+        const link = document.createElement("a");
+        link.href = run.download_url;
+        link.download = run.experiment;
+        link.textContent = `Download replicate ${run.replicate} CSV`;
+        return link;
+    }));
     const heatmap = element("detail-heatmap");
-    heatmap.src = summary.joint_actions_url;
-    heatmap.alt = `Empirical joint-action distribution for ${gameLabel}`;
+    const jointActions = element("detail-joint-actions");
+    jointActions.hidden = !summary.joint_actions_url;
     const heatmapDownload = element("detail-heatmap-download");
-    heatmapDownload.href = summary.joint_actions_url;
-    heatmapDownload.download = `${summary.run_id}_joint_actions.png`;
+    if (summary.joint_actions_url) {
+        setHeatmapSource(heatmap, summary.joint_actions_url);
+        heatmap.alt = `Mean empirical joint-action distribution for ${gameLabel} across ${summary.replicate_count} replicate${summary.replicate_count === 1 ? "" : "s"}`;
+        heatmapDownload.href = summary.joint_actions_url;
+        heatmapDownload.download = `${summary.group_id}_mean_joint_actions.png`;
+    }
+    const distanceImage = element("detail-equilibrium-distance");
+    const convergence = element("detail-convergence");
+    const distanceAvailable = Boolean(summary.equilibrium_distance_url);
+    const trajectoryAvailable = Boolean(summary.equilibrium_trajectory_url);
+    convergence.hidden = !distanceAvailable;
+    element("detail-equilibrium-distance-card").hidden = !distanceAvailable;
+    element("detail-equilibrium-trajectory-card").hidden = !trajectoryAvailable;
+    const distanceDownload = element("detail-equilibrium-distance-download");
+    if (distanceAvailable) {
+        setHeatmapSource(distanceImage, summary.equilibrium_distance_url, null, "Computing equilibrium distances…");
+        distanceImage.alt = `Mean CE and CCE L1 distance by horizon for ${gameLabel}`;
+        distanceDownload.href = summary.equilibrium_distance_url;
+        distanceDownload.download = `${summary.group_id}_mean_equilibrium_distance.png`;
+    }
+    if (trajectoryAvailable) {
+        loadEquilibriumTrajectory(summary);
+    }
     panel.scrollIntoView({behavior: "smooth", block: "nearest"});
 }
 
@@ -355,15 +657,14 @@ function reuseSelectedExperiment() {
     }
     element("game").value = selectedSummary.game;
     element("feedback-mode").value = selectedSummary.feedback_mode;
-    updateAlgorithmsForFeedbackMode();
+    element("feedback-mode").dataset.previousValue = selectedSummary.feedback_mode;
+    element("regret-evaluation").value = selectedSummary.regret_evaluation;
+    updateDashboardForGame(selectedSummary.algorithm_profile);
     updateReplicateVisibility();
-    element("algorithm_player_0").value = selectedSummary.algorithm_player_0;
-    element("algorithm_player_1").value = selectedSummary.algorithm_player_1;
     element("horizon").value = selectedSummary.horizon;
     element("seed").value = selectedSummary.seed;
     element("replicate").value = selectedSummary.replicate;
-    element("replicates").value = 1;
-    updateEquilibriumFigures();
+    element("replicates").value = selectedSummary.replicate_count;
     saveFormState();
     element("experiment-form").scrollIntoView({behavior: "smooth"});
 }
@@ -420,16 +721,6 @@ async function refreshFigures() {
     const figures = await response.json();
     const version = Date.now();
     renderFigures(figures.map((figure) => ({...figure, url: `${figure.url.split("?")[0]}?v=${version}`})));
-}
-
-function installConfirmations() {
-    document.querySelectorAll("form[data-confirm]").forEach((form) => {
-        form.addEventListener("submit", (event) => {
-            if (!window.confirm(form.dataset.confirm)) {
-                event.preventDefault();
-            }
-        });
-    });
 }
 
 function setBusy(busy) {
@@ -568,13 +859,18 @@ function updateJob(job) {
     }
 }
 
-element("feedback-mode")?.addEventListener("change", () => {
+element("feedback-mode")?.addEventListener("change", (event) => {
+    updateRegretEvaluationForFeedback(event.currentTarget.dataset.previousValue || event.currentTarget.value);
+    event.currentTarget.dataset.previousValue = event.currentTarget.value;
     updateAlgorithmsForFeedbackMode();
     updateReplicateVisibility();
 });
-element("game")?.addEventListener("change", updateEquilibriumFigures);
-element("swap-players")?.addEventListener("click", () => {
-    swapPlayerValues();
+element("game")?.addEventListener("change", () => {
+    updateDashboardForGame();
+    saveFormState();
+});
+element("synchronize-players")?.addEventListener("click", () => {
+    synchronizePlayerValues();
     saveFormState();
 });
 element("figure-grid")?.addEventListener("click", (event) => {
@@ -596,24 +892,29 @@ document.querySelectorAll(".summary-row").forEach((row) => {
 });
 element("reuse-experiment")?.addEventListener("click", reuseSelectedExperiment);
 element("rebuild-plots-form")?.addEventListener("submit", submitPlotRebuild);
+element("trajectory-points")?.addEventListener("change", () => {
+    saveTrajectoryPoints();
+    if (selectedSummary?.equilibrium_trajectory_url) {
+        loadEquilibriumTrajectory(selectedSummary);
+    }
+});
+element("trajectory-hide-first")?.addEventListener("change", () => {
+    saveTrajectoryHideFirst();
+    if (selectedSummary?.equilibrium_trajectory_url) {
+        loadEquilibriumTrajectory(selectedSummary);
+    }
+});
 
-[
-    "filter-game",
-    "filter-source",
-    "filter-regret",
-    "filter-player",
-    "filter-view",
-    "filter-feedback",
-    "filter-player-algorithm",
-    "filter-opponent-algorithm",
-].forEach((id) => element(id)?.addEventListener("change", applyFilters));
-["filter-horizon", "filter-seed"].forEach((id) => element(id)?.addEventListener("input", applyFilters));
-
-installThemeSelector();
 restoreFormState();
-updateEquilibriumFigures();
+if (element("feedback-mode")) {
+    element("feedback-mode").dataset.previousValue = element("feedback-mode").value;
+}
+restoreTrajectoryPoints();
+restoreTrajectoryHideFirst();
+updateDashboardForGame(playerAlgorithmSelects().map((select) => select.value));
 installFormPersistence();
-installConfirmations();
 installTableSorting();
+restoreFilterState();
+installFilterPersistence();
 applyFilters();
 pollActiveJobs();

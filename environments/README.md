@@ -1,64 +1,49 @@
 # Environments
 
-Stateful fixed-payoff repeated-game environments.
+Stateful fixed-payoff repeated-game environments. This package owns game state and feedback exposure, not learners or metrics.
 
-## Structure
-
-```text
-environments/
-├── __init__.py
-├── base.py
-└── repeated_game.py
-```
-
-The environment layer is independent of `algorithms`; it represents the game and exposes feedback without owning player learners.
-
-## Payoff Representation
-
-Each environment receives one NumPy payoff tensor:
+## Payoff Tensor
 
 ```text
-payoff_tensor[player, action_0, ..., action_n]
+payoff_tensor[player, action_player_0, ..., action_player_(n-1)]
+shape = (n_players, actions_player_0, ..., actions_player_(n-1))
 ```
 
-Its shape is `(n_players, action_1, ..., action_n)`. The tuple of action counts is derived from the joint-action dimensions, and the number of players is derived from the leading dimension.
+Construction requires:
 
-Construction validates the structural invariants needed by the framework:
+- at least one player and one action per player;
+- one action dimension per player;
+- finite payoffs in `[0, 1]`.
 
-- the leading player count matches the number of action dimensions;
-- every player has at least one action;
-- every payoff is finite and lies in `[0, 1]`.
-
-The tensor is copied on construction so later changes to the caller's array cannot alter the game.
+The tensor is copied. Heterogeneous action counts are available as `game.n_actions`.
 
 ## Round Interface
 
 ```python
-game.step(actions)
+game.step((action_player_0, ..., action_player_(n-1)))
 feedback = game.feedback(player)
+counterfactuals = game.deviation_payoffs(player)
 ```
 
-`step(actions)` validates and stores one complete joint action. The runner guarantees exactly one call per round before any feedback or evaluation query. The environment intentionally does not add round counters, duplicate-step checks, or cached derived state.
+`step()` validates and stores one joint action. `deviation_payoffs(player)` varies only that player's action and returns a copy of the unilateral-deviation payoff vector.
 
-`deviation_payoffs(player)` returns a copy of the payoff vector obtained by varying only the requested player's action while holding the other current actions fixed.
+| Environment | `feedback(player)` |
+|---|---|
+| `RepeatedGame` | Complete unilateral-deviation payoff vector |
+| `BanditRepeatedGame` | Realized scalar payoff |
 
-## Feedback Models
+In bandit experiments, `deviation_payoffs()` is used only by offline expected/realized regret evaluators and never reaches the learner.
 
-### `RepeatedGame`
+The runner owns round sequencing; environments deliberately have no counter, learner state, duplicate-step guard, or payoff cache.
 
-Full-information feedback returns the requested player's complete unilateral-deviation payoff vector. The realized payoff is the component corresponding to that player's selected action.
+## Support and Ownership
 
-### `BanditRepeatedGame`
+The environment is generic over player count and heterogeneous actions. Custom 2–8 player games use the same classes as built-in games. N-player runs receive regret and equilibrium-convergence figures; matrix heatmaps remain a two-player presentation.
 
-Bandit feedback performs one scalar tensor lookup and returns only the requested player's realized payoff. It does not compute or store a counterfactual payoff vector.
+```text
+environments/
+├── base.py
+└── repeated_game.py
+```
 
-The experiment runner may call `deviation_payoffs(player)` separately to evaluate realized regret. This is evaluation-only information and is never passed to a bandit learner.
-
-## Computation and State
-
-The shared state consists only of:
-
-- the validated payoff tensor;
-- the current joint action after `step()`.
-
-Realized payoffs and deviation vectors are queried separately for each player. Nothing is precomputed or cached, keeping the two feedback models simple and ensuring bandit learners observe only bandit feedback.
+Benchmark construction belongs to `experiments/`, learning to `algorithms/`, and analysis to `metrics/`.

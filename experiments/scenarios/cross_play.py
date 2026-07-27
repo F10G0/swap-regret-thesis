@@ -5,11 +5,12 @@ from pathlib import Path
 import numpy as np
 
 from algorithms.base import Algorithm
+from config import CUSTOM_GAME_DIR
 from environments.base import FixedGameEnvironment
-from experiments.games import PAYOFF_FACTORIES
+from experiments.game_catalog import load_game_payoffs
 from experiments.recorder import CsvRecorder
 from experiments.runner import run_game
-from experiments.scenarios.fieldnames import regret_fieldnames
+from experiments.result_schema import regret_fieldnames
 from experiments.spec import ExperimentSpec
 
 
@@ -31,15 +32,17 @@ def player_seed(spec: ExperimentSpec, player_id: int) -> int:
 
 def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_names: list[str], horizon: int, seed: int, replicate: int,
                               environment_factory: Callable[[np.ndarray], FixedGameEnvironment], algorithm_registry: dict[str, AlgorithmFactory], output_dir: str | Path,
-                              should_cancel: Callable[[], bool] | None = None) -> Path:
-    if game_name not in PAYOFF_FACTORIES:
-        raise ValueError(f"unknown game: {game_name}")
+                              should_cancel: Callable[[], bool] | None = None, custom_game_dir: str | Path = CUSTOM_GAME_DIR,
+                              regret_evaluation: str = "feedback_aligned") -> Path:
     for name in algorithm_names:
         if name not in algorithm_registry:
             raise ValueError(f"unknown algorithm: {name}")
 
-    spec = ExperimentSpec(game_name, feedback_mode, tuple(algorithm_names), horizon, seed, replicate)
-    game = environment_factory(PAYOFF_FACTORIES[game_name]())
+    payoff_tensor = load_game_payoffs(game_name, custom_game_dir)
+    if len(algorithm_names) != payoff_tensor.shape[0]:
+        raise ValueError(f"game {game_name} requires {payoff_tensor.shape[0]} player algorithms")
+    spec = ExperimentSpec(game_name, feedback_mode, tuple(algorithm_names), horizon, seed, replicate, regret_evaluation=regret_evaluation)
+    game = environment_factory(payoff_tensor)
     players = [
         algorithm_registry[name].create(n_actions, horizon, player_seed(spec, player_id))
         for player_id, (name, n_actions) in enumerate(zip(spec.algorithm_names, game.n_actions))
@@ -49,10 +52,10 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
     if output_path.exists():
         raise FileExistsError(f"experiment {spec.run_id} already exists at {output_path}")
 
-    with CsvRecorder(regret_fieldnames(spec.feedback_mode), output_path) as recorder:
+    with CsvRecorder(regret_fieldnames(spec.regret_evaluation), output_path) as recorder:
         run_game(
             game_name=spec.game_name, feedback_mode=spec.feedback_mode, algorithm_name=spec.algorithm_profile_name, game=game, players=players, recorder=recorder, horizon=spec.horizon,
-            metadata=spec.metadata(), should_cancel=should_cancel,
+            metadata=spec.metadata(), should_cancel=should_cancel, algorithm_names=spec.algorithm_names, regret_evaluation=spec.regret_evaluation,
         )
 
     return output_path

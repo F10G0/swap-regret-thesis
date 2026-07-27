@@ -4,16 +4,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret
+from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret, run_label
 from experiments.scenarios.cross_play import player_seed
-from experiments.scenarios.fieldnames import regret_fieldnames
-from experiments.spec import ExperimentSpec
+from experiments.result_schema import regret_fieldnames
+from experiments.spec import MAX_RUN_ID_BYTES, ExperimentSpec
 
 
 def make_spec(
     feedback_mode: str = "full_information",
     seed: int = 7,
     replicate: int = 0,
+    regret_evaluation: str = "feedback_aligned",
 ) -> ExperimentSpec:
     return ExperimentSpec(
         game_name="rps",
@@ -22,11 +23,12 @@ def make_spec(
         horizon=10,
         seed=seed,
         replicate=replicate,
+        regret_evaluation=regret_evaluation,
     )
 
 
 def write_result(path, spec: ExperimentSpec) -> None:
-    fieldnames = regret_fieldnames(spec.feedback_mode)
+    fieldnames = regret_fieldnames(spec.regret_evaluation)
     row = {field: 0 for field in fieldnames}
     row.update(spec.metadata())
     row.update(
@@ -51,6 +53,7 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     baseline = make_spec()
 
     assert baseline.run_id != make_spec(feedback_mode="bandit").run_id
+    assert baseline.run_id != make_spec(regret_evaluation="both").run_id
     assert baseline.run_id != make_spec(seed=8).run_id
     changed_horizon = ExperimentSpec(
         game_name="rps",
@@ -61,6 +64,31 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     )
     assert baseline.run_id != changed_horizon.run_id
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, stationary_method="pinv").run_id
+
+
+def test_experiment_spec_preserves_positional_stationary_method_compatibility() -> None:
+    spec = ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, 0, "pinv")
+
+    assert spec.stationary_method == "pinv"
+    assert spec.regret_evaluation == "expected"
+
+
+def test_long_srm_profile_uses_readable_abbreviated_run_id() -> None:
+    spec = ExperimentSpec("custom__eight-player", "full_information", ("stationary_regret_matching",) * 8, 10, 7)
+
+    assert len(spec.run_id.encode("utf-8")) <= MAX_RUN_ID_BYTES
+    assert "_srm_vs_srm_vs_srm_vs_srm_vs_srm_vs_srm_vs_srm_vs_srm_" in spec.run_id
+    assert "stationary_regret_matching" not in spec.run_id
+    assert spec.metadata()["algorithm_profile"].count("stationary_regret_matching") == 8
+
+
+def test_unabbreviated_long_profile_uses_compact_run_id() -> None:
+    long_name = "algorithm_with_an_exceptionally_long_internal_identifier"
+    spec = ExperimentSpec("custom__eight-player", "full_information", (long_name,) * 8, 10, 7)
+
+    assert len(spec.run_id.encode("utf-8")) <= MAX_RUN_ID_BYTES
+    assert "_8p_" in spec.run_id
+    assert long_name not in spec.run_id
 
 
 def test_experiment_spec_rejects_negative_seed() -> None:
@@ -110,6 +138,23 @@ def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:
     assert set(results["rps"]) == {full_spec.run_id, bandit_spec.run_id}
 
 
+def test_plot_legend_uses_algorithm_abbreviations() -> None:
+    rows = [{"algorithm": "regret_matching_vs_stationary_regret_matching_vs_hedge", "seed": "7"}]
+
+    assert run_label(rows, 1) == "RM vs SRM vs Hedge · seed 7"
+
+
+def test_plot_legend_can_distinguish_feedback_and_evaluation() -> None:
+    rows = [{
+        "algorithm": "exp3_vs_exp3",
+        "seed": "7",
+        "feedback_mode": "bandit",
+        "regret_evaluation": "expected",
+    }]
+
+    assert run_label(rows, 1, include_feedback=True, include_evaluation=True) == "EXP3 vs EXP3 · seed 7 · bandit · evaluation expected"
+
+
 def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
     replicate_groups = []
     for index in range(25):
@@ -118,6 +163,7 @@ def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
             "t": "1",
             "average_expected_external_regret": str(index),
             "feedback_mode": "full_information",
+            "regret_evaluation": "expected",
             "algorithm": f"stationary_regret_matching_{index}_vs_stationary_regret_matching_{index}",
             "seed": "7",
             "stationary_method": "solve",
