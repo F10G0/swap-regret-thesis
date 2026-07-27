@@ -119,10 +119,11 @@ The report includes:
 - game, regret-source, regret-notion, player, and view filters;
 - replicate-aggregated final regret summaries with 95% confidence intervals;
 - generated regret figures;
-- cached result-detail figures when available;
+- group-level empirical joint-action, CE/CCE-distance, and projected-trajectory figures;
+- both `from_round_1` and `hide_round_1` trajectory variants with 10 checkpoints;
 - copied precomputed CE/CCE profile-weight heatmaps.
 
-The generated HTML requires no Flask server or Python process after creation. It uses only local files and does not run experiments or generate lazy equilibrium-convergence analyses.
+Missing or stale group-level detail figures are generated from the recorded CSV results while the report is built. The resulting HTML itself requires no Flask server or Python process and uses only local files.
 
 ## Outputs and Structure
 
