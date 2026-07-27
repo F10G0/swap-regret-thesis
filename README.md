@@ -129,7 +129,7 @@ Heatmaps use a fixed blue palette and lower origin; the interface theme changes 
 | `make run` | Run batch experiments, plots, and static report |
 | `make full` / `bandit` | Run one configured feedback-mode batch |
 | `make web` | Start the dashboard |
-| `make plot` / `report` | Rebuild plots or the static report |
+| `make plot` / `report` | Rebuild plots or the interactive static report |
 | `make precompute-equilibria` | Regenerate `web/static/equilibria/` only |
 | `make test` / `smoke` | Run all tests or smoke tests |
 | `make clean` | Remove caches and interrupted staging artifacts |

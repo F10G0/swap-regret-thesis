@@ -11,7 +11,7 @@ Every factory returns `(2, actions_player_0, actions_player_1)` payoffs normaliz
 | `rps` | 3 × 3 | Upstream Rock–Paper–Scissors |
 | `rpsls` | 5 × 5 | Local standard RPSLS relation |
 | `matching_pennies` | 2 × 2 | Upstream Matching Pennies |
-| `bertrand_standard_o1` | 21 × 21 | Costs `(0, 0)`, prices `[0.05, 1]`, demand `1` |
+| `bertrand_standard_o1` | 21 × 21 | Costs `(0, 0)`, prices `[0.05, 1]`, maximum demand `1` |
 | `bertrand_linear_o2` | 21 × 21 | Costs `(0, 0)`, prices `[0, 1]`, `alpha=.48`, `beta=.9`, `gamma=.6` |
 | `bertrand_logit_o3` | 21 × 21 | Costs `(1, 1)`, prices `[1, 2]`, `alpha=(2, 2)`, `mu=.25` |
 | `bertrand_linear_o2_prime` | 21 × 21 | O2 with costs `(0, .2)` |
@@ -109,6 +109,20 @@ Each heatmap cell is optimized independently, so the matrix is not an equilibriu
 - Built-in and custom n-player games are supported; matrix heatmaps remain built-in two-player only.
 
 Distance and trajectory are separate lazy caches. Trajectory filenames include point count and `from_round_1` or `hide_round_1`.
+
+### Static report
+
+`make report` builds `results/index.html` as an interactive static snapshot of the existing results.
+
+The report includes:
+
+- game, regret-source, regret-notion, player, and view filters;
+- replicate-aggregated final regret summaries with 95% confidence intervals;
+- generated regret figures;
+- cached result-detail figures when available;
+- copied precomputed CE/CCE profile-weight heatmaps.
+
+The generated HTML requires no Flask server or Python process after creation. It uses only local files and does not run experiments or generate lazy equilibrium-convergence analyses.
 
 ## Outputs and Structure
 

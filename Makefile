@@ -50,7 +50,7 @@ web: ## Start the local experiment dashboard
 plot: ## Regenerate plots from existing raw results
 	$(PYTHON) -m experiments.plots.plot_regret
 
-report: ## Build the HTML report from existing figures
+report: ## Build the interactive static report from existing results
 	$(PYTHON) -m experiments.build_report
 
 precompute-equilibria: ## Regenerate static CE/CCE profile-weight heatmaps
