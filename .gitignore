@@ -18,7 +18,8 @@ __pycache__/
 
 # virtual environment
 venv/
-.env/
+.venv/
+.env
 
 # pinned editable games_learning checkout created by `make install`
 src/games-learning/
@@ -49,3 +50,12 @@ results/figures/*
 
 # allow final figures (for thesis)
 !results/figures/final_*.png
+!results/figures/final_*.pdf
+
+# isolated generated runs and regenerable caches
+results/adversarial/
+results/cache/
+
+# dashboard-created games and their cached figures
+data/custom_games/*
+!data/custom_games/.gitkeep

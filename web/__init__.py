@@ -5,6 +5,7 @@ import secrets
 from flask import Flask, abort, request, session
 
 from config import CUSTOM_GAME_DIR, FIGURE_DIR, RAW_DIR, RESULTS_DIR
+from web.build_features import experimental_trajectories_built
 from web.routes import dashboard
 from web.services import DashboardService
 
@@ -13,6 +14,9 @@ def create_app(
     test_config: dict | None = None,
     service: DashboardService | None = None,
 ) -> Flask:
+    experimental_trajectories_enabled = (
+        experimental_trajectories_built()
+    )
     app = Flask(__name__)
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SWAP_REGRET_WEB_SECRET") or secrets.token_hex(32),
@@ -22,6 +26,9 @@ def create_app(
         CUSTOM_GAME_DIR=CUSTOM_GAME_DIR,
         MAX_HORIZON=100_000,
         MAX_REPLICATES=100,
+        EXPERIMENTAL_TRAJECTORIES_ENABLED=(
+            experimental_trajectories_enabled
+        ),
     )
 
     if test_config:
@@ -37,6 +44,18 @@ def create_app(
 
     app.extensions["dashboard_service"] = service
     app.register_blueprint(dashboard)
+    if (
+        app.config.get("TESTING")
+        and app.config.get("TEST_ENABLE_EXPERIMENTAL_TRAJECTORIES")
+    ):
+        experimental_trajectories_enabled = True
+    app.config["EXPERIMENTAL_TRAJECTORIES_ENABLED"] = (
+        experimental_trajectories_enabled
+    )
+    if experimental_trajectories_enabled:
+        from web.experimental_routes import experimental_trajectory
+
+        app.register_blueprint(experimental_trajectory)
 
     @app.context_processor
     def inject_csrf_token() -> dict:
@@ -47,7 +66,12 @@ def create_app(
                 session["_csrf_token"] = token
             return token
 
-        return {"csrf_token": csrf_token}
+        return {
+            "csrf_token": csrf_token,
+            "experimental_trajectories_enabled": (
+                experimental_trajectories_enabled
+            ),
+        }
 
     @app.before_request
     def protect_post_requests() -> None:

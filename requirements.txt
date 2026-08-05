@@ -1,6 +1,2 @@
 -e git+https://github.com/TUM-DSS/games_learning.git@6ca238a9c8716cd34fc3fcbc949bba7a7ea68dc5#egg=games_learning
-numpy
-matplotlib
-flask
-PuLP==2.9.0
-scipy
+-e .[test]

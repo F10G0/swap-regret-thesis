@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Experimental Trajectory Comparison{% endblock %}
+
+{% block content %}
+    <main id="main-content" class="builder-shell">
+        <section class="panel trajectory-comparison" aria-labelledby="trajectory-comparison-heading">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Experimental visualization</p>
+                    <h1 id="trajectory-comparison-heading">Equilibrium Trajectory Comparison</h1>
+                    <p>This opt-in tool projects high-dimensional empirical joint-distribution trajectories. It is exploratory visualization; full-space CE/CCE distances remain the convergence evidence.</p>
+                </div>
+            </div>
+            {% if trajectory_comparison_candidates %}
+                <div class="trajectory-comparison-builder">
+                    <div class="trajectory-comparison-add">
+                        <label for="trajectory-comparison-candidate">Experiment configuration</label>
+                        <select id="trajectory-comparison-candidate"></select>
+                        <button id="trajectory-comparison-add" type="button">Add experiment</button>
+                    </div>
+                    <div>
+                        <h2>Selected experiments</h2>
+                        <ul id="trajectory-comparison-selected" class="trajectory-member-list"></ul>
+                        <p id="trajectory-comparison-compatibility" class="trajectory-comparison-context"></p>
+                    </div>
+                    <div class="trajectory-comparison-controls">
+                        <label for="trajectory-comparison-view">
+                            View
+                            <select id="trajectory-comparison-view">
+                                <option value="geometry">Geometry-aware</option>
+                                <option value="unified">Unified equilibrium-relative</option>
+                            </select>
+                        </label>
+                        <label for="final-interval-segments">
+                            Final-interval segments
+                            <input
+                                id="final-interval-segments"
+                                type="number"
+                                value="{{ default_final_interval_segments }}"
+                                min="{{ min_final_interval_segments }}"
+                                max="{{ max_final_interval_segments }}"
+                                step="1"
+                            >
+                        </label>
+                        <label for="focus-final-interval">
+                            <input id="focus-final-interval" type="checkbox">
+                            Focus final log interval
+                        </label>
+                        <span id="trajectory-comparison-dirty" class="trajectory-comparison-dirty">Changes not rendered</span>
+                        <button id="trajectory-comparison-generate" type="button" disabled>Generate</button>
+                    </div>
+                </div>
+                <div id="trajectory-comparison-result" class="trajectory-comparison-result" hidden>
+                    <div class="heatmap-frame trajectory-comparison-frame">
+                        <img id="trajectory-comparison-image" alt="Shared equilibrium trajectory comparison">
+                        <span class="heatmap-loading" role="status">Generating comparison…</span>
+                    </div>
+                    <a id="trajectory-comparison-download" href="" download>Download PDF</a>
+                    <h2>Rendered experiments</h2>
+                    <ul id="trajectory-comparison-rendered-members" class="trajectory-member-list rendered"></ul>
+                </div>
+            {% else %}
+                <p class="empty">Run an experiment before creating a trajectory comparison.</p>
+            {% endif %}
+        </section>
+    </main>
+{% endblock %}
+
+{% block scripts %}
+    <script id="experimental-trajectory-data" type="application/json">
+        {{ {
+            "trajectoryComparisonCandidates": trajectory_comparison_candidates,
+            "trajectoryComparisonUrl": trajectory_comparison_url,
+            "gamePresentations": game_presentations,
+        } | tojson }}
+    </script>
+    <script src="{{ url_for('static', filename='experimental_trajectory.js') }}" defer></script>
+{% endblock %}

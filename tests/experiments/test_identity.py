@@ -4,8 +4,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
+from experiments.game_catalog import GameCatalog, payoff_tensor_digest
 from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret, run_label
 from experiments.scenarios.cross_play import player_seed
+from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.result_schema import regret_fieldnames
 from experiments.spec import MAX_RUN_ID_BYTES, ExperimentSpec
 
@@ -38,15 +40,22 @@ def write_result(path, spec: ExperimentSpec) -> None:
             "algorithm_player_0": spec.algorithm_names[0],
             "algorithm_player_1": spec.algorithm_names[1],
             "horizon": spec.horizon,
-            "t": 1,
-            "player": 0,
         }
     )
 
     with path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerow(row)
+        for time in range(1, spec.horizon + 1):
+            for player in range(len(spec.algorithm_names)):
+                writer.writerow(
+                    row
+                    | {
+                        "t": time,
+                        "player": player,
+                        "player_algorithm": spec.algorithm_names[player],
+                    }
+                )
 
 
 def test_run_id_changes_with_experiment_configuration() -> None:
@@ -96,6 +105,40 @@ def test_experiment_spec_rejects_negative_seed() -> None:
         make_spec(seed=-1)
 
 
+def test_payoff_tensor_fingerprint_changes_run_identity_and_csv_metadata(
+    tmp_path,
+) -> None:
+    first_games = tmp_path / "first-games"
+    second_games = tmp_path / "second-games"
+    first_definition = GameCatalog(first_games).create_random("same", 2, [2, 2], 1)
+    second_definition = GameCatalog(second_games).create_random("same", 2, [2, 2], 2)
+    assert first_definition.id == second_definition.id
+
+    first_path = run_full_information_cross_play_experiment(
+        first_definition.id,
+        ["hedge", "hedge"],
+        horizon=1,
+        output_dir=tmp_path / "first-results",
+        custom_game_dir=first_games,
+    )
+    second_path = run_full_information_cross_play_experiment(
+        second_definition.id,
+        ["hedge", "hedge"],
+        horizon=1,
+        output_dir=tmp_path / "second-results",
+        custom_game_dir=second_games,
+    )
+
+    assert first_path.name != second_path.name
+    with first_path.open(newline="") as file:
+        first_digest = next(csv.DictReader(file))["game_payoff_digest"]
+    with second_path.open(newline="") as file:
+        second_digest = next(csv.DictReader(file))["game_payoff_digest"]
+    assert first_digest != second_digest
+    assert first_digest == payoff_tensor_digest(GameCatalog(first_games).load(first_definition.id))
+    assert second_digest == payoff_tensor_digest(GameCatalog(second_games).load(second_definition.id))
+
+
 def test_replicates_derive_distinct_reproducible_player_seeds() -> None:
     first = make_spec(feedback_mode="bandit", replicate=0)
     second = make_spec(feedback_mode="bandit", replicate=1)
@@ -124,7 +167,7 @@ def test_metric_curves_are_averaged_across_replicates() -> None:
 
     assert np.array_equal(times, [1, 2])
     assert np.array_equal(means, [2.0, 3.0])
-    assert np.all(confidence > 0.0)
+    assert np.allclose(confidence, [12.706204736, 12.706204736])
 
 
 def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:

@@ -6,15 +6,14 @@ const dashboardData = dashboardDataElement
     : {figures: [], figuresUrl: "", equilibriumFigures: {}, gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
 const formStorageKey = "swap-regret-experiment-form";
 const filterStorageKey = "swap-regret-result-filters";
-const trajectoryPointsStorageKey = "swap-regret-trajectory-points";
-const trajectoryHideFirstStorageKey = "swap-regret-trajectory-hide-first";
-const formFieldIds = ["game", "feedback-mode", "regret-evaluation", "horizon", "seed", "replicate", "replicates"];
+const formFieldIds = ["game", "feedback-mode", "regret-evaluation", "horizon", "seed", "replicates"];
 const filterFieldIds = [
     "filter-game",
     "filter-source",
     "filter-regret",
     "filter-player",
     "filter-view",
+    "filter-summary-source",
     "filter-feedback",
     "filter-regret-evaluation",
     "filter-player-algorithm",
@@ -22,10 +21,6 @@ const filterFieldIds = [
     "filter-horizon",
     "filter-seed",
 ];
-
-function element(id) {
-    return document.getElementById(id);
-}
 
 function gamePresentation(game) {
     return dashboardData.gamePresentations[game] || {
@@ -62,9 +57,8 @@ function restoreFormState() {
             select.value = state[id];
         }
     }
-    const legacyAlgorithms = [state.algorithm_player_0, state.algorithm_player_1].filter(Boolean);
-    updatePlayerControls(state.algorithmNames || legacyAlgorithms);
-    for (const id of ["horizon", "seed", "replicate", "replicates"]) {
+    updatePlayerControls(state.algorithmNames || []);
+    for (const id of ["horizon", "seed", "replicates"]) {
         const input = element(id);
         if (input && state[id] !== undefined) {
             input.value = state[id];
@@ -136,10 +130,6 @@ function updatePlayerControls(preferredValues = null) {
         }
     }
     container.replaceChildren(...fields);
-    const allPairsButton = element("queue-all-pairs");
-    if (allPairsButton) {
-        allPairsButton.hidden = definition.source !== "builtin" || definition.n_players !== 2;
-    }
 }
 
 function updateAlgorithmsForFeedbackMode() {
@@ -153,11 +143,13 @@ function updateAlgorithmsForFeedbackMode() {
 }
 
 function updateReplicateVisibility() {
-    const field = element("replicates-field");
-    if (field) {
+    const fields = element("replicate-fields");
+    if (fields) {
         const hidden = element("feedback-mode")?.value !== "bandit";
-        field.hidden = hidden;
-        field.closest(".replicate-grid")?.classList.toggle("replicate-grid-single", hidden);
+        fields.hidden = hidden;
+        fields.querySelectorAll("input").forEach((input) => {
+            input.disabled = hidden;
+        });
     }
 }
 
@@ -171,89 +163,6 @@ function updateRegretEvaluationForFeedback(previousFeedbackMode) {
     if (evaluation && evaluation.value === alignedRegretEvaluation(previousFeedbackMode)) {
         evaluation.value = alignedRegretEvaluation(feedback);
     }
-}
-
-function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loading heatmap…") {
-    if (!image || !source) {
-        return;
-    }
-    const frame = image.closest(".heatmap-frame");
-    if (!frame) {
-        image.src = source;
-        return;
-    }
-
-    const requestId = String(Number(image.dataset.loadRequest || 0) + 1);
-    const status = frame.querySelector(".heatmap-loading");
-    const previousObjectUrl = image.dataset.objectUrl;
-    if (previousObjectUrl) {
-        URL.revokeObjectURL(previousObjectUrl);
-        delete image.dataset.objectUrl;
-    }
-    image.removeAttribute("src");
-    image.dataset.loadRequest = requestId;
-    frame.classList.add("is-loading");
-    frame.classList.remove("has-error");
-    frame.setAttribute("aria-busy", "true");
-    if (status) {
-        status.textContent = loadingMessage;
-    }
-
-    const finish = (failed) => {
-        if (image.dataset.loadRequest !== requestId) {
-            return;
-        }
-        frame.classList.remove("is-loading");
-        frame.classList.toggle("has-error", failed);
-        frame.removeAttribute("aria-busy");
-        if (failed && status) {
-            status.textContent = "Heatmap unavailable";
-        }
-    };
-    const load = async () => {
-        try {
-            const response = await fetch(source, {cache: "no-store"});
-            if (image.dataset.loadRequest !== requestId) {
-                return;
-            }
-            if (response.status === 202) {
-                const payload = await response.json();
-                if (status) {
-                    status.textContent = payload.message || "Computing equilibrium heatmap…";
-                }
-                const retryAfter = Number(response.headers.get("Retry-After")) || 2;
-                window.setTimeout(load, Math.max(1, retryAfter) * 1000);
-                return;
-            }
-            if (!response.ok) {
-                throw new Error(`Heatmap request failed (${response.status})`);
-            }
-
-            const objectUrl = URL.createObjectURL(await response.blob());
-            if (image.dataset.loadRequest !== requestId) {
-                URL.revokeObjectURL(objectUrl);
-                return;
-            }
-            image.onload = () => {
-                if (image.dataset.loadRequest !== requestId) {
-                    URL.revokeObjectURL(objectUrl);
-                    return;
-                }
-                image.dataset.objectUrl = objectUrl;
-                finish(false);
-                onReady?.();
-            };
-            image.onerror = () => {
-                URL.revokeObjectURL(objectUrl);
-                finish(true);
-            };
-            image.src = objectUrl;
-        } catch (error) {
-            console.warn("Could not load heatmap", error);
-            finish(true);
-        }
-    };
-    load();
 }
 
 function updateEquilibriumFigures() {
@@ -284,7 +193,7 @@ function updateEquilibriumFigures() {
     if (unavailable) {
         unavailable.hidden = Boolean(urls);
     }
-    if (!urls) {
+    if (!urls || !element("equilibrium-panel")?.open) {
         return;
     }
     for (const equilibrium of ["ce", "cce"]) {
@@ -296,9 +205,9 @@ function updateEquilibriumFigures() {
             download.classList.add("is-disabled");
         }
         if (image) {
-            setHeatmapSource(image, urls[equilibrium], () => {
+            setHeatmapSource(image, urls[equilibrium].png, () => {
                 if (download) {
-                    download.href = urls[equilibrium];
+                    download.href = urls[equilibrium].pdf;
                     download.removeAttribute("aria-disabled");
                     download.classList.remove("is-disabled");
                 }
@@ -402,6 +311,9 @@ function highlightBestValues() {
     document.querySelectorAll("[data-metric]").forEach((cell) => cell.classList.remove("best-value"));
     const groups = new Map();
     document.querySelectorAll("[data-metric][data-value]").forEach((cell) => {
+        if (cell.hidden) {
+            return;
+        }
         const row = cell.closest("tr");
         if (row.hidden) {
             return;
@@ -468,7 +380,51 @@ function applyFilters() {
     if (counter) {
         counter.textContent = `${visible} figure${visible === 1 ? "" : "s"}`;
     }
+    updateSummarySourceColumns();
     updateSummaryRows();
+}
+
+function selectAvailableFigureSource(figures) {
+    const source = element("filter-source");
+    if (!source) {
+        return;
+    }
+    const availableSources = new Set(figures.map((figure) => figure.source));
+    if (availableSources.size === 0 || availableSources.has(source.value)) {
+        return;
+    }
+    const availableOption = [...source.options].find((option) => availableSources.has(option.value));
+    if (availableOption) {
+        source.value = availableOption.value;
+    }
+}
+
+function selectAvailableSummarySource() {
+    const source = element("filter-summary-source");
+    if (!source) {
+        return;
+    }
+    const availableSources = new Set();
+    dashboardData.summaries.forEach((summary) => {
+        for (const candidate of ["expected", "realized"]) {
+            if (Object.keys(summary).some((name) => name.startsWith(`average_${candidate}_`) && name.endsWith("_regret"))) {
+                availableSources.add(candidate);
+            }
+        }
+    });
+    [...source.options].forEach((option) => {
+        option.disabled = !availableSources.has(option.value);
+    });
+    if (!availableSources.has(source.value)) {
+        source.value = [...source.options].find((option) => !option.disabled)?.value || "expected";
+    }
+}
+
+function updateSummarySourceColumns() {
+    const source = element("filter-summary-source")?.value || "expected";
+    document.querySelectorAll("[data-regret-source]").forEach((cell) => {
+        cell.hidden = cell.dataset.regretSource !== source;
+    });
 }
 
 function openFigure(index) {
@@ -485,8 +441,9 @@ function openFigure(index) {
     const gameLabel = gamePresentation(figure.game).label;
     image.alt = `${gameLabel}, ${figure.source} ${figure.regret} regret, player ${figure.player}`;
     title.textContent = `${gameLabel} · ${figure.source} ${figure.regret} · player ${figure.player}`;
-    download.href = figure.url;
-    download.download = figure.filename;
+    download.href = figure.pdf_url || figure.url;
+    download.download = figure.pdf_filename || figure.filename;
+    download.textContent = figure.pdf_url ? "Download PDF" : "Download PNG";
     dialog.showModal();
 }
 
@@ -499,83 +456,6 @@ function addDetail(metadata, label, value) {
 }
 
 let selectedSummary = null;
-
-function trajectoryPoints() {
-    const input = element("trajectory-points");
-    if (!input) {
-        return 10;
-    }
-    const minimum = Number(input.min) || 2;
-    const maximum = Number(input.max) || 50;
-    const fallback = Number(input.defaultValue) || 10;
-    const parsed = Number(input.value);
-    const value = input.value !== "" && Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
-    const normalized = Math.min(maximum, Math.max(minimum, value));
-    input.value = normalized;
-    return normalized;
-}
-
-function saveTrajectoryPoints() {
-    try {
-        window.localStorage.setItem(trajectoryPointsStorageKey, String(trajectoryPoints()));
-    } catch (error) {
-        console.warn("Could not save trajectory points", error);
-    }
-}
-
-function restoreTrajectoryPoints() {
-    const input = element("trajectory-points");
-    if (!input) {
-        return;
-    }
-    try {
-        const stored = window.localStorage.getItem(trajectoryPointsStorageKey);
-        if (stored !== null) {
-            input.value = stored;
-        }
-    } catch (error) {
-        console.warn("Could not restore trajectory points", error);
-    }
-    trajectoryPoints();
-}
-
-function trajectoryHideFirst() {
-    return element("trajectory-hide-first")?.checked ?? false;
-}
-
-function saveTrajectoryHideFirst() {
-    try {
-        window.localStorage.setItem(trajectoryHideFirstStorageKey, trajectoryHideFirst() ? "1" : "0");
-    } catch (error) {
-        console.warn("Could not save hide-first preference", error);
-    }
-}
-
-function restoreTrajectoryHideFirst() {
-    const input = element("trajectory-hide-first");
-    if (!input) {
-        return;
-    }
-    try {
-        input.checked = window.localStorage.getItem(trajectoryHideFirstStorageKey) === "1";
-    } catch (error) {
-        console.warn("Could not restore hide-first preference", error);
-    }
-}
-
-function loadEquilibriumTrajectory(summary) {
-    const image = element("detail-equilibrium-trajectory");
-    const download = element("detail-equilibrium-trajectory-download");
-    const points = trajectoryPoints();
-    const hideFirst = trajectoryHideFirst();
-    const source = new URL(summary.equilibrium_trajectory_url, window.location.href);
-    source.searchParams.set("points", points);
-    source.searchParams.set("hide_first", hideFirst ? "1" : "0");
-    setHeatmapSource(image, source.href, null, "Computing projected equilibrium regions…");
-    image.alt = `Projected mean joint-distribution trajectory for ${gamePresentation(summary.game).label} using ${points} points${hideFirst ? ", excluding round 1" : ""}`;
-    download.href = source.href;
-    download.download = `${summary.group_id}_mean_equilibrium_trajectory_p${points}${hideFirst ? "_hide_first" : ""}.png`;
-}
 
 function showExperimentDetail(index) {
     const summary = dashboardData.summaries[index];
@@ -628,25 +508,20 @@ function showExperimentDetail(index) {
     if (summary.joint_actions_url) {
         setHeatmapSource(heatmap, summary.joint_actions_url);
         heatmap.alt = `Mean empirical joint-action distribution for ${gameLabel} across ${summary.replicate_count} replicate${summary.replicate_count === 1 ? "" : "s"}`;
-        heatmapDownload.href = summary.joint_actions_url;
-        heatmapDownload.download = `${summary.group_id}_mean_joint_actions.png`;
+        heatmapDownload.href = summary.joint_actions_pdf_url;
+        heatmapDownload.download = `${summary.group_id}_mean_joint_actions.pdf`;
     }
     const distanceImage = element("detail-equilibrium-distance");
     const convergence = element("detail-convergence");
     const distanceAvailable = Boolean(summary.equilibrium_distance_url);
-    const trajectoryAvailable = Boolean(summary.equilibrium_trajectory_url);
     convergence.hidden = !distanceAvailable;
     element("detail-equilibrium-distance-card").hidden = !distanceAvailable;
-    element("detail-equilibrium-trajectory-card").hidden = !trajectoryAvailable;
     const distanceDownload = element("detail-equilibrium-distance-download");
     if (distanceAvailable) {
         setHeatmapSource(distanceImage, summary.equilibrium_distance_url, null, "Computing equilibrium distances…");
         distanceImage.alt = `Mean CE and CCE L1 distance by horizon for ${gameLabel}`;
-        distanceDownload.href = summary.equilibrium_distance_url;
-        distanceDownload.download = `${summary.group_id}_mean_equilibrium_distance.png`;
-    }
-    if (trajectoryAvailable) {
-        loadEquilibriumTrajectory(summary);
+        distanceDownload.href = summary.equilibrium_distance_pdf_url;
+        distanceDownload.download = `${summary.group_id}_mean_equilibrium_distance.pdf`;
     }
     panel.scrollIntoView({behavior: "smooth", block: "nearest"});
 }
@@ -663,7 +538,6 @@ function reuseSelectedExperiment() {
     updateReplicateVisibility();
     element("horizon").value = selectedSummary.horizon;
     element("seed").value = selectedSummary.seed;
-    element("replicate").value = selectedSummary.replicate;
     element("replicates").value = selectedSummary.replicate_count;
     saveFormState();
     element("experiment-form").scrollIntoView({behavior: "smooth"});
@@ -694,9 +568,9 @@ function createFigureCard(figure, index) {
     button.append(label, image);
 
     const download = document.createElement("a");
-    download.href = figure.url;
-    download.download = figure.filename;
-    download.textContent = "Download PNG";
+    download.href = figure.pdf_url || figure.url;
+    download.download = figure.pdf_filename || figure.filename;
+    download.textContent = figure.pdf_url ? "Download PDF" : "Download PNG";
     card.append(button, download);
     return card;
 }
@@ -710,6 +584,7 @@ function renderFigures(figures) {
     if (element("figure-empty")) {
         element("figure-empty").hidden = figures.length > 0;
     }
+    selectAvailableFigureSource(figures);
     applyFilters();
 }
 
@@ -743,6 +618,9 @@ function showNotice(message, category) {
 function addJob(job) {
     dashboardData.jobs.unshift(job);
     const panel = document.querySelector(".jobs-panel");
+    if (panel) {
+        panel.hidden = false;
+    }
     let list = panel?.querySelector(".job-list");
     if (!list && panel) {
         panel.querySelector(".empty")?.remove();
@@ -771,6 +649,9 @@ function addJob(job) {
     actions.append(status);
     item.append(description, actions);
     list.prepend(item);
+    while (list.children.length > 5) {
+        list.lastElementChild.remove();
+    }
 }
 
 async function submitPlotRebuild(event) {
@@ -869,6 +750,11 @@ element("game")?.addEventListener("change", () => {
     updateDashboardForGame();
     saveFormState();
 });
+element("equilibrium-panel")?.addEventListener("toggle", (event) => {
+    if (event.currentTarget.open) {
+        updateEquilibriumFigures();
+    }
+});
 element("synchronize-players")?.addEventListener("click", () => {
     synchronizePlayerValues();
     saveFormState();
@@ -892,29 +778,16 @@ document.querySelectorAll(".summary-row").forEach((row) => {
 });
 element("reuse-experiment")?.addEventListener("click", reuseSelectedExperiment);
 element("rebuild-plots-form")?.addEventListener("submit", submitPlotRebuild);
-element("trajectory-points")?.addEventListener("change", () => {
-    saveTrajectoryPoints();
-    if (selectedSummary?.equilibrium_trajectory_url) {
-        loadEquilibriumTrajectory(selectedSummary);
-    }
-});
-element("trajectory-hide-first")?.addEventListener("change", () => {
-    saveTrajectoryHideFirst();
-    if (selectedSummary?.equilibrium_trajectory_url) {
-        loadEquilibriumTrajectory(selectedSummary);
-    }
-});
-
 restoreFormState();
 if (element("feedback-mode")) {
     element("feedback-mode").dataset.previousValue = element("feedback-mode").value;
 }
-restoreTrajectoryPoints();
-restoreTrajectoryHideFirst();
 updateDashboardForGame(playerAlgorithmSelects().map((select) => select.value));
 installFormPersistence();
 installTableSorting();
 restoreFilterState();
+selectAvailableFigureSource(dashboardData.figures);
+selectAvailableSummarySource();
 installFilterPersistence();
 applyFilters();
 pollActiveJobs();

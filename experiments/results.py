@@ -2,6 +2,7 @@ import csv
 from collections.abc import Iterator
 import json
 from pathlib import Path
+import re
 
 from experiments.result_schema import (
     EXPECTED_REGRET_FIELDNAMES,
@@ -25,6 +26,7 @@ IDENTITY_COLUMNS = (
 
 BASE_RESULT_COLUMNS = set(IDENTITY_COLUMNS) | {"t", "player"}
 LEGACY_ALGORITHM_COLUMNS = {"algorithm_player_0", "algorithm_player_1"}
+PAYOFF_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 def regret_column(regret_type: str, regret_name: str) -> str:
@@ -107,11 +109,44 @@ def result_player_algorithm(row: dict[str, str]) -> str:
     return profile[player] if player < len(profile) else row["algorithm"]
 
 
+def result_game_payoff_digest(row: dict[str, str]) -> str:
+    digest = row.get("game_payoff_digest", "").strip()
+    if not digest or digest == "0":
+        return ""
+    if not PAYOFF_DIGEST_PATTERN.fullmatch(digest):
+        raise ValueError("invalid game_payoff_digest")
+    return digest
+
+
 def _row_identity(row: dict[str, str]) -> tuple:
-    return tuple(row[column] for column in IDENTITY_COLUMNS) + (result_regret_evaluation(row), *result_algorithm_profile(row))
+    return (
+        *(row[column] for column in IDENTITY_COLUMNS),
+        result_game_payoff_digest(row),
+        result_regret_evaluation(row),
+        *result_algorithm_profile(row),
+    )
 
 
-def _validated_rows(input_path: Path, reader: csv.DictReader) -> Iterator[dict[str, str]]:
+def _validated_round(
+    input_path: Path,
+    time: int,
+    rows: list[dict[str, str]],
+    n_players: int,
+) -> Iterator[dict[str, str]]:
+    players = [int(row["player"]) for row in rows]
+    if len(players) != n_players or set(players) != set(range(n_players)):
+        raise ValueError(
+            f"{input_path} round {time} must contain exactly one row for every player"
+        )
+    yield from rows
+
+
+def _validated_rows(
+    input_path: Path,
+    reader: csv.DictReader,
+    *,
+    require_complete_trajectory: bool,
+) -> Iterator[dict[str, str]]:
     fieldnames = set(reader.fieldnames or [])
     missing_columns = BASE_RESULT_COLUMNS - fieldnames
     if missing_columns:
@@ -121,6 +156,11 @@ def _validated_rows(input_path: Path, reader: csv.DictReader) -> Iterator[dict[s
         raise ValueError(f"{input_path} is missing required algorithm profile columns")
 
     expected_identity = None
+    expected_horizon = None
+    n_players = None
+    first_time = None
+    current_time = None
+    current_rows: list[dict[str, str]] = []
     for row in reader:
         regret_evaluation = result_regret_evaluation(row)
         row["regret_evaluation"] = regret_evaluation
@@ -131,21 +171,54 @@ def _validated_rows(input_path: Path, reader: csv.DictReader) -> Iterator[dict[s
                 missing = ", ".join(sorted(missing_columns))
                 raise ValueError(f"{input_path} is missing required columns: {missing}")
             expected_identity = identity
+            expected_horizon = int(row["horizon"])
+            n_players = len(result_algorithm_profile(row))
         elif identity != expected_identity:
             raise ValueError(f"{input_path} contains inconsistent run metadata")
 
         horizon = int(row["horizon"])
         time = int(row["t"])
         player = int(row["player"])
-        if horizon <= 0 or time <= 0 or time > horizon or player < 0:
+        if horizon <= 0 or time <= 0 or time > horizon or not 0 <= player < n_players:
             raise ValueError(f"{input_path} contains invalid round metadata")
-        yield row
+
+        if current_time is None:
+            first_time = current_time = time
+        elif time != current_time:
+            if time <= current_time:
+                raise ValueError(f"{input_path} rounds are not strictly increasing")
+            if require_complete_trajectory and time != current_time + 1:
+                raise ValueError(
+                    f"{input_path} has a gap between rounds {current_time} and {time}"
+                )
+            yield from _validated_round(
+                input_path, current_time, current_rows, n_players
+            )
+            current_time = time
+            current_rows = []
+        current_rows.append(row)
+
+    if current_time is None:
+        return
+
+    yield from _validated_round(input_path, current_time, current_rows, n_players)
+    if require_complete_trajectory:
+        if first_time != 1 or current_time != expected_horizon:
+            raise ValueError(
+                f"{input_path} must contain every round from 1 through {expected_horizon}"
+            )
+    elif current_time != expected_horizon:
+        raise ValueError(f"{input_path} has no complete final-horizon round")
 
 
 def iter_result_rows(input_path: str | Path) -> Iterator[dict[str, str]]:
     input_path = Path(input_path)
     with input_path.open("r", encoding="utf-8", newline="") as file:
-        yield from _validated_rows(input_path, csv.DictReader(file))
+        yield from _validated_rows(
+            input_path,
+            csv.DictReader(file),
+            require_complete_trajectory=True,
+        )
 
 
 def load_final_result_rows(input_path: str | Path) -> list[dict[str, str]]:
@@ -180,6 +253,12 @@ def load_final_result_rows(input_path: str | Path) -> list[dict[str, str]]:
                 if first_final > 0 or position == data_start:
                     final_lines = lines[first_final:]
                     reader = csv.DictReader([header.decode("utf-8"), *(line.decode("utf-8") for line in final_lines)])
-                    return list(_validated_rows(input_path, reader))
+                    return list(
+                        _validated_rows(
+                            input_path,
+                            reader,
+                            require_complete_trajectory=False,
+                        )
+                    )
             if position == data_start:
                 return []

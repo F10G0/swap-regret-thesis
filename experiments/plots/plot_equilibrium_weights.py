@@ -7,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from experiments.plots import HEATMAP_COLORMAP
+from experiments.plots import HEATMAP_COLORMAP, save_figure_pair
 from metrics.equilibrium import equilibrium_profile_weights
 
 
@@ -62,6 +62,5 @@ def plot_equilibrium_profile_weights(
 
     figure.colorbar(image, ax=axes, label="Maximum profile weight")
     figure.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output_path)
+    save_figure_pair(figure, output_path)
     plt.close(figure)

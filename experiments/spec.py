@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import re
 
 from config import STATIONARY_METHOD
 from experiments.result_schema import resolve_regret_evaluation
@@ -12,6 +13,7 @@ ALGORITHM_RUN_ID_TOKENS = {
     "regret_matching": "rm",
     "stationary_regret_matching": "srm",
 }
+PAYOFF_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,7 @@ class ExperimentSpec:
     replicate: int = 0
     stationary_method: str = STATIONARY_METHOD
     regret_evaluation: str = "feedback_aligned"
+    game_payoff_digest: str = ""
 
     def __post_init__(self) -> None:
         if self.feedback_mode not in FEEDBACK_MODES:
@@ -41,6 +44,8 @@ class ExperimentSpec:
         object.__setattr__(self, "regret_evaluation", resolve_regret_evaluation(self.feedback_mode, self.regret_evaluation))
         if not self.stationary_method:
             raise ValueError("stationary_method must not be empty")
+        if self.game_payoff_digest and not PAYOFF_DIGEST_PATTERN.fullmatch(self.game_payoff_digest):
+            raise ValueError("game_payoff_digest must be a lowercase SHA-256 digest")
 
     @property
     def algorithm_profile_name(self) -> str:
@@ -75,6 +80,7 @@ class ExperimentSpec:
             "replicate": self.replicate,
             "regret_evaluation": self.regret_evaluation,
             "stationary_method": self.stationary_method,
+            "game_payoff_digest": self.game_payoff_digest,
         }
 
     def metadata(self) -> dict:
@@ -85,6 +91,7 @@ class ExperimentSpec:
             "seed": self.seed,
             "replicate": self.replicate,
             "stationary_method": self.stationary_method,
+            "game_payoff_digest": self.game_payoff_digest,
             "n_players": len(self.algorithm_names),
             "algorithm_profile": json.dumps(self.algorithm_names, separators=(",", ":")),
             "algorithm_player_0": self.algorithm_names[0],

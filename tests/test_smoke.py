@@ -1,5 +1,4 @@
 import csv
-import importlib
 
 import pytest
 
@@ -10,13 +9,6 @@ from experiments.scenarios import bandit_cross_play, full_information_cross_play
 def _read_rows(path):
     with path.open("r", newline="") as file:
         return list(csv.DictReader(file))
-
-
-def test_main_entrypoint_is_importable() -> None:
-    module = importlib.import_module("main")
-    assert callable(module.main)
-
-
 def test_full_information_experiment_smoke(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(full_information_cross_play, "RAW_DIR", tmp_path)
 

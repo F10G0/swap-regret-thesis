@@ -17,6 +17,7 @@ def test_custom_game_round_trip_is_reproducible(tmp_path) -> None:
 
     assert definition.id == f"{CUSTOM_GAME_PREFIX}three-player-test"
     assert definition.action_counts == (2, 3, 2)
+    assert definition.payoff_structure == "general_sum"
     assert payoffs.shape == (3, 2, 3, 2)
     assert np.array_equal(payoffs, np.random.default_rng(17).random((3, 2, 3, 2)))
     assert np.all((0.0 <= payoffs) & (payoffs <= 1.0))
@@ -24,13 +25,56 @@ def test_custom_game_round_trip_is_reproducible(tmp_path) -> None:
     assert catalog.custom_path(definition.id) == tmp_path / "three-player-test.npz"
 
 
+def test_two_player_zero_sum_game_is_reproducible_and_constant_sum(
+    tmp_path,
+) -> None:
+    catalog = GameCatalog(tmp_path)
+
+    definition = catalog.create_random(
+        "Zero Sum Test",
+        2,
+        [2, 3],
+        17,
+        "zero_sum",
+    )
+    payoffs = catalog.load(definition.id)
+    expected_first_payoff = np.random.default_rng(17).random((2, 3))
+
+    assert definition.payoff_structure == "zero_sum"
+    assert payoffs.shape == (2, 2, 3)
+    assert np.array_equal(payoffs[0], expected_first_payoff)
+    assert np.array_equal(payoffs[1], 1.0 - expected_first_payoff)
+    assert np.allclose(payoffs.sum(axis=0), 1.0, rtol=0.0, atol=1e-12)
+    assert np.allclose((payoffs - 0.5).sum(axis=0), 0.0, rtol=0.0, atol=1e-12)
+
+
+def test_version_one_custom_game_defaults_to_general_sum(tmp_path) -> None:
+    payoff_tensor = np.random.default_rng(4).random((2, 2, 2))
+    np.savez_compressed(
+        tmp_path / "legacy.npz",
+        format_version=np.array(1),
+        name=np.array("Legacy"),
+        slug=np.array("legacy"),
+        seed=np.array(4),
+        action_counts=np.array([2, 2]),
+        payoff_tensor=payoff_tensor,
+    )
+
+    definition = GameCatalog(tmp_path).definitions()[f"{CUSTOM_GAME_PREFIX}legacy"]
+
+    assert definition.payoff_structure == "general_sum"
+    assert np.array_equal(GameCatalog(tmp_path).load(definition.id), payoff_tensor)
+
+
 @pytest.mark.parametrize(
-    ("name", "n_players", "action_counts", "message"),
+    ("name", "n_players", "action_counts", "payoff_structure", "message"),
     [
-        ("bad/name", 3, [2, 2, 2], "game name"),
-        ("one", 1, [2], "between 2"),
-        ("missing", 3, [2, 2], "one action count"),
-        ("too-large", 8, [100] * 8, "at most"),
+        ("bad/name", 3, [2, 2, 2], "general_sum", "game name"),
+        ("one", 1, [2], "general_sum", "between 2"),
+        ("missing", 3, [2, 2], "general_sum", "one action count"),
+        ("too-large", 8, [100] * 8, "general_sum", "at most"),
+        ("three-player-zero-sum", 3, [2, 2, 2], "zero_sum", "exactly 2"),
+        ("unknown-structure", 2, [2, 2], "cooperative", "payoff structure"),
     ],
 )
 def test_custom_game_validation_rejects_unsafe_configurations(
@@ -38,10 +82,17 @@ def test_custom_game_validation_rejects_unsafe_configurations(
     name,
     n_players,
     action_counts,
+    payoff_structure,
     message,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        GameCatalog(tmp_path).create_random(name, n_players, action_counts, 0)
+        GameCatalog(tmp_path).create_random(
+            name,
+            n_players,
+            action_counts,
+            0,
+            payoff_structure,
+        )
 
 
 def test_custom_game_name_cannot_be_overwritten(tmp_path) -> None:

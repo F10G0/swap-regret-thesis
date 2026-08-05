@@ -1,19 +1,27 @@
 from collections import defaultdict
 from hashlib import sha256
 import json
-import math
 
 import numpy as np
 
+from metrics.confidence import mean_confidence_interval_half_width
 from web.result_index import SUMMARY_REGRET_FIELDS
 
 
-RESULT_GROUP_FIELDS = ("game", "feedback_mode", "regret_evaluation", "horizon", "seed", "stationary_method")
+RESULT_GROUP_FIELDS = (
+    "game",
+    "game_payoff_digest",
+    "feedback_mode",
+    "regret_evaluation",
+    "horizon",
+    "seed",
+    "stationary_method",
+)
 
 
 def result_group_key(summary: dict) -> tuple:
     return (
-        *(summary[field] for field in RESULT_GROUP_FIELDS),
+        *(summary.get(field, "") for field in RESULT_GROUP_FIELDS),
         tuple(summary["algorithm_profile"]),
     )
 
@@ -24,9 +32,7 @@ def result_group_id(key: tuple) -> str:
 
 
 def _confidence_interval(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    return float(1.96 * np.std(values, ddof=1) / math.sqrt(len(values)))
+    return float(mean_confidence_interval_half_width(values))
 
 
 def _replicate_label(replicates: list[int]) -> str:

@@ -12,10 +12,23 @@ from flask import (
 )
 
 from experiments.game_catalog import MAX_CUSTOM_ACTIONS_PER_PLAYER, MAX_CUSTOM_PLAYERS
+from experiments.plots import FIGURE_FORMATS, figure_path
+from experiments.scenarios.adversarial import MAX_ADVERSARIAL_ACTIONS
 from web.jobs import ServiceBusyError
 from web.services import DashboardService, PlotUpdateError
-from web.validation import DEFAULT_TRAJECTORY_POINTS, ExperimentForm, parse_experiment_form, parse_non_negative_integer, parse_positive_integer, parse_trajectory_hide_first, parse_trajectory_points
-from web.view_models import custom_games_context, dashboard_context, figure_data as build_figure_data
+from web.validation import (
+    ExperimentForm,
+    parse_adversarial_experiment_form,
+    parse_experiment_form,
+    parse_non_negative_integer,
+    parse_positive_integer,
+)
+from web.view_models import (
+    adversarial_context,
+    custom_games_context,
+    dashboard_context,
+    figure_data as build_figure_data,
+)
 
 
 dashboard = Blueprint("dashboard", __name__)
@@ -53,6 +66,13 @@ def _custom_games_context(form_state: dict | None = None, inline_error: str | No
     return custom_games_context(get_service(), form_state, inline_error, inspection)
 
 
+def _adversarial_context(
+    form_state: dict | None = None,
+    inline_error: str | None = None,
+) -> dict:
+    return adversarial_context(get_service(), form_state, inline_error)
+
+
 @dashboard.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "GET":
@@ -74,22 +94,92 @@ def index():
     return redirect(url_for("dashboard.index"))
 
 
-@dashboard.post("/run-all-pairs")
-def run_all_pairs():
+@dashboard.route("/adversarial", methods=["GET", "POST"])
+def adversarial():
+    service = get_service()
+    if request.method == "GET":
+        return render_template("adversarial.html", **_adversarial_context())
+
+    submitted_state = service.default_adversarial_form_state() | dict(
+        request.form
+    )
     try:
-        form = _parse_form()
-        job, scheduled_count, skipped_count = get_service().submit_all_pairs(form)
+        form = parse_adversarial_experiment_form(
+            request.form,
+            algorithms=service.adversarial_algorithms,
+            max_actions=MAX_ADVERSARIAL_ACTIONS,
+            max_horizon=current_app.config["MAX_HORIZON"],
+        )
+        job = service.submit_adversarial_experiment(form)
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return (
             render_template(
-                "index.html",
-                **_dashboard_context(_submitted_form_state(), str(error)),
+                "adversarial.html",
+                **_adversarial_context(submitted_state, str(error)),
             ),
             400,
         )
 
-    flash(f"Queued job {job.id[:8]} for {scheduled_count} runs; {skipped_count} already exist or are queued.", "success")
-    return redirect(url_for("dashboard.index"))
+    flash(f"Queued adversarial job {job.id[:8]}.", "success")
+    return redirect(url_for("dashboard.adversarial"))
+
+
+@dashboard.get("/adversarial/experiments/<filename>")
+def download_adversarial_experiment(filename: str):
+    try:
+        filename = get_service().validate_adversarial_csv_filename(filename)
+    except (FileNotFoundError, ValueError):
+        abort(404)
+    return send_from_directory(
+        get_service().adversarial_raw_dir.resolve(),
+        filename,
+        as_attachment=True,
+    )
+
+
+@dashboard.get("/adversarial/figures/<filename>")
+def adversarial_figure(filename: str):
+    try:
+        filename = get_service().validate_adversarial_figure_filename(filename)
+    except (FileNotFoundError, ValueError):
+        abort(404)
+    return send_from_directory(
+        get_service().adversarial_figure_dir.resolve(),
+        filename,
+    )
+
+
+@dashboard.post("/adversarial/delete-experiment")
+def delete_adversarial_experiment():
+    try:
+        filename = request.form["filename"]
+        get_service().delete_adversarial_experiment(filename)
+    except (
+        KeyError,
+        FileNotFoundError,
+        PlotUpdateError,
+        ServiceBusyError,
+        ValueError,
+    ) as error:
+        flash(str(error), "error")
+    else:
+        flash(f"Deleted {filename} and rebuilt adversarial figures.", "success")
+    return redirect(url_for("dashboard.adversarial"))
+
+
+@dashboard.post("/adversarial/results/clear")
+def clear_adversarial_results():
+    try:
+        csv_count, figure_count = get_service().clear_adversarial_results()
+    except ServiceBusyError as error:
+        flash(str(error), "error")
+    else:
+        flash(
+            f"Deleted {csv_count} adversarial result(s) and "
+            f"{figure_count} figure(s).",
+            "success",
+        )
+    return redirect(url_for("dashboard.adversarial"))
 
 
 @dashboard.route("/custom-games", methods=["GET", "POST"])
@@ -103,7 +193,13 @@ def custom_games():
                 for player, value in enumerate(request.form.getlist("action_counts"))
             ]
             seed = parse_non_negative_integer(request.form["seed"], "seed")
-            definition = service.create_custom_game(request.form["name"], n_players, action_counts, seed)
+            definition = service.create_custom_game(
+                request.form["name"],
+                n_players,
+                action_counts,
+                seed,
+                request.form.get("payoff_structure", "general_sum"),
+            )
         except (FileExistsError, KeyError, OSError, ValueError) as error:
             form_state = dict(request.form)
             form_state["action_counts"] = request.form.getlist("action_counts")
@@ -200,7 +296,13 @@ def cancel_job(job_id: str):
         flash(str(error), "error")
     else:
         flash("Cancellation requested.", "success")
-    return redirect(url_for("dashboard.index"))
+    return_to = request.form.get("return_to")
+    endpoint = (
+        "dashboard.adversarial"
+        if return_to == "adversarial"
+        else "dashboard.index"
+    )
+    return redirect(url_for(endpoint))
 
 
 @dashboard.get("/figures/<filename>")
@@ -215,12 +317,10 @@ def serve_figure(filename: str):
     )
 
 
-@dashboard.get(
-    "/games/<game_name>/equilibria/<equilibrium>.png"
-)
-def equilibrium_figure(game_name: str, equilibrium: str):
+@dashboard.get("/games/<game_name>/equilibria/<equilibrium>.<figure_format>")
+def equilibrium_figure(game_name: str, equilibrium: str, figure_format: str):
     try:
-        path = get_service().precomputed_equilibrium_figure(game_name, equilibrium)
+        path = get_service().equilibrium_figure(game_name, equilibrium, figure_format)
     except (KeyError, ValueError):
         abort(404)
     except FileNotFoundError as error:
@@ -241,28 +341,37 @@ def download_experiment(filename: str):
     )
 
 
-@dashboard.get("/experiments/<filename>/joint-actions.png")
-def joint_actions(filename: str):
+@dashboard.get("/experiments/<filename>/joint-actions.<figure_format>")
+def joint_actions(filename: str, figure_format: str):
+    if figure_format not in FIGURE_FORMATS:
+        abort(404)
     try:
-        path = get_service().joint_action_figure(filename)
+        path = figure_path(get_service().joint_action_figure(filename), figure_format)
+        if not path.is_file():
+            raise FileNotFoundError(path)
     except (FileNotFoundError, KeyError, ValueError):
         abort(404)
     return send_from_directory(path.parent.resolve(), path.name)
 
 
-@dashboard.get("/experiment-groups/<group_id>/joint-actions.png")
-def group_joint_actions(group_id: str):
+@dashboard.get("/experiment-groups/<group_id>/joint-actions.<figure_format>")
+def group_joint_actions(group_id: str, figure_format: str):
+    if figure_format not in FIGURE_FORMATS:
+        abort(404)
     try:
-        path = get_service().group_joint_action_figure(group_id)
+        path = figure_path(get_service().group_joint_action_figure(group_id), figure_format)
+        if not path.is_file():
+            raise FileNotFoundError(path)
     except (FileNotFoundError, KeyError, ValueError):
         abort(404)
     return send_from_directory(path.parent.resolve(), path.name)
 
 
-def _equilibrium_convergence_figure(filename: str, figure: str, trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
-                                    hide_first: bool = False):
+def _equilibrium_convergence_response(request_figure, figure_format: str):
+    if figure_format not in FIGURE_FORMATS:
+        abort(404)
     try:
-        path, error = get_service().request_equilibrium_convergence_figure(filename, figure, trajectory_points, hide_first)
+        path, error = request_figure()
     except (FileNotFoundError, KeyError, ValueError):
         abort(404)
     if error is not None:
@@ -272,53 +381,32 @@ def _equilibrium_convergence_figure(filename: str, figure: str, trajectory_point
         response.status_code = 202
         response.headers["Retry-After"] = "2"
         return response
-    return send_from_directory(path.parent.resolve(), path.name)
-
-
-def _group_equilibrium_convergence_figure(group_id: str, figure: str, trajectory_points: int = DEFAULT_TRAJECTORY_POINTS,
-                                          hide_first: bool = False):
-    try:
-        path, error = get_service().request_group_equilibrium_convergence_figure(group_id, figure, trajectory_points, hide_first)
-    except (FileNotFoundError, KeyError, ValueError):
+    requested_path = figure_path(path, figure_format)
+    if not requested_path.is_file():
         abort(404)
-    if error is not None:
-        return jsonify({"status": "failed", "error": error}), 500
-    if path is None:
-        response = jsonify({"status": "generating", "message": "Computing replicate equilibrium convergence…"})
-        response.status_code = 202
-        response.headers["Retry-After"] = "2"
-        return response
-    return send_from_directory(path.parent.resolve(), path.name)
+    return send_from_directory(requested_path.parent.resolve(), requested_path.name)
 
 
-@dashboard.get("/experiments/<filename>/equilibrium-distance.png")
-def equilibrium_distance(filename: str):
-    return _equilibrium_convergence_figure(filename, "distance")
+@dashboard.get("/experiments/<filename>/equilibrium-distance.<figure_format>")
+def equilibrium_distance(filename: str, figure_format: str):
+    return _equilibrium_convergence_response(
+        lambda: get_service().request_equilibrium_convergence_figure(
+            filename,
+            "distance",
+        ),
+        figure_format,
+    )
 
 
-@dashboard.get("/experiments/<filename>/equilibrium-trajectory.png")
-def equilibrium_trajectory(filename: str):
-    try:
-        trajectory_points = parse_trajectory_points(request.args.get("points"))
-        hide_first = parse_trajectory_hide_first(request.args.get("hide_first"))
-    except ValueError as error:
-        abort(400, description=str(error))
-    return _equilibrium_convergence_figure(filename, "trajectory", trajectory_points, hide_first)
-
-
-@dashboard.get("/experiment-groups/<group_id>/equilibrium-distance.png")
-def group_equilibrium_distance(group_id: str):
-    return _group_equilibrium_convergence_figure(group_id, "distance")
-
-
-@dashboard.get("/experiment-groups/<group_id>/equilibrium-trajectory.png")
-def group_equilibrium_trajectory(group_id: str):
-    try:
-        trajectory_points = parse_trajectory_points(request.args.get("points"))
-        hide_first = parse_trajectory_hide_first(request.args.get("hide_first"))
-    except ValueError as error:
-        abort(400, description=str(error))
-    return _group_equilibrium_convergence_figure(group_id, "trajectory", trajectory_points, hide_first)
+@dashboard.get("/experiment-groups/<group_id>/equilibrium-distance.<figure_format>")
+def group_equilibrium_distance(group_id: str, figure_format: str):
+    return _equilibrium_convergence_response(
+        lambda: get_service().request_group_equilibrium_convergence_figure(
+            group_id,
+            "distance",
+        ),
+        figure_format,
+    )
 
 
 @dashboard.post("/delete-experiment")
@@ -350,5 +438,5 @@ def reset_results():
     except ServiceBusyError as error:
         flash(str(error), "error")
     else:
-        flash("Deleted generated CSV, PNG, and report files.", "success")
+        flash("Deleted generated CSV and figure files.", "success")
     return redirect(url_for("dashboard.index"))

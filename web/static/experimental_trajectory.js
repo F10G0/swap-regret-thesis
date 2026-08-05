@@ -1,0 +1,403 @@
+"use strict";
+
+const trajectoryDataElement = document.getElementById(
+    "experimental-trajectory-data",
+);
+const trajectoryData = trajectoryDataElement
+    ? JSON.parse(trajectoryDataElement.textContent)
+    : {
+        trajectoryComparisonCandidates: [],
+        trajectoryComparisonUrl: "",
+        gamePresentations: {},
+    };
+const finalIntervalSegmentsStorageKey =
+    "swap-regret-final-interval-segments";
+const focusFinalIntervalStorageKey =
+    "swap-regret-focus-final-interval";
+const trajectoryComparisonViewStorageKey =
+    "swap-regret-trajectory-comparison-view";
+
+function gamePresentation(game) {
+    return trajectoryData.gamePresentations[game] || {
+        label: game,
+        description: "",
+    };
+}
+
+function finalIntervalSegments() {
+    const input = element("final-interval-segments");
+    if (!input) {
+        return 10;
+    }
+    const minimum = Number(input.min) || 1;
+    const maximum = Number(input.max) || 50;
+    const fallback = Number(input.defaultValue) || 10;
+    const parsed = Number(input.value);
+    const value = input.value !== "" && Number.isFinite(parsed)
+        ? Math.trunc(parsed)
+        : fallback;
+    const normalized = Math.min(maximum, Math.max(minimum, value));
+    input.value = normalized;
+    return normalized;
+}
+
+function saveFinalIntervalSegments() {
+    try {
+        window.localStorage.setItem(
+            finalIntervalSegmentsStorageKey,
+            String(finalIntervalSegments()),
+        );
+    } catch (error) {
+        console.warn("Could not save final-interval segments", error);
+    }
+}
+
+function restoreFinalIntervalSegments() {
+    const input = element("final-interval-segments");
+    if (!input) {
+        return;
+    }
+    try {
+        const stored = window.localStorage.getItem(
+            finalIntervalSegmentsStorageKey,
+        );
+        if (stored !== null) {
+            input.value = stored;
+        }
+    } catch (error) {
+        console.warn("Could not restore final-interval segments", error);
+    }
+    finalIntervalSegments();
+}
+
+function focusFinalInterval() {
+    return element("focus-final-interval")?.checked ?? false;
+}
+
+function saveFocusFinalInterval() {
+    try {
+        window.localStorage.setItem(
+            focusFinalIntervalStorageKey,
+            focusFinalInterval() ? "1" : "0",
+        );
+    } catch (error) {
+        console.warn(
+            "Could not save final-interval focus preference",
+            error,
+        );
+    }
+}
+
+function restoreFocusFinalInterval() {
+    const input = element("focus-final-interval");
+    if (!input) {
+        return;
+    }
+    try {
+        input.checked = window.localStorage.getItem(
+            focusFinalIntervalStorageKey,
+        ) === "1";
+    } catch (error) {
+        console.warn(
+            "Could not restore final-interval focus preference",
+            error,
+        );
+    }
+}
+
+function trajectoryComparisonView() {
+    return element("trajectory-comparison-view")?.value || "geometry";
+}
+
+function saveTrajectoryComparisonView() {
+    try {
+        window.localStorage.setItem(
+            trajectoryComparisonViewStorageKey,
+            trajectoryComparisonView(),
+        );
+    } catch (error) {
+        console.warn("Could not save trajectory-comparison view", error);
+    }
+}
+
+function restoreTrajectoryComparisonView() {
+    const select = element("trajectory-comparison-view");
+    if (!select) {
+        return;
+    }
+    try {
+        const stored = window.localStorage.getItem(
+            trajectoryComparisonViewStorageKey,
+        );
+        if (
+            [...select.options].some(
+                (option) => option.value === stored,
+            )
+        ) {
+            select.value = stored;
+        }
+    } catch (error) {
+        console.warn("Could not restore trajectory-comparison view", error);
+    }
+}
+
+const trajectoryComparisonCandidates = new Map(
+    (trajectoryData.trajectoryComparisonCandidates || []).map(
+        (candidate) => [candidate.group_id, candidate],
+    ),
+);
+const pendingTrajectoryComparisonMembers = new Set();
+let renderedTrajectoryComparisonSignature = null;
+let trajectoryComparisonRequestId = 0;
+
+function trajectoryCompatibilitySignature(candidate) {
+    return JSON.stringify(candidate.compatibility_key);
+}
+
+function currentTrajectoryComparisonSignature() {
+    return JSON.stringify({
+        members: [...pendingTrajectoryComparisonMembers].sort(),
+        finalIntervalSegments: finalIntervalSegments(),
+        focusFinalInterval: focusFinalInterval(),
+        comparisonView: trajectoryComparisonView(),
+    });
+}
+
+function updateTrajectoryComparisonDirtyState() {
+    const dirty = element("trajectory-comparison-dirty");
+    if (!dirty) {
+        return;
+    }
+    if (pendingTrajectoryComparisonMembers.size === 0) {
+        dirty.hidden = true;
+        return;
+    }
+    const changed = currentTrajectoryComparisonSignature()
+        !== renderedTrajectoryComparisonSignature;
+    dirty.hidden = !changed;
+    dirty.textContent = changed ? "Changes not rendered" : "Up to date";
+}
+
+function trajectoryCandidateLabel(candidate) {
+    const presentation = gamePresentation(candidate.game).label;
+    const replicates = candidate.replicate_indices.join(", ");
+    return `${presentation} · ${candidate.label} · seed ${candidate.seed} · replicates ${replicates}`;
+}
+
+function renderTrajectoryComparisonCandidates() {
+    const select = element("trajectory-comparison-candidate");
+    if (!select) {
+        return;
+    }
+    const selected = [...pendingTrajectoryComparisonMembers];
+    const compatibility = selected.length
+        ? trajectoryCompatibilitySignature(
+            trajectoryComparisonCandidates.get(selected[0]),
+        )
+        : null;
+    const options = [...trajectoryComparisonCandidates.values()].map(
+        (candidate) => {
+            const option = document.createElement("option");
+            option.value = candidate.group_id;
+            option.textContent = trajectoryCandidateLabel(candidate);
+            option.disabled = pendingTrajectoryComparisonMembers.has(
+                candidate.group_id,
+            ) || (
+                compatibility !== null
+                && trajectoryCompatibilitySignature(candidate)
+                    !== compatibility
+            );
+            return option;
+        },
+    );
+    select.replaceChildren(...options);
+    const available = options.find((option) => !option.disabled);
+    if (available) {
+        select.value = available.value;
+    }
+    element("trajectory-comparison-add").disabled = !available;
+}
+
+function renderPendingTrajectoryComparisonMembers() {
+    const list = element("trajectory-comparison-selected");
+    if (!list) {
+        return;
+    }
+    const members = [...pendingTrajectoryComparisonMembers].map(
+        (groupId) => trajectoryComparisonCandidates.get(groupId),
+    );
+    list.replaceChildren(...members.map((member) => {
+        const item = document.createElement("li");
+        const label = document.createElement("span");
+        const remove = document.createElement("button");
+        label.textContent = member.label;
+        remove.type = "button";
+        remove.dataset.groupId = member.group_id;
+        remove.textContent = "Remove";
+        item.append(label, remove);
+        return item;
+    }));
+    const context = element("trajectory-comparison-compatibility");
+    if (context) {
+        if (members.length) {
+            const first = members[0];
+            context.textContent = `${gamePresentation(first.game).label} · ${first.feedback_mode} · ${first.regret_evaluation} · horizon ${first.horizon} · base seed ${first.seed} · replicate indices ${first.replicate_indices.join(", ")}`;
+        } else {
+            context.textContent =
+                "Add an experiment to establish the compatibility context.";
+        }
+    }
+    element("trajectory-comparison-generate").disabled =
+        members.length === 0;
+    renderTrajectoryComparisonCandidates();
+    updateTrajectoryComparisonDirtyState();
+}
+
+function addTrajectoryComparisonMember() {
+    const groupId = element("trajectory-comparison-candidate")?.value;
+    if (!groupId || !trajectoryComparisonCandidates.has(groupId)) {
+        return;
+    }
+    pendingTrajectoryComparisonMembers.add(groupId);
+    renderPendingTrajectoryComparisonMembers();
+}
+
+function renderAuthoritativeComparisonMembers(members) {
+    const list = element("trajectory-comparison-rendered-members");
+    if (!list) {
+        return;
+    }
+    list.replaceChildren(...members.map((member) => {
+        const item = document.createElement("li");
+        const swatch = document.createElement("span");
+        const description = document.createElement("span");
+        swatch.className = "trajectory-member-color";
+        swatch.style.backgroundColor = member.color;
+        description.textContent = `${member.label} · replicates ${member.replicate_indices.join(", ")}`;
+        item.append(swatch, description);
+        return item;
+    }));
+}
+
+async function generateTrajectoryComparison() {
+    if (
+        !trajectoryData.trajectoryComparisonUrl
+        || pendingTrajectoryComparisonMembers.size === 0
+    ) {
+        return;
+    }
+    const requestId = ++trajectoryComparisonRequestId;
+    const requestSignature = currentTrajectoryComparisonSignature();
+    const source = new URL(
+        trajectoryData.trajectoryComparisonUrl,
+        window.location.href,
+    );
+    [...pendingTrajectoryComparisonMembers].sort().forEach((groupId) => {
+        source.searchParams.append("member", groupId);
+    });
+    source.searchParams.set(
+        "final_interval_segments",
+        finalIntervalSegments(),
+    );
+    source.searchParams.set(
+        "focus_final_interval",
+        focusFinalInterval() ? "1" : "0",
+    );
+    source.searchParams.set(
+        "comparison_view",
+        trajectoryComparisonView(),
+    );
+    const result = element("trajectory-comparison-result");
+    const image = element("trajectory-comparison-image");
+    const frame = image.closest(".heatmap-frame");
+    const status = frame.querySelector(".heatmap-loading");
+    result.hidden = false;
+    frame.classList.add("is-loading");
+    frame.classList.remove("has-error");
+    element("trajectory-comparison-generate").disabled = true;
+
+    const poll = async () => {
+        try {
+            const response = await fetch(source, {
+                cache: "no-store",
+                headers: {Accept: "application/json"},
+            });
+            if (requestId !== trajectoryComparisonRequestId) {
+                return;
+            }
+            const payload = await response.json();
+            if (response.status === 202) {
+                status.textContent = payload.message
+                    || "Computing shared trajectory comparison…";
+                const retryAfter = Number(
+                    response.headers.get("Retry-After"),
+                ) || 2;
+                window.setTimeout(
+                    poll,
+                    Math.max(1, retryAfter) * 1000,
+                );
+                return;
+            }
+            if (!response.ok) {
+                throw new Error(
+                    payload.error
+                    || `Comparison request failed (${response.status})`,
+                );
+            }
+            image.src = `${payload.image_url}?v=${Date.now()}`;
+            const download = element("trajectory-comparison-download");
+            download.href = payload.pdf_url;
+            download.download =
+                `trajectory_comparison_${payload.artifact_id}.pdf`;
+            renderAuthoritativeComparisonMembers(payload.members);
+            renderedTrajectoryComparisonSignature = requestSignature;
+            frame.classList.remove("is-loading", "has-error");
+            updateTrajectoryComparisonDirtyState();
+        } catch (error) {
+            frame.classList.remove("is-loading");
+            frame.classList.add("has-error");
+            status.textContent = error.message;
+        } finally {
+            element("trajectory-comparison-generate").disabled =
+                pendingTrajectoryComparisonMembers.size === 0;
+        }
+    };
+    await poll();
+}
+
+element("final-interval-segments")?.addEventListener("change", () => {
+    saveFinalIntervalSegments();
+    updateTrajectoryComparisonDirtyState();
+});
+element("focus-final-interval")?.addEventListener("change", () => {
+    saveFocusFinalInterval();
+    updateTrajectoryComparisonDirtyState();
+});
+element("trajectory-comparison-view")?.addEventListener("change", () => {
+    saveTrajectoryComparisonView();
+    updateTrajectoryComparisonDirtyState();
+});
+element("trajectory-comparison-add")?.addEventListener(
+    "click",
+    addTrajectoryComparisonMember,
+);
+element("trajectory-comparison-selected")?.addEventListener(
+    "click",
+    (event) => {
+        const button = event.target.closest("button[data-group-id]");
+        if (!button) {
+            return;
+        }
+        pendingTrajectoryComparisonMembers.delete(button.dataset.groupId);
+        renderPendingTrajectoryComparisonMembers();
+    },
+);
+element("trajectory-comparison-generate")?.addEventListener(
+    "click",
+    generateTrajectoryComparison,
+);
+
+restoreFinalIntervalSegments();
+restoreFocusFinalInterval();
+restoreTrajectoryComparisonView();
+renderPendingTrajectoryComparisonMembers();

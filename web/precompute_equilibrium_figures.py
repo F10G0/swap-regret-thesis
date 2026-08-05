@@ -1,17 +1,17 @@
 import argparse
 from concurrent.futures import ProcessPoolExecutor
-import os
 from operator import index
 from pathlib import Path
 import tempfile
 
 from experiments.games import PAYOFF_FACTORIES
+from experiments.plots import figure_paths, publish_figure_pair
 from experiments.plots.plot_equilibrium_weights import plot_equilibrium_profile_weights
 from web.equilibrium_figures import PRECOMPUTED_EQUILIBRIUM_DIR, equilibrium_figure_filename
 from web.presentations import GAME_PRESENTATIONS
 
 
-def _precompute_equilibrium_figure(game_name: str, equilibrium: str, output_path: Path) -> Path:
+def _precompute_equilibrium_figure(game_name: str, equilibrium: str, output_path: Path, overwrite: bool = False) -> Path:
     payoff_tensor = PAYOFF_FACTORIES[game_name]()
     with tempfile.TemporaryDirectory(prefix=".precompute-equilibrium-", dir=output_path.parent) as temporary_directory:
         temporary_path = Path(temporary_directory) / output_path.name
@@ -21,7 +21,7 @@ def _precompute_equilibrium_figure(game_name: str, equilibrium: str, output_path
             temporary_path,
             game_name=GAME_PRESENTATIONS.get(game_name, {}).get("label", game_name),
         )
-        os.replace(temporary_path, output_path)
+        publish_figure_pair(temporary_path, output_path, overwrite)
     return output_path
 
 
@@ -49,10 +49,10 @@ def precompute_equilibrium_figures(game_names=None, equilibria=("ce", "cce"), ou
             continue
         for equilibrium in equilibria:
             output_path = output_dir / equilibrium_figure_filename(game_name, equilibrium)
-            if output_path.is_file() and not overwrite:
+            if all(path.is_file() for path in figure_paths(output_path)) and not overwrite:
                 generated.append(output_path)
                 continue
-            tasks.append((game_name, equilibrium, output_path))
+            tasks.append((game_name, equilibrium, output_path, overwrite))
 
     if workers == 1:
         generated.extend(_precompute_equilibrium_figure(*task) for task in tasks)

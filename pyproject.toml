@@ -22,31 +22,10 @@ dependencies = [
 test = ["pytest>=8"]
 
 [project.scripts]
-swap-regret = "main:main"
 swap-regret-web = "web.app:main"
 
 [tool.setuptools]
-py-modules = ["config", "main"]
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = [
-    "algorithms*",
-    "environments*",
-    "experiments*",
-    "metrics*",
-    "web*",
-]
-exclude = ["tests*"]
-namespaces = true
-
-[tool.setuptools.package-data]
-web = [
-    "templates/*.html",
-    "static/*.css",
-    "static/*.js",
-    "static/equilibria/*.png",
-]
+py-modules = ["config"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,7 +1,14 @@
 import numpy as np
 import pytest
 
-from metrics.empirical_distribution import default_checkpoints, empirical_distribution_trajectory, mean_empirical_distribution_trajectory, uniform_checkpoints
+from metrics.empirical_distribution import (
+    default_checkpoints,
+    empirical_distribution_trajectory,
+    final_interval_checkpoints,
+    final_logarithmic_interval_start,
+    mean_empirical_distribution_trajectory,
+    uniform_checkpoints,
+)
 
 
 def test_cumulative_empirical_distribution_at_manual_checkpoints() -> None:
@@ -53,6 +60,53 @@ def test_default_checkpoints_include_first_round_powers_of_ten_and_final(horizon
 )
 def test_uniform_checkpoints_span_first_to_final_round_evenly(horizon: int, count: int, expected: list[int]) -> None:
     assert np.array_equal(uniform_checkpoints(horizon, count), expected)
+
+
+@pytest.mark.parametrize(
+    ("horizon", "segments", "expected"),
+    [
+        (1, 4, [1]),
+        (7, 4, [1, 3, 4, 6, 7]),
+        (10, 4, [1, 3, 6, 8, 10]),
+        (6_500, 4, [1, 10, 100, 1_000, 2_375, 3_750, 5_125, 6_500]),
+        (10_000, 4, [1, 10, 100, 1_000, 3_250, 5_500, 7_750, 10_000]),
+        (10_000, 1, [1, 10, 100, 1_000, 10_000]),
+        (2, 50, [1, 2]),
+    ],
+)
+def test_final_interval_checkpoints_preserve_logs_and_subdivide_final_interval(
+    horizon: int,
+    segments: int,
+    expected: list[int],
+) -> None:
+    checkpoints = final_interval_checkpoints(horizon, segments)
+
+    assert np.array_equal(checkpoints, expected)
+    assert np.array_equal(
+        checkpoints,
+        final_interval_checkpoints(horizon, segments),
+    )
+    assert np.all(np.diff(checkpoints) > 0)
+    assert checkpoints[-1] == horizon
+
+
+@pytest.mark.parametrize(
+    ("horizon", "expected"),
+    [(1, 1), (7, 1), (10, 1), (1_000, 100), (6_500, 1_000)],
+)
+def test_final_logarithmic_interval_start_is_strictly_before_horizon(
+    horizon: int,
+    expected: int,
+) -> None:
+    assert final_logarithmic_interval_start(horizon) == expected
+
+
+@pytest.mark.parametrize("segments", [0, -1, 1.5])
+def test_final_interval_segments_must_be_positive_integers(
+    segments,
+) -> None:
+    with pytest.raises(ValueError, match="final_interval_segments"):
+        final_interval_checkpoints(100, segments)
 
 
 def test_mean_empirical_trajectory_averages_matching_replicates() -> None:

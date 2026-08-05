@@ -3,14 +3,6 @@
 {% block title %}Custom Games · Swap Regret{% endblock %}
 
 {% block content %}
-    <select id="primary-theme" class="page-theme" aria-label="Primary color theme">
-        <option value="green">Green</option>
-        <option value="blue">Blue</option>
-        <option value="purple">Purple</option>
-        <option value="orange">Orange</option>
-        <option value="red">Red</option>
-    </select>
-
     <main id="main-content" class="builder-shell">
         <header class="builder-heading">
             <div>
@@ -18,7 +10,6 @@
                 <h1>Custom Random Games</h1>
                 <p>Create reproducible finite games for regret experiments with any supported player count and action shape.</p>
             </div>
-            <a class="button-anchor" href="{{ url_for('dashboard.index') }}">Back to dashboard</a>
         </header>
 
         {% if inline_error %}
@@ -46,6 +37,15 @@
                         <input id="custom-game-name" name="name" value="{{ form_state.name }}" maxlength="64" required>
                         <span class="hint">Letters, numbers, spaces, hyphens, and underscores.</span>
                     </div>
+                    <div class="field">
+                        <label for="custom-payoff-structure">Payoff structure</label>
+                        <select id="custom-payoff-structure" name="payoff_structure" aria-describedby="custom-payoff-structure-hint">
+                            {% for value, label in payoff_structures.items() %}
+                                <option value="{{ value }}" {% if value == form_state.get("payoff_structure", "general_sum") %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <span id="custom-payoff-structure-hint" class="hint">General-sum payoffs are sampled independently for every player.</span>
+                    </div>
                     <div class="field-grid field-grid-two">
                         <div class="field">
                             <label for="custom-player-count">Players</label>
@@ -57,7 +57,7 @@
                         </div>
                     </div>
                     <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson }}"></div>
-                    <p class="hint">The complete tensor is limited to {{ "{:,}".format(max_payoff_values) }} payoff values. Payoffs are sampled uniformly in [0, 1].</p>
+                    <p class="hint">The complete tensor is limited to {{ "{:,}".format(max_payoff_values) }} payoff values. Zero-sum games use two players and are stored as the equivalent constant-sum payoffs <code>u</code> and <code>1 − u</code>.</p>
                     <button class="button-primary" type="submit">Generate and save game</button>
                 </form>
             </section>
@@ -76,7 +76,7 @@
                             <li>
                                 <div class="custom-game-details">
                                     <strong>{{ game.label }}</strong>
-                                    <span>{{ game.n_players }} players · actions {{ game.action_counts | join(" × ") }} · seed {{ game.seed }}</span>
+                                    <span>{{ payoff_structures[game.payoff_structure] }} · {{ game.n_players }} players · actions {{ game.action_counts | join(" × ") }} · seed {{ game.seed }}</span>
                                     <code>{{ game.id }}</code>
                                 </div>
                                 <div class="custom-game-actions">
@@ -114,6 +114,7 @@
                 </div>
 
                 <dl class="payoff-metadata">
+                    <div><dt>Structure</dt><dd>{{ payoff_structures[selected.payoff_structure] }}</dd></div>
                     <div><dt>Shape</dt><dd>{{ inspection.shape | join(" × ") }}</dd></div>
                     <div><dt>Minimum</dt><dd>{{ "%.6f" | format(inspection.minimum) }}</dd></div>
                     <div><dt>Maximum</dt><dd>{{ "%.6f" | format(inspection.maximum) }}</dd></div>
@@ -145,6 +146,35 @@
                 <p id="payoff-slice-status" class="payoff-slice-status" aria-live="polite">Loading payoff slice…</p>
                 <div id="payoff-table-scroll" class="payoff-table-scroll" aria-busy="true"></div>
             </section>
+
+            {% if equilibrium_figures %}
+                <section class="panel equilibrium-panel">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">Game analysis</p>
+                            <h2>Equilibrium profile weights</h2>
+                        </div>
+                    </div>
+                    <p class="equilibrium-explanation">
+                        Each cell is optimized independently over the corresponding equilibrium polytope. The displayed matrix is not itself an equilibrium distribution and generally does not sum to one.
+                    </p>
+                    <div class="equilibrium-grid">
+                        {% for equilibrium, label in (("ce", "CE"), ("cce", "CCE")) %}
+                            <article class="equilibrium-card">
+                                <h3>Maximum {{ label }} Profile Weight</h3>
+                                <div class="heatmap-frame">
+                                    <img
+                                        data-heatmap-source="{{ equilibrium_figures[equilibrium].png }}"
+                                        alt="Maximum {{ label }} profile weight for {{ selected.label }}"
+                                    >
+                                    <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                                </div>
+                                <a href="{{ equilibrium_figures[equilibrium].pdf }}" download>Download PDF</a>
+                            </article>
+                        {% endfor %}
+                    </div>
+                </section>
+            {% endif %}
         {% endif %}
     </main>
 {% endblock %}

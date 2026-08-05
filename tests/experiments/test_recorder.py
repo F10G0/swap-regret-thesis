@@ -26,3 +26,17 @@ def test_recorder_removes_partial_output_after_failure(tmp_path) -> None:
 
     assert not output_path.exists()
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_concurrent_recorders_publish_without_overwriting_each_other(tmp_path) -> None:
+    output_path = tmp_path / "run.csv"
+
+    with pytest.raises(FileExistsError):
+        with CsvRecorder(["value"], output_path) as first:
+            first.record({"value": "first"})
+            with CsvRecorder(["value"], output_path) as second:
+                second.record({"value": "second"})
+
+    with output_path.open("r", encoding="utf-8", newline="") as file:
+        assert list(csv.DictReader(file)) == [{"value": "second"}]
+    assert not list(tmp_path.glob("*.tmp"))

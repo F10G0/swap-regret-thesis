@@ -1,145 +1,54 @@
 # Experiments
 
-Game construction, execution, atomic recording, result loading, and plotting. Pure game analysis belongs in `metrics/`.
+This package builds games, runs learners, records CSV results, and creates the standard figures.
 
-## Built-in Games
+Experiments are configured and queued from `make web`. Use `make plot` only to rebuild figures from existing CSVs. Existing run IDs are never overwritten.
 
-Every factory returns `(2, actions_player_0, actions_player_1)` payoffs normalized per player to `[0, 1]`.
+Each plot is saved as a PNG dashboard preview and a same-stem PDF for publication.
 
-| ID | Actions | Definition |
-|---|---:|---|
-| `rps` | 3 × 3 | Upstream Rock–Paper–Scissors |
-| `rpsls` | 5 × 5 | Local standard RPSLS relation |
-| `matching_pennies` | 2 × 2 | Upstream Matching Pennies |
-| `bertrand_standard_o1` | 21 × 21 | Costs `(0, 0)`, prices `[0.05, 1]`, maximum demand `1` |
-| `bertrand_linear_o2` | 21 × 21 | Costs `(0, 0)`, prices `[0, 1]`, `alpha=.48`, `beta=.9`, `gamma=.6` |
-| `bertrand_logit_o3` | 21 × 21 | Costs `(1, 1)`, prices `[1, 2]`, `alpha=(2, 2)`, `mu=.25` |
-| `bertrand_linear_o2_prime` | 21 × 21 | O2 with costs `(0, .2)` |
-| `bertrand_logit_o3_prime` | 21 × 21 | Costs `(.5, 1)`, prices `[.5, 2]`, `alpha=(1.5, 2)`, `mu=.25` |
+Adversarial runs are isolated under `results/adversarial/`. They use full-information learners, run once per submission, and accept any memory-window length, with 0 meaning full history. Their figures show both `R/t` and `R/sqrt(t)` for expected and realized regret, plus learner and punished-action frequencies.
 
-RPS, Matching Pennies, and Bertrand use the pinned `games_learning` definitions. RPSLS is local because upstream has no implementation; its order is Rock, Paper, Scissors, Lizard, Spock.
+Dashboard full-information uses replicate index 0. Adversarial submissions have no replicate setting. Bandit batches use indices 0 through n−1.
 
-RPS provides strict CE/CCE separation: uniform probability over `(Rock, Rock)`, `(Paper, Paper)`, and `(Scissors, Scissors)` is a CCE but not a CE.
+## Games
 
-## Custom Games
+Built-in games are RPS, RPSLS, Matching Pennies, and five 21 × 21 Bertrand variants. All payoffs are normalized per player to `[0, 1]`.
 
-`GameCatalog` combines built-in factories with compressed `.npz` files in `data/custom_games/`. Custom games use independent uniform `[0, 1)` payoffs from `numpy.random.default_rng(seed)`.
+`GameCatalog` also loads compressed custom games from `data/custom_games/`. Custom games may have 2–8 players, heterogeneous action counts, and at most 1,000,000 payoff values. The dashboard creates reproducible general-sum games or two-player zero-sum games. Zero-sum payoffs are stored in the equivalent `[0,1]` constant-sum form `u` and `1-u`.
 
-Validation enforces:
+## Runs and Seeds
 
-- 2–8 players and one action count per player;
-- 1–100 actions per player;
-- at most 1,000,000 payoff values;
-- finite `[0, 1]` payoffs;
-- safe 1–64 character names and non-negative seeds;
-- consistent file metadata and tensor shape.
+A run is identified by its game and payoff digest, feedback mode, regret evaluation, ordered algorithm profile, horizon, base seed, replicate, and stationary solver.
 
-Creation is atomic and never overwrites an existing name. Invalid catalog files are skipped with warnings.
-
-## Run Identity and Seeding
-
-`ExperimentSpec` includes game, feedback, regret evaluation, ordered n-player algorithm profile, horizon, base seed, replicate, and stationary solver. The complete configuration is deterministically hashed; long profiles use RM/SRM or compact filename forms.
+Player `i` in replicate `r` of a `p`-player game receives:
 
 ```text
-player_seed = base_seed + replicate * number_of_players + player_id
+base_seed + r * p + i
 ```
 
-Players therefore accept one base seed input but receive distinct reproducible streams.
+This makes every learner stream distinct and reproducible.
 
-## Algorithm Registries
+Each round samples a joint action, collects the permitted feedback, updates the requested regret trackers, and then updates the learners. Feedback and regret evaluation are independent: a bandit learner still receives only its realized reward even when expected regret is evaluated offline.
 
-| Full information | Bandit |
-|---|---|
-| `hedge` | `exp3` |
-| `bm` | `exp3_ix` |
-| `ito` | `bm` |
-| `regret_matching` | `ito` |
-| `stationary_regret_matching` | `lce_ix` |
+## Results and Figures
 
-`make full` and `make bandit` run every built-in ordered two-player pair. Batch commands fail on an existing run. The dashboard queues only missing runs and supports explicit n-player profiles.
+Raw runs are written atomically to `results/raw/`. Each row contains the run identity, round data, action and payoff, and cumulative and average regret.
 
-## Runner
+The plotting layer provides:
 
-Each round:
+- regret curves with replicate means and 95% confidence intervals;
+- separate expected and realized figures when both were recorded;
+- joint-action heatmaps for built-in games and custom two-player zero-sum games;
+- precomputed maximum CE/CCE profile-weight heatmaps;
+- full-space CE/CCE L1-distance plots for equilibrium convergence.
 
-1. samples every player's action;
-2. stores the joint action in the environment;
-3. obtains permitted learner feedback;
-4. updates offline expected and realized regret trackers;
-5. updates each learner;
-6. records the selected regret source or both.
-
-Feedback and evaluation are independent. A bandit learner always receives one scalar payoff; exact deviation payoffs are evaluator-only. Defaults remain expected for full information and realized for bandit feedback.
-
-The runner validates player/action counts and checks optional cancellation before every round.
-
-## CSV Results
-
-`CsvRecorder` writes `<run-id>.csv.tmp` and publishes the final CSV only after success.
-
-Each row records:
-
-- run identity, feedback, regret evaluation, and reproducibility fields;
-- JSON n-player algorithm profile plus player-specific algorithm;
-- horizon, round, player, action, and payoff;
-- cumulative and average external, internal, and swap regret for the selected source(s).
-
-`results.py` validates complete files. `load_final_result_rows()` reads final player rows from the end, while `iter_result_rows()` streams full trajectories. Legacy two-player profiles and pre-evaluation CSVs remain readable.
-
-## Figures
-
-### Regret
-
-`plot_regret.py` groups matching replicates, separates expected/realized sources, and plots pointwise means with 95% confidence intervals. Long files are reduced to at most 2,000 points per player while retaining first and final rounds. Legends use abbreviated algorithm labels.
-
-### Joint actions
-
-Built-in two-player replicate distributions are averaged and plotted with action 0 at the lower-left. The dashboard caches the PNG lazily.
-
-### Maximum CE/CCE profile weight
-
-Each heatmap cell is optimized independently, so the matrix is not an equilibrium distribution. Static fixed-blue, lower-origin assets live in `web/static/equilibria/`; `make precompute-equilibria` writes only that directory.
-
-### Equilibrium convergence
-
-- Distance uses iteration 1, powers of ten from 100, and the final round.
-- CE/CCE L1 distance is computed per replicate, then averaged with a 95% confidence interval.
-- The projected mean trajectory uses 2–50 uniform checkpoints, default 10.
-- Hide first removes round 1 before PCA fitting and drawing, without changing distance.
-- Built-in and custom n-player games are supported; matrix heatmaps remain built-in two-player only.
-
-Distance and trajectory are separate lazy caches. Trajectory filenames include point count and `from_round_1` or `hide_round_1`.
-
-### Static report
-
-`make report` builds `results/index.html` as an interactive static snapshot of the existing results.
-
-The report includes:
-
-- game, regret-source, regret-notion, player, and view filters;
-- replicate-aggregated final regret summaries with 95% confidence intervals;
-- generated regret figures;
-- group-level empirical joint-action, CE/CCE-distance, and projected-trajectory figures;
-- both `from_round_1` and `hide_round_1` trajectory variants with 10 checkpoints;
-- copied precomputed CE/CCE profile-weight heatmaps.
-
-Missing or stale group-level detail figures are generated from the recorded CSV results while the report is built. The resulting HTML itself requires no Flask server or Python process and uses only local files.
-
-## Outputs and Structure
+Equilibrium distance is computed for each replicate before aggregation. Projected trajectories are optional and generated only from the experimental dashboard.
 
 ```text
 results/
-├── raw/<run-id>.csv
-├── figures/<regret-figure>.png
-├── figures/details/<lazy-detail-cache>.png
-└── index.html
-
-experiments/
-├── games.py, game_catalog.py
-├── spec.py, runner.py, recorder.py
-├── result_schema.py, results.py, result_trajectories.py
-├── scenarios/
-└── plots/
+├── raw/             experiment CSVs
+├── figures/         generated plots and lazy detail figures
+└── adversarial/     stress-test CSVs and figures
 ```
 
-`results/figures/details/` is safe to delete because the dashboard regenerates it from source CSVs.
+Game definitions live in `games.py` and `game_catalog.py`; execution and recording in `runner.py` and `recorder.py`; result validation in `results.py`. See [../metrics/README.md](../metrics/README.md) for the analysis functions.

@@ -9,12 +9,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from experiments.games import PAYOFF_FACTORIES
-from experiments.plots import HEATMAP_COLORMAP
+from config import CUSTOM_GAME_DIR
+from experiments.game_catalog import load_game_payoffs
+from experiments.plots import HEATMAP_COLORMAP, save_figure_pair
 from experiments.results import iter_result_rows
 
 
-def joint_action_distribution(input_path: str | Path) -> tuple[str, np.ndarray]:
+def joint_action_distribution(input_path: str | Path, custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> tuple[str, np.ndarray]:
     input_path = Path(input_path)
     rows = iter_result_rows(input_path)
     first_row = next(rows, None)
@@ -22,7 +23,9 @@ def joint_action_distribution(input_path: str | Path) -> tuple[str, np.ndarray]:
         raise ValueError("result file has no rows")
 
     game_name = first_row["game"]
-    action_counts = PAYOFF_FACTORIES[game_name]().shape[1:]
+    action_counts = load_game_payoffs(game_name, custom_game_dir).shape[1:]
+    if len(action_counts) != 2:
+        raise ValueError("joint-action heatmaps require exactly two players")
     n_players = len(action_counts)
     counts = np.zeros(action_counts, dtype=int)
     current_time = None
@@ -44,8 +47,8 @@ def joint_action_distribution(input_path: str | Path) -> tuple[str, np.ndarray]:
     return game_name, counts / np.sum(counts)
 
 
-def mean_joint_action_distribution(input_paths: Iterable[str | Path]) -> tuple[str, np.ndarray, int]:
-    distributions = [joint_action_distribution(path) for path in input_paths]
+def mean_joint_action_distribution(input_paths: Iterable[str | Path], custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> tuple[str, np.ndarray, int]:
+    distributions = [joint_action_distribution(path, custom_game_dir) for path in input_paths]
     if not distributions:
         raise ValueError("at least one result file is required")
     game_name = distributions[0][0]
@@ -54,9 +57,9 @@ def mean_joint_action_distribution(input_paths: Iterable[str | Path]) -> tuple[s
     return game_name, np.mean([distribution for _, distribution in distributions], axis=0), len(distributions)
 
 
-def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_path: str | Path) -> None:
+def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_path: str | Path, custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> None:
     paths = [input_paths] if isinstance(input_paths, (str, Path)) else list(input_paths)
-    game_name, frequencies, n_replicates = mean_joint_action_distribution(paths)
+    game_name, frequencies, n_replicates = mean_joint_action_distribution(paths, custom_game_dir)
     action_counts = frequencies.shape
     output_path = Path(output_path)
     figure, axes = plt.subplots(figsize=(6.5, 5.5))
@@ -76,6 +79,5 @@ def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_pa
 
     figure.colorbar(image, ax=axes, label="Empirical frequency")
     figure.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output_path)
+    save_figure_pair(figure, output_path)
     plt.close(figure)

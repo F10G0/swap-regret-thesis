@@ -1,11 +1,11 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from itertools import chain
 from pathlib import Path
 
 import numpy as np
 
 from experiments.results import iter_result_rows
-from metrics.empirical_distribution import EmpiricalDistributionTrajectory, empirical_distribution_trajectory, validate_action_shape
+from metrics.empirical_distribution import validate_action_shape
 
 
 def load_result_action_profiles(input_path: str | Path, action_shape: Sequence[int]) -> np.ndarray:
@@ -41,9 +41,3 @@ def load_result_action_profiles(input_path: str | Path, action_shape: Sequence[i
         raise ValueError(f"round {current_time} has incomplete player actions")
     profiles.append(tuple(actions[player] for player in range(len(shape))))
     return np.asarray(profiles, dtype=int)
-
-
-def load_empirical_distribution_trajectory(input_path: str | Path, action_shape: Sequence[int],
-                                           checkpoints: Iterable[int] | None = None) -> EmpiricalDistributionTrajectory:
-    profiles = load_result_action_profiles(input_path, action_shape)
-    return empirical_distribution_trajectory(profiles, action_shape, checkpoints)

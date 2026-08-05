@@ -11,29 +11,20 @@
     {% set equilibrium_presentation = game_presentations[selected_game] %}
     {% set equilibrium_urls = equilibrium_figures.get(selected_game) %}
     {% set regret_summary_columns = [
-        ("Exp ext", "average_expected_external_regret"),
-        ("Exp int", "average_expected_internal_regret"),
-        ("Exp swap", "average_expected_swap_regret"),
-        ("Real ext", "average_realized_external_regret"),
-        ("Real int", "average_realized_internal_regret"),
-        ("Real swap", "average_realized_swap_regret"),
+        ("expected", "External", "average_expected_external_regret"),
+        ("expected", "Internal", "average_expected_internal_regret"),
+        ("expected", "Swap", "average_expected_swap_regret"),
+        ("realized", "External", "average_realized_external_regret"),
+        ("realized", "Internal", "average_realized_internal_regret"),
+        ("realized", "Swap", "average_realized_swap_regret"),
     ] %}
 
     <div class="app-shell">
         <aside class="sidebar" aria-label="Experiment configuration">
-            <select id="primary-theme" class="sidebar-theme" aria-label="Primary color theme">
-                <option value="green">Green</option>
-                <option value="blue">Blue</option>
-                <option value="purple">Purple</option>
-                <option value="orange">Orange</option>
-                <option value="red">Red</option>
-            </select>
-
             <div class="brand">
                 <p class="eyebrow">Bachelor thesis laboratory</p>
-                <h1>Swap Regret</h1>
+                <h1>Experiments</h1>
                 <p>Run reproducible cross-play experiments and inspect their final regret.</p>
-                <a href="{{ url_for('dashboard.custom_games') }}">Create or inspect custom games</a>
             </div>
 
             {% if inline_error %}
@@ -117,7 +108,7 @@
                             min="0"
                             required
                         >
-                        <span class="hint">Base seed used to derive reproducible random streams for every player and replicate.</span>
+                        <span class="hint">Base seed used to derive reproducible random streams for every player and bandit replicate.</span>
                     </div>
                 </div>
 
@@ -154,90 +145,73 @@
                     {% endfor %}
                 </div>
 
-                <div class="field-grid field-grid-two replicate-grid{% if form_state.feedback_mode != "bandit" %} replicate-grid-single{% endif %}">
-                    <div class="field">
-                        <label for="replicate">Starting replicate</label>
-                        <input
-                            id="replicate"
-                            name="replicate"
-                            type="number"
-                            value="{{ form_state.replicate }}"
-                            min="0"
-                            required
-                        >
-                        <span class="hint">First replicate index; bandit batches continue consecutively from this value.</span>
-                    </div>
-                    <div id="replicates-field" class="field" {% if form_state.feedback_mode != "bandit" %}hidden{% endif %}>
-                        <label for="replicates">Bandit replicates</label>
-                        <input id="replicates" name="replicates" type="number" value="{{ form_state.replicates }}" min="1" max="{{ max_replicates }}" required>
-                        <span class="hint">Run consecutive replicates and plot their mean with a 95% confidence band.</span>
-                    </div>
+                <div id="replicate-fields" class="field" {% if form_state.feedback_mode != "bandit" %}hidden{% endif %}>
+                    <label for="replicates">Bandit replicates</label>
+                    <input id="replicates" name="replicates" type="number" value="{{ form_state.replicates }}" min="1" max="{{ max_replicates }}" required {% if form_state.feedback_mode != "bandit" %}disabled{% endif %}>
+                    <span class="hint">Run replicates 0 through n−1 and plot their mean with a 95% confidence band.</span>
                 </div>
 
                 <div class="button-stack">
                     <button id="queue-experiment" class="button-primary" type="submit">
                         Queue experiment
                     </button>
-                    <button
-                        id="queue-all-pairs"
-                        type="submit"
-                        formaction="{{ url_for('dashboard.run_all_pairs') }}"
-                        {% if selected_definition.source != "builtin" or selected_definition.n_players != 2 %}hidden{% endif %}
-                    >Queue missing algorithm pairs</button>
                 </div>
             </form>
 
-            <div class="maintenance-actions">
-                <form id="rebuild-plots-form" method="post" action="{{ url_for('dashboard.rebuild_plots') }}">
-                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" data-busy-control {% if busy %}disabled{% endif %}>Rebuild figures</button>
-                </form>
+            <details class="data-management">
+                <summary>Data management</summary>
+                <div class="maintenance-actions">
+                    <form id="rebuild-plots-form" method="post" action="{{ url_for('dashboard.rebuild_plots') }}">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" data-busy-control {% if busy %}disabled{% endif %}>Rebuild figures</button>
+                    </form>
 
-                <form
-                    method="post"
-                    action="{{ url_for('dashboard.reset_results') }}"
-                    data-confirm="Delete all generated experiment and figure files?"
-                >
-                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="confirmation" value="reset-results">
-                    <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>
-                        Reset generated results
-                    </button>
-                </form>
-            </div>
+                    <form
+                        method="post"
+                        action="{{ url_for('dashboard.reset_results') }}"
+                        data-confirm="Delete all generated experiment and figure files?"
+                    >
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="confirmation" value="reset-results">
+                        <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>
+                            Reset generated results
+                        </button>
+                    </form>
+                </div>
 
-            <section class="experiment-list" aria-labelledby="experiments-heading">
-                <h2 id="experiments-heading">Raw experiments</h2>
-                {% if experiments %}
-                    <ul>
-                        {% for experiment in experiments %}
-                            <li>
-                                <a
-                                    href="{{ url_for('dashboard.download_experiment', filename=experiment) }}"
-                                    title="Download {{ experiment }}"
-                                >{{ experiment }}</a>
-                                <form
-                                    method="post"
-                                    action="{{ url_for('dashboard.delete_experiment') }}"
-                                    data-confirm="Delete {{ experiment }} and rebuild all figures?"
-                                >
-                                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="filename" value="{{ experiment }}">
-                                    <button
-                                        class="icon-button"
-                                        type="submit"
-                                        aria-label="Delete {{ experiment }}"
-                                        data-busy-control
-                                        {% if busy %}disabled{% endif %}
-                                    >Delete</button>
-                                </form>
-                            </li>
-                        {% endfor %}
-                    </ul>
-                {% else %}
-                    <p class="empty">No experiments recorded.</p>
-                {% endif %}
-            </section>
+                <section class="experiment-list" aria-labelledby="experiments-heading">
+                    <h2 id="experiments-heading">Raw experiment files</h2>
+                    {% if experiments %}
+                        <ul>
+                            {% for experiment in experiments %}
+                                <li>
+                                    <a
+                                        href="{{ url_for('dashboard.download_experiment', filename=experiment) }}"
+                                        title="Download {{ experiment }}"
+                                    >{{ experiment }}</a>
+                                    <form
+                                        method="post"
+                                        action="{{ url_for('dashboard.delete_experiment') }}"
+                                        data-confirm="Delete {{ experiment }} and rebuild all figures?"
+                                    >
+                                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="filename" value="{{ experiment }}">
+                                        <button
+                                            class="icon-button"
+                                            type="submit"
+                                            aria-label="Delete {{ experiment }}"
+                                            data-busy-control
+                                            {% if busy %}disabled{% endif %}
+                                        >Delete</button>
+                                    </form>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="empty">No experiments recorded.</p>
+                    {% endif %}
+                </section>
+            </details>
         </aside>
 
         <main id="main-content" class="content">
@@ -250,15 +224,14 @@
                 </section>
             {% endif %}
 
-            <section class="panel jobs-panel" aria-labelledby="jobs-heading" aria-live="polite">
+            <section class="panel jobs-panel" aria-labelledby="jobs-heading" aria-live="polite" {% if not jobs %}hidden{% endif %}>
                 <div class="section-heading">
                     <div>
                         <p class="eyebrow">Execution</p>
-                        <h2 id="jobs-heading">Recent jobs</h2>
+                        <h2 id="jobs-heading">Job status</h2>
                     </div>
                     <span id="busy-indicator" class="busy-indicator" {% if not busy %}hidden{% endif %}>Queue active</span>
                 </div>
-                <p class="queue-explanation">Experiment submissions run one at a time in first-in, first-out order. You can queue more while one is running.</p>
 
                 {% if jobs %}
                     <ol class="job-list">
@@ -281,62 +254,91 @@
                         {% endfor %}
                     </ol>
                 {% else %}
-                    <p class="empty">No jobs submitted in this session.</p>
+                    <p class="empty">No recent jobs.</p>
                 {% endif %}
             </section>
 
-            <section id="equilibrium-panel" class="panel equilibrium-panel" aria-labelledby="equilibrium-heading">
-                <div class="section-heading">
+            {% if figures or summaries %}
+                <section class="panel results-controls" aria-labelledby="results-controls-heading">
                     <div>
-                        <p class="eyebrow">Theoretical game properties</p>
-                        <h2 id="equilibrium-heading">Equilibrium profile weights</h2>
+                        <p class="eyebrow">Recorded output</p>
+                        <h2 id="results-controls-heading">Results</h2>
+                        <p class="hint">Game and player apply to both figures and the summary table.</p>
                     </div>
-                    <span id="equilibrium-game">{{ equilibrium_presentation.label }}</span>
-                </div>
-                <p id="equilibrium-unavailable" class="equilibrium-explanation" {% if equilibrium_urls %}hidden{% endif %}>
-                    Equilibrium visualizations are available for built-in two-player benchmarks.
-                </p>
-                <p id="equilibrium-explanation" class="equilibrium-explanation" {% if not equilibrium_urls %}hidden{% endif %}>
-                    Each cell is optimized independently over the corresponding
-                    equilibrium polytope. The displayed matrix is not itself an
-                    equilibrium distribution and generally does not sum to one.
-                </p>
-                <div id="equilibrium-grid" class="equilibrium-grid" {% if not equilibrium_urls %}hidden{% endif %}>
-                    <article class="equilibrium-card">
-                        <h3>Maximum CE Profile Weight</h3>
-                        <div class="heatmap-frame">
-                            <img
-                                id="ce-equilibrium-image"
-                                alt="Maximum CE profile weight for {{ equilibrium_presentation.label }}"
-                                loading="lazy"
-                            >
-                            <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                    <div class="shared-result-filters">
+                        <div class="field">
+                            <label for="filter-game">Game</label>
+                            <select id="filter-game">
+                                <option value="all">All games</option>
+                                {% for game in games %}<option value="{{ game }}">{{ game_presentations[game].label }}</option>{% endfor %}
+                            </select>
                         </div>
-                        <a
-                            id="ce-equilibrium-download"
-                            {% if equilibrium_urls %}href="{{ equilibrium_urls.ce }}"{% endif %}
-                            download
-                        >Download PNG</a>
-                    </article>
-                    <article class="equilibrium-card">
-                        <h3>Maximum CCE Profile Weight</h3>
-                        <div class="heatmap-frame">
-                            <img
-                                id="cce-equilibrium-image"
-                                alt="Maximum CCE profile weight for {{ equilibrium_presentation.label }}"
-                                loading="lazy"
-                            >
-                            <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                        <div class="field">
+                            <label for="filter-player">Player</label>
+                            <select id="filter-player">
+                                <option value="all">All players</option>
+                                {% for player in players %}<option value="{{ player }}">Player {{ player }}</option>{% endfor %}
+                            </select>
                         </div>
-                        <a
-                            id="cce-equilibrium-download"
-                            {% if equilibrium_urls %}href="{{ equilibrium_urls.cce }}"{% endif %}
-                            download
-                        >Download PNG</a>
-                    </article>
-                </div>
-            </section>
+                    </div>
+                </section>
+            {% endif %}
 
+            <details id="equilibrium-panel" class="panel disclosure-panel equilibrium-panel">
+                <summary>
+                    <span>
+                        <span class="eyebrow">Game analysis</span>
+                        <span id="equilibrium-heading" class="disclosure-title">Equilibrium profile weights</span>
+                    </span>
+                    <span id="equilibrium-game">{{ equilibrium_presentation.label }}</span>
+                </summary>
+                <div class="disclosure-body">
+                    <p id="equilibrium-unavailable" class="equilibrium-explanation" {% if equilibrium_urls %}hidden{% endif %}>
+                        Equilibrium visualizations are available for built-in benchmarks and two-player zero-sum custom games.
+                    </p>
+                    <p id="equilibrium-explanation" class="equilibrium-explanation" {% if not equilibrium_urls %}hidden{% endif %}>
+                        Each cell is optimized independently over the corresponding
+                        equilibrium polytope. The displayed matrix is not itself an
+                        equilibrium distribution and generally does not sum to one.
+                    </p>
+                    <div id="equilibrium-grid" class="equilibrium-grid" {% if not equilibrium_urls %}hidden{% endif %}>
+                        <article class="equilibrium-card">
+                            <h3>Maximum CE Profile Weight</h3>
+                            <div class="heatmap-frame">
+                                <img
+                                    id="ce-equilibrium-image"
+                                    alt="Maximum CE profile weight for {{ equilibrium_presentation.label }}"
+                                    loading="lazy"
+                                >
+                                <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                            </div>
+                            <a
+                                id="ce-equilibrium-download"
+                                {% if equilibrium_urls %}href="{{ equilibrium_urls.ce.pdf }}"{% endif %}
+                                download
+                            >Download PDF</a>
+                        </article>
+                        <article class="equilibrium-card">
+                            <h3>Maximum CCE Profile Weight</h3>
+                            <div class="heatmap-frame">
+                                <img
+                                    id="cce-equilibrium-image"
+                                    alt="Maximum CCE profile weight for {{ equilibrium_presentation.label }}"
+                                    loading="lazy"
+                                >
+                                <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                            </div>
+                            <a
+                                id="cce-equilibrium-download"
+                                {% if equilibrium_urls %}href="{{ equilibrium_urls.cce.pdf }}"{% endif %}
+                                download
+                            >Download PDF</a>
+                        </article>
+                    </div>
+                </div>
+            </details>
+
+            {% if figures or summaries %}
             <section class="panel figures-panel" aria-labelledby="figures-heading">
                 <div class="section-heading">
                     <div>
@@ -348,16 +350,8 @@
 
                 <div id="figure-filters" class="filter-grid" {% if not figures %}hidden{% endif %}>
                     <div class="field">
-                        <label for="filter-game">Game</label>
-                        <select id="filter-game">
-                            <option value="all">All games</option>
-                            {% for game in games %}<option value="{{ game }}">{{ game_presentations[game].label }}</option>{% endfor %}
-                        </select>
-                    </div>
-                    <div class="field">
                         <label for="filter-source">Source</label>
                         <select id="filter-source">
-                            <option value="all">Expected and realized</option>
                             <option value="expected">Expected</option>
                             <option value="realized">Realized</option>
                         </select>
@@ -369,13 +363,6 @@
                             <option value="external">External</option>
                             <option value="internal">Internal</option>
                             <option value="swap">Swap</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="filter-player">Player</label>
-                        <select id="filter-player">
-                            <option value="all">All players</option>
-                            {% for player in players %}<option value="{{ player }}">Player {{ player }}</option>{% endfor %}
                         </select>
                     </div>
                     <div class="field">
@@ -396,7 +383,11 @@
                                 <span>{{ game_presentations[figure.game].label }} · {{ figure.source | title }} · Player {{ figure.player }} · {{ figure.regret | title }}</span>
                                 <img src="{{ figure.url }}" alt="{{ game_presentations[figure.game].label }}, {{ figure.source }} {{ figure.regret }} regret for player {{ figure.player }}" loading="lazy">
                             </button>
-                            <a href="{{ figure.url }}" download="{{ figure.filename }}">Download PNG</a>
+                            {% if figure.pdf_url %}
+                                <a href="{{ figure.pdf_url }}" download="{{ figure.pdf_filename }}">Download PDF</a>
+                            {% else %}
+                                <a href="{{ figure.url }}" download="{{ figure.filename }}">Download PNG</a>
+                            {% endif %}
                         </article>
                     {% endfor %}
                 </div>
@@ -409,7 +400,7 @@
                     <button id="close-figure-dialog" type="button">Close</button>
                 </div>
                 <img id="dialog-figure-image" src="" alt="">
-                <a id="dialog-figure-download" href="" download>Download PNG</a>
+                <a id="dialog-figure-download" href="" download>Download PDF</a>
             </dialog>
 
             <section class="panel summary-panel" aria-labelledby="summary-heading">
@@ -423,6 +414,13 @@
 
                 {% if summaries %}
                     <div class="summary-filters">
+                        <div class="field">
+                            <label for="filter-summary-source">Regret source</label>
+                            <select id="filter-summary-source">
+                                <option value="expected">Expected</option>
+                                <option value="realized">Realized</option>
+                            </select>
+                        </div>
                         <div class="field">
                             <label for="filter-feedback">Feedback</label>
                             <select id="filter-feedback">
@@ -472,7 +470,7 @@
                                     <th>Player</th>
                                     <th>Profile</th>
                                     <th>Horizon</th>
-                                    {% for label, field in regret_summary_columns %}<th>{{ label }}</th>{% endfor %}
+                                    {% for source, label, field in regret_summary_columns %}<th data-regret-source="{{ source }}" {% if source == "realized" %}hidden{% endif %}>{{ label }}</th>{% endfor %}
                                 </tr>
                             </thead>
                             <tbody>
@@ -498,8 +496,8 @@
                                         <td>{{ row.player }}</td>
                                         <td>{{ row.profile_label }}</td>
                                         <td>{{ row.horizon }}</td>
-                                        {% for label, field in regret_summary_columns %}
-                                            <td data-metric="{{ field }}" {% if field in row %}data-value="{{ row[field] }}"{% endif %}>
+                                        {% for source, label, field in regret_summary_columns %}
+                                            <td data-regret-source="{{ source }}" data-metric="{{ field }}" {% if source == "realized" %}hidden{% endif %} {% if field in row %}data-value="{{ row[field] }}"{% endif %}>
                                                 {% if field in row %}
                                                     {{ "%.6f" | format(row[field]) }}
                                                     {% if row.replicate_count > 1 %}
@@ -530,7 +528,7 @@
                         <section id="detail-joint-actions">
                             <div class="detail-subheading">
                                 <h3>Mean empirical joint-action heatmap</h3>
-                                <a id="detail-heatmap-download" href="" download>Download PNG</a>
+                                <a id="detail-heatmap-download" href="" download>Download PDF</a>
                             </div>
                             <div class="heatmap-frame detail-heatmap-frame">
                                 <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
@@ -541,7 +539,7 @@
                             <div class="detail-subheading">
                                 <div>
                                     <h3 id="detail-convergence-heading">Equilibrium Convergence</h3>
-                                    <p>Distances are computed per replicate and then averaged with 95% confidence intervals. The mean distribution trajectory uses a shared two-dimensional projection for visualization only.</p>
+                                    <p>Distances are computed per replicate and then averaged with 95% confidence intervals. Shared trajectory analysis is available in the comparison workspace below.</p>
                                 </div>
                             </div>
                             <div class="detail-figure-grid">
@@ -551,34 +549,7 @@
                                         <img id="detail-equilibrium-distance" alt="CE and CCE L1 distance by horizon" loading="lazy">
                                         <span class="heatmap-loading" role="status">Loading convergence figure…</span>
                                     </div>
-                                    <a id="detail-equilibrium-distance-download" href="" download>Download PNG</a>
-                                </article>
-                                <article id="detail-equilibrium-trajectory-card" class="detail-figure-card">
-                                    <div class="trajectory-card-heading">
-                                        <h4>Mean joint-distribution trajectory</h4>
-                                        <div class="trajectory-controls">
-                                            <label for="trajectory-points">
-                                                Points
-                                                <input
-                                                    id="trajectory-points"
-                                                    type="number"
-                                                    value="{{ default_trajectory_points }}"
-                                                    min="{{ min_trajectory_points }}"
-                                                    max="{{ max_trajectory_points }}"
-                                                    step="1"
-                                                >
-                                            </label>
-                                            <label for="trajectory-hide-first">
-                                                <input id="trajectory-hide-first" type="checkbox">
-                                                Hide first
-                                            </label>
-                                        </div>
-                                    </div>
-                                    <div class="heatmap-frame">
-                                        <img id="detail-equilibrium-trajectory" alt="Projected empirical joint-distribution trajectory" loading="lazy">
-                                        <span class="heatmap-loading" role="status">Loading convergence figure…</span>
-                                    </div>
-                                    <a id="detail-equilibrium-trajectory-download" href="" download>Download PNG</a>
+                                    <a id="detail-equilibrium-distance-download" href="" download>Download PDF</a>
                                 </article>
                             </div>
                         </section>
@@ -587,6 +558,14 @@
                     <p class="empty">No valid summary rows are available.</p>
                 {% endif %}
             </section>
+            {% else %}
+                <section class="panel empty-results" aria-labelledby="empty-results-heading">
+                    <p class="eyebrow">Recorded output</p>
+                    <h2 id="empty-results-heading">No results yet</h2>
+                    <p class="empty">Configure and queue an experiment to create regret figures and summaries.</p>
+                </section>
+            {% endif %}
+
         </main>
     </div>
 {% endblock %}

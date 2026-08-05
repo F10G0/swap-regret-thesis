@@ -6,6 +6,7 @@ BASE_FIELDNAMES = [
     "replicate",
     "stationary_method",
     "game",
+    "game_payoff_digest",
     "algorithm",
     "n_players",
     "algorithm_profile",

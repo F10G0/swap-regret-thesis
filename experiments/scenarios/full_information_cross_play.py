@@ -6,7 +6,6 @@ from algorithms.internal_regret import RegretMatching, StationaryRegretMatching
 from algorithms.swap_regret import FullBM, FullIto
 from config import CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
 from environments import RepeatedGame
-from experiments.games import PAYOFF_FACTORIES
 from experiments.scenarios.cross_play import AlgorithmFactory, run_cross_play_experiment
 
 
@@ -25,15 +24,3 @@ def run_full_information_cross_play_experiment(game_name: str, algorithm_names: 
     return run_cross_play_experiment(game_name=game_name, feedback_mode="full_information", algorithm_names=algorithm_names, horizon=horizon, seed=seed, replicate=replicate,
                                      environment_factory=RepeatedGame, algorithm_registry=ALGORITHMS, output_dir=RAW_DIR if output_dir is None else output_dir,
                                      should_cancel=should_cancel, custom_game_dir=custom_game_dir, regret_evaluation=regret_evaluation)
-
-
-def main() -> None:
-    for game_name in PAYOFF_FACTORIES:
-        for algorithm_name_0 in ALGORITHMS:
-            for algorithm_name_1 in ALGORITHMS:
-                output_path = run_full_information_cross_play_experiment(game_name=game_name, algorithm_names=[algorithm_name_0, algorithm_name_1])
-                print(f"[done] {output_path.stem}")
-
-
-if __name__ == "__main__":
-    main()

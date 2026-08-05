@@ -2,6 +2,8 @@
 
 const playerCountInput = document.getElementById("custom-player-count");
 const actionCountContainer = document.getElementById("custom-action-counts");
+const payoffStructureSelect = document.getElementById("custom-payoff-structure");
+const payoffStructureHint = document.getElementById("custom-payoff-structure-hint");
 
 function renderActionCounts() {
     if (!playerCountInput || !actionCountContainer) {
@@ -37,8 +39,25 @@ function renderActionCounts() {
     delete actionCountContainer.dataset.initialCounts;
 }
 
+function updatePayoffStructure() {
+    const zeroSum = payoffStructureSelect?.value === "zero_sum";
+    if (playerCountInput) {
+        if (zeroSum) {
+            playerCountInput.value = "2";
+        }
+        playerCountInput.readOnly = zeroSum;
+    }
+    if (payoffStructureHint) {
+        payoffStructureHint.textContent = zeroSum
+            ? "Player 0 receives u and Player 1 receives 1 − u, giving a strategically equivalent zero-sum game."
+            : "General-sum payoffs are sampled independently for every player.";
+    }
+    renderActionCounts();
+}
+
 playerCountInput?.addEventListener("input", renderActionCounts);
-renderActionCounts();
+payoffStructureSelect?.addEventListener("change", updatePayoffStructure);
+updatePayoffStructure();
 
 const payoffInspector = document.getElementById("payoff-inspector");
 const payoffPlayerSelect = document.getElementById("payoff-player");
@@ -212,3 +231,7 @@ function installPayoffInspector() {
 }
 
 installPayoffInspector();
+
+document.querySelectorAll("img[data-heatmap-source]").forEach((image) => {
+    setHeatmapSource(image, image.dataset.heatmapSource);
+});

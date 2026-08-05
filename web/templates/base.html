@@ -20,7 +20,29 @@
     >
 </head>
 <body>
-    <a class="skip-link" href="#main-content">Skip to results</a>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header">
+        <a class="site-brand" href="{{ url_for('dashboard.index') }}">Swap Regret</a>
+        <nav class="site-navigation" aria-label="Main navigation">
+            <a href="{{ url_for('dashboard.index') }}" {% if request.endpoint == 'dashboard.index' %}aria-current="page"{% endif %}>Dashboard</a>
+            <a href="{{ url_for('dashboard.custom_games') }}" {% if request.endpoint and request.endpoint.startswith('dashboard.custom') %}aria-current="page"{% endif %}>Custom games</a>
+            <a href="{{ url_for('dashboard.adversarial') }}" {% if request.endpoint and 'adversarial' in request.endpoint %}aria-current="page"{% endif %}>Adversarial</a>
+            {% if experimental_trajectories_enabled %}
+                <a href="{{ url_for('experimental_trajectory.workspace') }}" {% if request.blueprint == 'experimental_trajectory' %}aria-current="page"{% endif %}>Trajectories</a>
+            {% endif %}
+        </nav>
+        <label class="theme-control" for="primary-theme">
+            <span>Theme</span>
+            <select id="primary-theme" aria-label="Primary color theme">
+                <option value="green">Green</option>
+                <option value="blue">Blue</option>
+                <option value="purple">Purple</option>
+                <option value="orange">Orange</option>
+                <option value="red">Red</option>
+            </select>
+        </label>
+    </header>
 
     <div id="notice-stack" class="flash-stack" aria-live="polite">
         {% for category, message in get_flashed_messages(with_categories=true) %}

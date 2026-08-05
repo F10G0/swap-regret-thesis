@@ -5,7 +5,6 @@ from algorithms.external_regret import Exp3, Exp3IX
 from algorithms.swap_regret import BanditBM, BanditIto, LCEIX
 from config import BANDIT_REPLICATES, CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
 from environments import BanditRepeatedGame
-from experiments.games import PAYOFF_FACTORIES
 from experiments.scenarios.cross_play import AlgorithmFactory, run_cross_play_experiment
 
 
@@ -37,16 +36,3 @@ def run_bandit_cross_play_replicates(game_name: str, algorithm_names: list[str],
                                          custom_game_dir=custom_game_dir, regret_evaluation=regret_evaluation)
         for replicate in range(n_replicates)
     ]
-
-
-def main() -> None:
-    for game_name in PAYOFF_FACTORIES:
-        for algorithm_name_0 in ALGORITHMS:
-            for algorithm_name_1 in ALGORITHMS:
-                output_paths = run_bandit_cross_play_replicates(game_name=game_name, algorithm_names=[algorithm_name_0, algorithm_name_1])
-                for output_path in output_paths:
-                    print(f"[done] {output_path.stem}")
-
-
-if __name__ == "__main__":
-    main()

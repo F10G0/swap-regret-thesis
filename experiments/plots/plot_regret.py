@@ -12,8 +12,10 @@ import numpy as np
 
 from config import FIGURE_DIR, RAW_DIR
 from experiments.algorithm_labels import algorithm_profile_label
+from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
 from experiments.results import average_regret_column, iter_result_rows, regret_column
 from experiments.result_schema import REGRET_NAMES
+from metrics.confidence import mean_confidence_interval_half_width
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,7 @@ REPLICATE_GROUP_COLUMNS = (
     "horizon",
     "seed",
     "stationary_method",
+    "game_payoff_digest",
 )
 
 
@@ -92,7 +95,7 @@ def group_replicate_runs(rows_by_run: dict[str, list[dict]]) -> list[list[list[d
     groups = defaultdict(list)
     for rows in rows_by_run.values():
         first_row = rows[0]
-        key = tuple(first_row[column] for column in REPLICATE_GROUP_COLUMNS)
+        key = tuple(first_row.get(column, "") for column in REPLICATE_GROUP_COLUMNS)
         groups[key].append(rows)
 
     return [sorted(group, key=lambda rows: int(rows[0]["replicate"])) for group in groups.values()]
@@ -118,8 +121,7 @@ def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column
         if len(values) != len(replicate_runs):
             raise ValueError("replicate runs contain inconsistent time points")
         means[index] = np.mean(values)
-        if len(values) > 1:
-            confidence[index] = 1.96 * np.std(values, ddof=1) / np.sqrt(len(values))
+        confidence[index] = mean_confidence_interval_half_width(values)
 
     return times, means, confidence
 
@@ -193,7 +195,7 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
     figure.set_size_inches(11, figure_height)
     figure.subplots_adjust(left=0.09, right=0.98, top=1.0 - 0.45 / figure_height, bottom=(legend_height + 0.35) / figure_height)
     figure.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.02), ncol=legend_columns, frameon=False, fontsize="small")
-    figure.savefig(output_dir / filename, dpi=150, bbox_inches="tight", pad_inches=0.15)
+    save_figure_pair(figure, output_dir / filename, png_dpi=150, bbox_inches="tight", pad_inches=0.15)
     plt.close(figure)
 
 
@@ -202,8 +204,9 @@ def clear_game_figures(game_name: str, output_dir: str | Path = FIGURE_DIR) -> N
     if not output_dir.exists():
         return
 
-    for path in output_dir.glob(f"{game_name}_*.png"):
-        path.unlink()
+    for suffix in FIGURE_SUFFIXES:
+        for path in output_dir.glob(f"{game_name}_*{suffix}"):
+            path.unlink()
 
 
 def plot_game_results(game_name: str, rows_by_run: dict[str, list[dict]], output_dir: str | Path) -> None:

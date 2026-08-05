@@ -1,49 +1,42 @@
 # Environments
 
-Stateful fixed-payoff repeated-game environments. This package owns game state and feedback exposure, not learners or metrics.
+The package contains fixed-payoff repeated games and one isolated adaptive stress-test environment.
 
 ## Payoff Tensor
 
 ```text
 payoff_tensor[player, action_player_0, ..., action_player_(n-1)]
-shape = (n_players, actions_player_0, ..., actions_player_(n-1))
 ```
 
-Construction requires:
+The tensor must contain one action dimension per player, at least one action per player, and finite payoffs in `[0, 1]`. Different players may have different action counts.
 
-- at least one player and one action per player;
-- one action dimension per player;
-- finite payoffs in `[0, 1]`.
+## Round Interfaces
 
-The tensor is copied. Heterogeneous action counts are available as `game.n_actions`.
-
-## Round Interface
+Fixed games use:
 
 ```python
-game.step((action_player_0, ..., action_player_(n-1)))
+game.step(actions)
 feedback = game.feedback(player)
-counterfactuals = game.deviation_payoffs(player)
+deviation_payoffs = game.deviation_payoffs(player)
 ```
 
-`step()` validates and stores one joint action. `deviation_payoffs(player)` varies only that player's action and returns a copy of the unilateral-deviation payoff vector.
+The one-player adversary uses:
 
-| Environment | `feedback(player)` |
+```python
+environment.step((action,))
+feedback = environment.feedback()
+```
+
+Call `step()` before requesting feedback in either case.
+
+| Environment | Learner feedback |
 |---|---|
-| `RepeatedGame` | Complete unilateral-deviation payoff vector |
+| `RepeatedGame` | Full unilateral-deviation payoff vector |
 | `BanditRepeatedGame` | Realized scalar payoff |
+| `HistoricalFrequencyAdversary` | Full payoff vector; the most frequent action in its memory receives 0 and all others receive 1 |
 
-In bandit experiments, `deviation_payoffs()` is used only by offline expected/realized regret evaluators and never reaches the learner.
+In bandit runs, `deviation_payoffs()` is used only by the offline regret evaluator and is never passed to the learner.
 
-The runner owns round sequencing; environments deliberately have no counter, learner state, duplicate-step guard, or payoff cache.
+`HistoricalFrequencyAdversary` has one learner. Its memory may cover any positive number of previous rounds or the full history. It constructs the payoff vector before adding the current action and rotates ties deterministically.
 
-## Support and Ownership
-
-The environment is generic over player count and heterogeneous actions. Custom 2–8 player games use the same classes as built-in games. N-player runs receive regret and equilibrium-convergence figures; matrix heatmaps remain a two-player presentation.
-
-```text
-environments/
-├── base.py
-└── repeated_game.py
-```
-
-Benchmark construction belongs to `experiments/`, learning to `algorithms/`, and analysis to `metrics/`.
+The experiment runner owns round counting and learner updates. Game construction belongs to `experiments/`, learning to `algorithms/`, and analysis to `metrics/`.

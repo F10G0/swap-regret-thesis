@@ -5,11 +5,6 @@ from typing import Mapping
 from experiments.result_schema import REGRET_EVALUATIONS, default_regret_evaluation
 
 
-DEFAULT_TRAJECTORY_POINTS = 10
-MIN_TRAJECTORY_POINTS = 2
-MAX_TRAJECTORY_POINTS = 50
-
-
 @dataclass(frozen=True)
 class ExperimentForm:
     game: str
@@ -17,9 +12,17 @@ class ExperimentForm:
     algorithm_names: tuple[str, ...]
     horizon: int
     seed: int
-    replicate: int
     replicates: int
     regret_evaluation: str = "feedback_aligned"
+
+
+@dataclass(frozen=True)
+class AdversarialExperimentForm:
+    algorithm_name: str
+    n_actions: int
+    memory_window: int
+    horizon: int
+    seed: int
 
 
 def parse_positive_integer(
@@ -48,23 +51,6 @@ def parse_non_negative_integer(value: str, field_name: str) -> int:
     if number < 0:
         raise ValueError(f"{field_name} must be non-negative")
     return number
-
-
-def parse_trajectory_points(value: str | None) -> int:
-    if value is None:
-        return DEFAULT_TRAJECTORY_POINTS
-    points = parse_positive_integer(value, "trajectory points", MAX_TRAJECTORY_POINTS)
-    if points < MIN_TRAJECTORY_POINTS:
-        raise ValueError(f"trajectory points must be at least {MIN_TRAJECTORY_POINTS}")
-    return points
-
-
-def parse_trajectory_hide_first(value: str | None) -> bool:
-    if value is None or value == "0":
-        return False
-    if value == "1":
-        return True
-    raise ValueError("hide_first must be 0 or 1")
 
 
 def validate_leaf_filename(filename: str, suffix: str) -> str:
@@ -112,7 +98,6 @@ def parse_experiment_form(
         feedback_mode = values["feedback_mode"]
         horizon_value = values["horizon"]
         seed_value = values["seed"]
-        replicate_value = values["replicate"]
     except KeyError as error:
         raise ValueError(f"missing form field: {error.args[0]}") from error
 
@@ -133,14 +118,58 @@ def parse_experiment_form(
         if algorithm_name not in available_algorithms:
             raise ValueError(f"algorithm {algorithm_name} is not available for {feedback_mode}")
 
-    replicates = parse_positive_integer(values.get("replicates", "1"), "replicates", max_replicates) if feedback_mode == "bandit" else 1
+    if feedback_mode == "bandit":
+        replicates = parse_positive_integer(
+            values.get("replicates", ""),
+            "replicates",
+            max_replicates,
+        )
+    else:
+        replicates = 1
     return ExperimentForm(
         game=game,
         feedback_mode=feedback_mode,
         algorithm_names=algorithm_names,
         horizon=parse_positive_integer(horizon_value, "horizon", max_horizon),
         seed=parse_non_negative_integer(seed_value, "seed"),
-        replicate=parse_non_negative_integer(replicate_value, "replicate"),
         replicates=replicates,
         regret_evaluation=regret_evaluation,
+    )
+
+
+def parse_adversarial_experiment_form(
+    values: Mapping[str, str],
+    algorithms: set[str] | list[str] | tuple[str, ...],
+    max_actions: int,
+    max_horizon: int,
+) -> AdversarialExperimentForm:
+    try:
+        algorithm_name = values["algorithm_name"]
+        n_actions = values["n_actions"]
+        memory_window = values["memory_window"]
+        horizon = values["horizon"]
+        seed = values["seed"]
+    except KeyError as error:
+        raise ValueError(f"missing form field: {error.args[0]}") from error
+
+    if algorithm_name not in algorithms:
+        raise ValueError(
+            f"algorithm {algorithm_name} is not available for the adversarial environment"
+        )
+    action_count = parse_positive_integer(
+        n_actions,
+        "number of actions",
+        max_actions,
+    )
+    if action_count < 2:
+        raise ValueError("number of actions must be at least 2")
+    window = parse_non_negative_integer(memory_window, "memory window")
+    if window > max_horizon:
+        raise ValueError(f"memory window must not exceed {max_horizon}")
+    return AdversarialExperimentForm(
+        algorithm_name=algorithm_name,
+        n_actions=action_count,
+        memory_window=window,
+        horizon=parse_positive_integer(horizon, "horizon", max_horizon),
+        seed=parse_non_negative_integer(seed, "seed"),
     )

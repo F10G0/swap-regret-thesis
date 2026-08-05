@@ -27,6 +27,7 @@ def test_precomputation_keeps_existing_asset_without_overwrite(tmp_path: Path) -
 
     assert generated == [output_path]
     assert output_path.read_bytes() == b"existing"
+    assert output_path.with_suffix(".pdf").is_file()
 
 
 @pytest.mark.parametrize("workers", [0, -1, 1.5])

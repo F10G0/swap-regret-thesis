@@ -7,7 +7,7 @@ import numpy as np
 from algorithms.base import Algorithm
 from config import CUSTOM_GAME_DIR
 from environments.base import FixedGameEnvironment
-from experiments.game_catalog import load_game_payoffs
+from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.recorder import CsvRecorder
 from experiments.runner import run_game
 from experiments.result_schema import regret_fieldnames
@@ -27,7 +27,23 @@ class AlgorithmFactory:
 
 def player_seed(spec: ExperimentSpec, player_id: int) -> int:
     """Return a reproducible seed for one player and replicate."""
-    return spec.seed + spec.replicate * len(spec.algorithm_names) + player_id
+    return replicate_player_seeds(
+        spec.seed,
+        spec.replicate,
+        len(spec.algorithm_names),
+    )[player_id]
+
+
+def replicate_player_seeds(
+    base_seed: int,
+    replicate: int,
+    n_players: int,
+) -> tuple[int, ...]:
+    """Return the complete deterministic player-seed schedule for a replicate."""
+    if base_seed < 0 or replicate < 0 or n_players <= 0:
+        raise ValueError("seed inputs must be non-negative and include players")
+    first_seed = base_seed + replicate * n_players
+    return tuple(first_seed + player for player in range(n_players))
 
 
 def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_names: list[str], horizon: int, seed: int, replicate: int,
@@ -41,7 +57,16 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
     payoff_tensor = load_game_payoffs(game_name, custom_game_dir)
     if len(algorithm_names) != payoff_tensor.shape[0]:
         raise ValueError(f"game {game_name} requires {payoff_tensor.shape[0]} player algorithms")
-    spec = ExperimentSpec(game_name, feedback_mode, tuple(algorithm_names), horizon, seed, replicate, regret_evaluation=regret_evaluation)
+    spec = ExperimentSpec(
+        game_name,
+        feedback_mode,
+        tuple(algorithm_names),
+        horizon,
+        seed,
+        replicate,
+        regret_evaluation=regret_evaluation,
+        game_payoff_digest=payoff_tensor_digest(payoff_tensor),
+    )
     game = environment_factory(payoff_tensor)
     players = [
         algorithm_registry[name].create(n_actions, horizon, player_seed(spec, player_id))
@@ -59,15 +84,3 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
         )
 
     return output_path
-
-
-def main() -> None:
-    from experiments.scenarios.bandit_cross_play import main as run_bandit_cross_play
-    from experiments.scenarios.full_information_cross_play import main as run_full_information_cross_play
-
-    run_full_information_cross_play()
-    run_bandit_cross_play()
-
-
-if __name__ == "__main__":
-    main()
