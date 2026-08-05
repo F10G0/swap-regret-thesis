@@ -1,5 +1,5 @@
 import csv
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 import json
 from pathlib import Path
 import re
@@ -11,6 +11,7 @@ from experiments.result_schema import (
     default_regret_evaluation,
     regret_sources,
 )
+from experiments.recorder import read_final_csv_rows
 
 
 IDENTITY_COLUMNS = (
@@ -35,10 +36,6 @@ def regret_column(regret_type: str, regret_name: str) -> str:
 
 def average_regret_column(regret_type: str, regret_name: str) -> str:
     return f"average_{regret_column(regret_type, regret_name)}"
-
-
-def regret_type(feedback_mode: str) -> str:
-    return default_regret_evaluation(feedback_mode)
 
 
 def regret_columns(regret_evaluation: str) -> tuple[str, ...]:
@@ -143,11 +140,11 @@ def _validated_round(
 
 def _validated_rows(
     input_path: Path,
-    reader: csv.DictReader,
+    rows: Iterable[dict[str, str]],
+    fieldnames: set[str],
     *,
     require_complete_trajectory: bool,
 ) -> Iterator[dict[str, str]]:
-    fieldnames = set(reader.fieldnames or [])
     missing_columns = BASE_RESULT_COLUMNS - fieldnames
     if missing_columns:
         missing = ", ".join(sorted(missing_columns))
@@ -161,7 +158,7 @@ def _validated_rows(
     first_time = None
     current_time = None
     current_rows: list[dict[str, str]] = []
-    for row in reader:
+    for row in rows:
         regret_evaluation = result_regret_evaluation(row)
         row["regret_evaluation"] = regret_evaluation
         identity = _row_identity(row)
@@ -214,9 +211,11 @@ def _validated_rows(
 def iter_result_rows(input_path: str | Path) -> Iterator[dict[str, str]]:
     input_path = Path(input_path)
     with input_path.open("r", encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file)
         yield from _validated_rows(
             input_path,
-            csv.DictReader(file),
+            reader,
+            set(reader.fieldnames or []),
             require_complete_trajectory=True,
         )
 
@@ -224,41 +223,5 @@ def iter_result_rows(input_path: str | Path) -> Iterator[dict[str, str]]:
 def load_final_result_rows(input_path: str | Path) -> list[dict[str, str]]:
     """Load every player row from the final round without scanning the complete file."""
     input_path = Path(input_path)
-    with input_path.open("rb") as file:
-        header = file.readline()
-        fieldnames = set(next(csv.reader([header.decode("utf-8")]), []))
-        missing_columns = BASE_RESULT_COLUMNS - fieldnames
-        if missing_columns:
-            missing = ", ".join(sorted(missing_columns))
-            raise ValueError(f"{input_path} is missing required columns: {missing}")
-        data_start = file.tell()
-        file.seek(0, 2)
-        position = file.tell()
-        buffer = b""
-
-        while True:
-            chunk_start = max(data_start, position - 8192)
-            file.seek(chunk_start)
-            buffer = file.read(position - chunk_start) + buffer
-            position = chunk_start
-            lines = buffer.splitlines()
-            if position > data_start and lines:
-                lines = lines[1:]
-            if lines:
-                rows = list(csv.DictReader([header.decode("utf-8"), *(line.decode("utf-8") for line in lines)]))
-                final_time = rows[-1]["t"]
-                first_final = len(rows) - 1
-                while first_final > 0 and rows[first_final - 1]["t"] == final_time:
-                    first_final -= 1
-                if first_final > 0 or position == data_start:
-                    final_lines = lines[first_final:]
-                    reader = csv.DictReader([header.decode("utf-8"), *(line.decode("utf-8") for line in final_lines)])
-                    return list(
-                        _validated_rows(
-                            input_path,
-                            reader,
-                            require_complete_trajectory=False,
-                        )
-                    )
-            if position == data_start:
-                return []
+    fieldnames, rows = read_final_csv_rows(input_path, "t")
+    return list(_validated_rows(input_path, rows, fieldnames, require_complete_trajectory=False))

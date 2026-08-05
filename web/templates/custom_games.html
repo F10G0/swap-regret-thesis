@@ -57,7 +57,7 @@
                         </div>
                     </div>
                     <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson }}"></div>
-                    <p class="hint">The complete tensor is limited to {{ "{:,}".format(max_payoff_values) }} payoff values. Zero-sum games use two players and are stored as the equivalent constant-sum payoffs <code>u</code> and <code>1 − u</code>.</p>
+                    <p class="hint">The complete tensor is limited to {{ "{:,}".format(max_payoff_values) }} payoff values. Symmetric zero-sum games use two equal action sets and are stored as equivalent constant-sum payoffs <code>u</code> and <code>1 − u</code>.</p>
                     <button class="button-primary" type="submit">Generate and save game</button>
                 </form>
             </section>

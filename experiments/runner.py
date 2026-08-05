@@ -12,8 +12,7 @@ class ExperimentCancelled(RuntimeError):
 
 
 def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, algorithm_name: str, players: list[Algorithm], recorder: CsvRecorder, horizon: int,
-             metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None, algorithm_names: tuple[str, ...] | None = None,
-             regret_evaluation: str = "feedback_aligned") -> None:
+             metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None, regret_evaluation: str = "feedback_aligned") -> None:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     if feedback_mode not in {"full_information", "bandit"}:
@@ -23,11 +22,8 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
     for player_id, player in enumerate(players):
         if player.n_actions != game.n_actions[player_id]:
             raise ValueError(f"player {player_id} action count does not match the environment")
-    if algorithm_names is not None and len(algorithm_names) != game.n_players:
-        raise ValueError("number of algorithm names must match game.n_players")
 
     metadata = metadata or {}
-    algorithm_names = algorithm_names or tuple(algorithm_name for _ in players)
     regret_evaluation = resolve_regret_evaluation(feedback_mode, regret_evaluation)
     regrets = [RegretBundles(n_actions) for n_actions in game.n_actions]
 
@@ -58,7 +54,6 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
             recorder.record({
                 "game": game_name,
                 "algorithm": algorithm_name,
-                "player_algorithm": algorithm_names[player_id],
                 **metadata,
                 "t": t,
                 "player": player_id,

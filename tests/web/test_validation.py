@@ -8,9 +8,8 @@ import pytest
 
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
-from web import create_app
 from web.presentations import GAME_PRESENTATIONS
-from web.services import DashboardService
+from tests.web.support import create_test_app, csrf_token, wait_for_http_response, wait_for_job
 from web.validation import (
     parse_experiment_form,
     parse_positive_integer,
@@ -26,8 +25,7 @@ from experimental.equilibrium_trajectory.settings import (
 VALID_FORM = {
     "game": "rps",
     "feedback_mode": "full_information",
-    "algorithm_player_0": "hedge",
-    "algorithm_player_1": "hedge",
+    "algorithm_names": ["hedge", "hedge"],
     "horizon": "2",
     "seed": "42",
     "replicates": "1",
@@ -35,64 +33,8 @@ VALID_FORM = {
 }
 
 
-def create_test_app(tmp_path: Path) -> tuple:
-    service = DashboardService(
-        results_dir=tmp_path,
-        raw_dir=tmp_path / "raw",
-        figure_dir=tmp_path / "figures",
-        custom_game_dir=tmp_path / "custom-games",
-    )
-    service._publish_plots = lambda game_name=None: None
-    app = create_app(
-        {
-            "TESTING": True,
-            "SECRET_KEY": "test-secret",
-            "MAX_HORIZON": 100,
-            "TEST_ENABLE_EXPERIMENTAL_TRAJECTORIES": True,
-        },
-        service=service,
-    )
-    return app, service
-
-
-def csrf_token(client) -> str:
-    client.get("/")
-    with client.session_transaction() as session:
-        return session["_csrf_token"]
-
-
-def wait_for_job(service: DashboardService, job_id: str) -> str:
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        job = service.jobs.get(job_id)
-        if job is not None and job.status in {"succeeded", "failed"}:
-            return job.status
-        time.sleep(0.01)
-    raise AssertionError(f"job {job_id} did not finish")
-
-
-def wait_for_heatmap(client, url: str):
-    deadline = time.monotonic() + 5
-    statuses = []
-    while time.monotonic() < deadline:
-        response = client.get(url)
-        statuses.append(response.status_code)
-        if response.status_code != 202:
-            return response, statuses
-        time.sleep(0.01)
-    raise AssertionError(f"heatmap {url} did not finish")
-
-
 def wait_for_trajectory_comparison(client, url: str):
-    deadline = time.monotonic() + 10
-    statuses = []
-    while time.monotonic() < deadline:
-        response = client.get(url, headers={"Accept": "application/json"})
-        statuses.append(response.status_code)
-        if response.status_code != 202:
-            return response, statuses
-        time.sleep(0.01)
-    raise AssertionError(f"trajectory comparison {url} did not finish")
+    return wait_for_http_response(client, url, headers={"Accept": "application/json"}, timeout=10)
 
 
 @pytest.mark.parametrize("value", ["0", "-1"])
@@ -143,7 +85,7 @@ def test_trajectory_comparison_view_validation_rejects_unknown_mode() -> None:
 def test_experiment_form_rejects_algorithm_from_wrong_feedback_mode() -> None:
     values = VALID_FORM | {
         "feedback_mode": "bandit",
-        "algorithm_player_0": "hedge",
+        "algorithm_names": ["hedge", "hedge"],
     }
     with pytest.raises(ValueError, match="not available for bandit"):
         parse_experiment_form(
@@ -159,7 +101,7 @@ def test_experiment_form_rejects_algorithm_from_wrong_feedback_mode() -> None:
 
 def test_bandit_form_accepts_replicate_batch() -> None:
     form = parse_experiment_form(
-        VALID_FORM | {"feedback_mode": "bandit", "algorithm_player_0": "exp3", "algorithm_player_1": "lce_ix", "replicates": "20"},
+        VALID_FORM | {"feedback_mode": "bandit", "algorithm_names": ["exp3", "lce_ix"], "replicates": "20"},
         games={"rps"},
         algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3", "lce_ix"]},
         max_horizon=100,
@@ -203,8 +145,7 @@ def test_experiment_form_accepts_every_regret_evaluation_for_each_feedback_mode(
     form = parse_experiment_form(
         VALID_FORM | {
             "feedback_mode": feedback_mode,
-            "algorithm_player_0": algorithm,
-            "algorithm_player_1": algorithm,
+            "algorithm_names": [algorithm, algorithm],
             "regret_evaluation": regret_evaluation,
         },
         games={"rps"},
@@ -431,7 +372,7 @@ def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_pa
         service.detail_figure_dir.glob("trajectory_comparison_*.png")
     )
     heatmap_response = client.get(summary["joint_actions_url"])
-    distance_response, distance_statuses = wait_for_heatmap(client, summary["equilibrium_distance_url"])
+    distance_response, distance_statuses = wait_for_http_response(client, summary["equilibrium_distance_url"])
     comparison_url = (
         f"{workspace_data['trajectoryComparisonUrl']}?member={candidate['group_id']}"
         "&final_interval_segments=6&focus_final_interval=0"
@@ -535,11 +476,11 @@ def test_dashboard_renders_and_serves_theoretical_equilibrium_heatmaps(
     client = app.test_client()
 
     dashboard_response = client.get("/")
-    ce_response, ce_statuses = wait_for_heatmap(
+    ce_response, ce_statuses = wait_for_http_response(
         client,
         "/games/rps/equilibria/ce.png",
     )
-    cce_response, cce_statuses = wait_for_heatmap(
+    cce_response, cce_statuses = wait_for_http_response(
         client,
         "/games/rps/equilibria/cce.png",
     )
@@ -644,7 +585,7 @@ def test_dashboard_serves_bertrand_equilibrium_heatmaps_with_readable_titles(
 ) -> None:
     app, _ = create_test_app(tmp_path)
 
-    response, statuses = wait_for_heatmap(
+    response, statuses = wait_for_http_response(
         app.test_client(),
         f"/games/{game_name}/equilibria/ce.png",
     )
@@ -701,7 +642,7 @@ def test_custom_game_page_creates_and_lists_game(tmp_path: Path) -> None:
     assert b"dashboard.js" not in library_page.data
 
 
-def test_custom_game_page_creates_two_player_zero_sum_game(
+def test_custom_game_page_creates_symmetric_zero_sum_game(
     tmp_path: Path,
 ) -> None:
     app, service = create_test_app(tmp_path)
@@ -714,7 +655,7 @@ def test_custom_game_page_creates_two_player_zero_sum_game(
             "name": "Random Zero Sum",
             "payoff_structure": "zero_sum",
             "n_players": "2",
-            "action_counts": ["3", "4"],
+            "action_counts": ["3"],
             "seed": "23",
         },
     )
@@ -733,8 +674,11 @@ def test_custom_game_page_creates_two_player_zero_sum_game(
 
     assert response.status_code == 302
     assert definition.payoff_structure == "zero_sum"
+    assert definition.action_counts == (3, 3)
     assert np.allclose(payoffs[0] + payoffs[1], 1.0)
-    assert b"Zero-sum" in library_page.data
+    assert np.allclose(payoffs[0], payoffs[1].T)
+    assert np.allclose(payoffs[0] + payoffs[0].T, 1.0)
+    assert b"Symmetric zero-sum" in library_page.data
     assert b'id="custom-payoff-structure"' in library_page.data
     assert b'value="zero_sum"' in library_page.data
     assert inspector_page.data.count(b"Equilibrium profile weights") == 1
@@ -750,6 +694,10 @@ def test_custom_game_page_creates_two_player_zero_sum_game(
     assert cce_response.status_code == 200
     assert cce_response.content_type == "image/png"
     assert len(list((tmp_path / "custom-games" / ".equilibria").glob("*.png"))) == 2
+
+    script = client.get("/static/custom_games.js").get_data(as_text=True)
+    assert 'fieldCount = symmetricZeroSum ? 1 : playerCount' in script
+    assert '"Actions per player"' in script
 
 
 def test_custom_game_page_rejects_zero_sum_with_more_than_two_players(
@@ -771,8 +719,30 @@ def test_custom_game_page_rejects_zero_sum_with_more_than_two_players(
     )
 
     assert response.status_code == 400
-    assert b"zero-sum games require exactly 2 players" in response.data
+    assert b"symmetric zero-sum games require two equal action sets" in response.data
     assert b'value="zero_sum" selected' in response.data
+
+
+def test_custom_game_page_rejects_zero_sum_with_unequal_action_counts(
+    tmp_path: Path,
+) -> None:
+    app, _ = create_test_app(tmp_path)
+    client = app.test_client()
+
+    response = client.post(
+        "/custom-games",
+        data={
+            "_csrf_token": csrf_token(client),
+            "name": "Asymmetric Zero Sum",
+            "payoff_structure": "zero_sum",
+            "n_players": "2",
+            "action_counts": ["2", "3"],
+            "seed": "1",
+        },
+    )
+
+    assert response.status_code == 400
+    assert b"symmetric zero-sum games require two equal action sets" in response.data
 
 
 def test_custom_game_payoff_inspector_slice_and_download(tmp_path: Path) -> None:
@@ -891,7 +861,7 @@ def test_custom_three_player_dashboard_experiment_includes_equilibrium_convergen
         for candidate in workspace_data["trajectoryComparisonCandidates"]
         if candidate["game"] == definition.id
     )
-    distance_response, _ = wait_for_heatmap(client, summary["equilibrium_distance_url"])
+    distance_response, _ = wait_for_http_response(client, summary["equilibrium_distance_url"])
     comparison_response, _ = wait_for_trajectory_comparison(
         client,
         (

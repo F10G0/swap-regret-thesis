@@ -20,7 +20,7 @@ MAX_CUSTOM_ACTIONS_PER_PLAYER = 100
 MAX_CUSTOM_PAYOFF_VALUES = 1_000_000
 CUSTOM_PAYOFF_STRUCTURES = {
     "general_sum": "General-sum",
-    "zero_sum": "Zero-sum",
+    "zero_sum": "Symmetric zero-sum",
 }
 _SAFE_GAME_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
@@ -105,6 +105,14 @@ def _validated_payoff_structure(value) -> str:
     return payoff_structure
 
 
+def _validate_symmetric_zero_sum_shape(
+    n_players: int,
+    action_counts: tuple[int, ...],
+) -> None:
+    if n_players != 2 or action_counts[0] != action_counts[1]:
+        raise ValueError("symmetric zero-sum games require two equal action sets")
+
+
 class GameCatalog:
     def __init__(self, custom_game_dir: str | Path = CUSTOM_GAME_DIR):
         self.custom_game_dir = Path(custom_game_dir)
@@ -156,15 +164,11 @@ class GameCatalog:
         if not np.all(np.isfinite(payoff_tensor)) or np.any((payoff_tensor < 0.0) | (payoff_tensor > 1.0)):
             raise ValueError("payoffs must be finite values in [0, 1]")
         if payoff_structure == "zero_sum":
-            if n_players != 2:
-                raise ValueError("zero-sum games require exactly 2 players")
-            if not np.allclose(
-                payoff_tensor[0] + payoff_tensor[1],
-                1.0,
-                rtol=0.0,
-                atol=1e-12,
-            ):
-                raise ValueError("zero-sum payoffs must have constant sum 1")
+            _validate_symmetric_zero_sum_shape(n_players, action_counts)
+            constant_sum = np.allclose(payoff_tensor[0] + payoff_tensor[1], 1.0, rtol=0.0, atol=1e-12)
+            symmetric = np.allclose(payoff_tensor[0], payoff_tensor[1].T, rtol=0.0, atol=1e-12)
+            if not constant_sum or not symmetric:
+                raise ValueError("zero-sum payoffs must be symmetric and have constant sum 1")
         structure_label = CUSTOM_PAYOFF_STRUCTURES[payoff_structure]
         description = f"Custom random {structure_label.lower()} game · {n_players} players · actions {' × '.join(map(str, action_counts))} · seed {seed}"
         definition = GameDefinition(
@@ -249,12 +253,14 @@ class GameCatalog:
         action_counts = _validated_action_counts(action_counts, n_players)
         seed = _validated_seed(seed)
         payoff_structure = _validated_payoff_structure(payoff_structure)
-        if payoff_structure == "zero_sum" and n_players != 2:
-            raise ValueError("zero-sum games require exactly 2 players")
+        if payoff_structure == "zero_sum":
+            _validate_symmetric_zero_sum_shape(n_players, action_counts)
 
         random = np.random.default_rng(seed)
         if payoff_structure == "zero_sum":
-            first_payoff = random.random(action_counts)
+            n_actions = action_counts[0]
+            sample = random.random((n_actions, n_actions))
+            first_payoff = 0.5 + (sample - sample.T) / 2.0
             payoff_tensor = np.stack((first_payoff, 1.0 - first_payoff))
         else:
             payoff_tensor = random.random((n_players, *action_counts))

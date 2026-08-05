@@ -30,7 +30,7 @@ FEEDBACK_MODES = {
     ),
 }
 
-REGRET_EVALUATIONS = {
+REGRET_EVALUATION_LABELS = {
     "expected": "Expected",
     "realized": "Realized",
     "both": "Both",

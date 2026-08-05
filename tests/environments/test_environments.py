@@ -5,8 +5,10 @@ from algorithms.external_regret import Hedge
 from environments import (
     BanditRepeatedGame,
     HistoricalFrequencyAdversary,
+    LazyRandomWalkEnvironment,
     RepeatedGame,
 )
+from environments.adversarial import RANDOM_WALK_GRID_MAX, RANDOM_WALK_STEP
 from experiments.runner import run_game
 
 
@@ -181,6 +183,63 @@ def test_historical_frequency_adversary_can_use_a_finite_window() -> None:
 
     assert punished_actions == [0, 2, 1]
     np.testing.assert_array_equal(environment.action_counts, [1, 1, 1])
+
+
+def test_random_walk_rewards_stay_on_the_fixed_grid() -> None:
+    environment = LazyRandomWalkEnvironment(8, 1_000, 7, "uniform_grid")
+    rewards = environment.reward_states * RANDOM_WALK_STEP
+
+    assert np.all((0 <= environment.reward_states) & (environment.reward_states <= 10))
+    assert np.all((0.0 <= rewards) & (rewards <= 1.0))
+    np.testing.assert_allclose(rewards * RANDOM_WALK_GRID_MAX, environment.reward_states)
+    assert np.all(np.abs(np.diff(environment.reward_states, axis=0)) <= 1)
+
+
+@pytest.mark.parametrize(
+    ("state", "draw", "expected"),
+    [
+        (5, 0.0, 4),
+        (5, 1.0 / 3.0, 5),
+        (5, 2.0 / 3.0, 6),
+        (0, 0.49, 0),
+        (0, 0.5, 1),
+        (10, 0.49, 10),
+        (10, 0.5, 9),
+    ],
+)
+def test_random_walk_transition_rule(state, draw, expected) -> None:
+    assert LazyRandomWalkEnvironment._next_state(state, draw) == expected
+
+
+def test_random_walk_initialization_modes() -> None:
+    centered = LazyRandomWalkEnvironment(4, 3, 7)
+    uniform = LazyRandomWalkEnvironment(4, 3, 7, "uniform_grid")
+    expected_uniform = np.random.default_rng(7).integers(0, 11, size=4)
+
+    np.testing.assert_array_equal(centered.reward_states[0], [5, 5, 5, 5])
+    np.testing.assert_array_equal(uniform.reward_states[0], expected_uniform)
+
+
+def test_random_walk_seed_is_reproducible_and_action_independent() -> None:
+    first = LazyRandomWalkEnvironment(4, 20, 7, "uniform_grid")
+    second = LazyRandomWalkEnvironment(4, 20, 7, "uniform_grid")
+
+    np.testing.assert_array_equal(first.reward_states, second.reward_states)
+    with pytest.raises(TypeError):
+        first.step((3,))
+    np.testing.assert_array_equal(first.reward_states, second.reward_states)
+
+
+def test_random_walk_horizon_and_feedback_boundaries() -> None:
+    environment = LazyRandomWalkEnvironment(3, 2, 7)
+
+    with pytest.raises(RuntimeError, match="call step"):
+        environment.feedback()
+    environment.step()
+    np.testing.assert_array_equal(environment.feedback(), [0.5, 0.5, 0.5])
+    environment.step()
+    with pytest.raises(RuntimeError, match="exhausted"):
+        environment.step()
 
 
 def test_runner_steps_environment_once_per_round() -> None:

@@ -13,7 +13,11 @@ from flask import (
 
 from experiments.game_catalog import MAX_CUSTOM_ACTIONS_PER_PLAYER, MAX_CUSTOM_PLAYERS
 from experiments.plots import FIGURE_FORMATS, figure_path
-from experiments.scenarios.adversarial import MAX_ADVERSARIAL_ACTIONS
+from experiments.scenarios.adversarial import (
+    ENVIRONMENT_LABELS,
+    INITIALIZATION_LABELS,
+    MAX_ADVERSARIAL_ACTIONS,
+)
 from web.jobs import ServiceBusyError
 from web.services import DashboardService, PlotUpdateError
 from web.validation import (
@@ -106,7 +110,11 @@ def adversarial():
     try:
         form = parse_adversarial_experiment_form(
             request.form,
-            algorithms=service.adversarial_algorithms,
+            algorithms_by_feedback_mode=(
+                service.adversarial_algorithms_by_feedback_mode
+            ),
+            environments=set(ENVIRONMENT_LABELS),
+            initialization_modes=set(INITIALIZATION_LABELS),
             max_actions=MAX_ADVERSARIAL_ACTIONS,
             max_horizon=current_app.config["MAX_HORIZON"],
         )
@@ -188,17 +196,20 @@ def custom_games():
     if request.method == "POST":
         try:
             n_players = parse_positive_integer(request.form["n_players"], "number of players", MAX_CUSTOM_PLAYERS)
+            payoff_structure = request.form.get("payoff_structure", "general_sum")
             action_counts = [
                 parse_positive_integer(value, f"player {player} actions", MAX_CUSTOM_ACTIONS_PER_PLAYER)
                 for player, value in enumerate(request.form.getlist("action_counts"))
             ]
+            if payoff_structure == "zero_sum" and len(action_counts) == 1:
+                action_counts *= 2
             seed = parse_non_negative_integer(request.form["seed"], "seed")
             definition = service.create_custom_game(
                 request.form["name"],
                 n_players,
                 action_counts,
                 seed,
-                request.form.get("payoff_structure", "general_sum"),
+                payoff_structure,
             )
         except (FileExistsError, KeyError, OSError, ValueError) as error:
             form_state = dict(request.form)
@@ -343,10 +354,17 @@ def download_experiment(filename: str):
 
 @dashboard.get("/experiments/<filename>/joint-actions.<figure_format>")
 def joint_actions(filename: str, figure_format: str):
+    return _generated_figure_response(
+        lambda: get_service().joint_action_figure(filename),
+        figure_format,
+    )
+
+
+def _generated_figure_response(generate_figure, figure_format: str):
     if figure_format not in FIGURE_FORMATS:
         abort(404)
     try:
-        path = figure_path(get_service().joint_action_figure(filename), figure_format)
+        path = figure_path(generate_figure(), figure_format)
         if not path.is_file():
             raise FileNotFoundError(path)
     except (FileNotFoundError, KeyError, ValueError):
@@ -356,15 +374,10 @@ def joint_actions(filename: str, figure_format: str):
 
 @dashboard.get("/experiment-groups/<group_id>/joint-actions.<figure_format>")
 def group_joint_actions(group_id: str, figure_format: str):
-    if figure_format not in FIGURE_FORMATS:
-        abort(404)
-    try:
-        path = figure_path(get_service().group_joint_action_figure(group_id), figure_format)
-        if not path.is_file():
-            raise FileNotFoundError(path)
-    except (FileNotFoundError, KeyError, ValueError):
-        abort(404)
-    return send_from_directory(path.parent.resolve(), path.name)
+    return _generated_figure_response(
+        lambda: get_service().group_joint_action_figure(group_id),
+        figure_format,
+    )
 
 
 def _equilibrium_convergence_response(request_figure, figure_format: str):
@@ -392,7 +405,6 @@ def equilibrium_distance(filename: str, figure_format: str):
     return _equilibrium_convergence_response(
         lambda: get_service().request_equilibrium_convergence_figure(
             filename,
-            "distance",
         ),
         figure_format,
     )
@@ -403,7 +415,6 @@ def group_equilibrium_distance(group_id: str, figure_format: str):
     return _equilibrium_convergence_response(
         lambda: get_service().request_group_equilibrium_convergence_figure(
             group_id,
-            "distance",
         ),
         figure_format,
     )

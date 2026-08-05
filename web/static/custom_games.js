@@ -17,8 +17,10 @@ function renderActionCounts() {
         console.warn("Could not restore action counts", error);
     }
     const playerCount = Math.max(2, Number(playerCountInput.value) || 2);
+    const symmetricZeroSum = payoffStructureSelect?.value === "zero_sum";
     const fields = [];
-    for (let player = 0; player < playerCount; player += 1) {
+    const fieldCount = symmetricZeroSum ? 1 : playerCount;
+    for (let player = 0; player < fieldCount; player += 1) {
         const field = document.createElement("div");
         field.className = "field";
         const label = document.createElement("label");
@@ -31,7 +33,9 @@ function renderActionCounts() {
         input.required = true;
         input.value = previous[player] || initial[player] || "2";
         label.htmlFor = input.id;
-        label.textContent = `Player ${player} actions`;
+        label.textContent = symmetricZeroSum
+            ? "Actions per player"
+            : `Player ${player} actions`;
         field.append(label, input);
         fields.push(field);
     }
@@ -49,7 +53,7 @@ function updatePayoffStructure() {
     }
     if (payoffStructureHint) {
         payoffStructureHint.textContent = zeroSum
-            ? "Player 0 receives u and Player 1 receives 1 − u, giving a strategically equivalent zero-sum game."
+            ? "Both players share one action set. Centered payoffs satisfy A = −Aᵀ; displayed payoffs use u and 1 − u."
             : "General-sum payoffs are sampled independently for every player.";
     }
     renderActionCounts();

@@ -1,21 +1,14 @@
 # Algorithms
 
-Regret-minimizing learners used by the experiment runner.
+Regret-minimizing learners used by the experiment runners.
 
-## Available Learners
-
-| Name | Feedback | Purpose |
+| Name | Feedback | Objective |
 |---|---|---|
 | `hedge` | Reward vector | External regret |
-| `exp3` | Realized reward | Bandit external regret |
-| `exp3_ix` | Realized reward | External regret with implicit exploration |
-| `regret_matching` | Reward vector | Internal regret |
-| `stationary_regret_matching` | Reward vector | Internal regret using a stationary distribution |
-| `bm` | Mode-dependent | Swap-regret reduction |
-| `ito` | Mode-dependent | Swap-regret reduction |
-| `lce_ix` | Realized reward | Bandit swap-regret reduction |
-
-## Interface
+| `exp3`, `exp3_ix` | Realized reward | Bandit external regret |
+| `regret_matching`, `stationary_regret_matching` | Reward vector | Internal regret |
+| `bm`, `ito` | Mode-dependent | Swap regret |
+| `lce_ix` | Realized reward | Bandit swap regret |
 
 Every learner follows the same lifecycle:
 
@@ -25,33 +18,16 @@ action = learner.sample_action()
 learner.update(feedback)
 ```
 
-Strategies are finite probability vectors. Full-information learners receive a reward vector; bandit learners receive one realized reward. `reset()` restores the initial uniform strategy.
+Strategies are probability vectors. Full-information learners receive a reward vector; bandit learners receive only the selected reward. `reset()` restores the initial uniform strategy. Experiment runners create one deterministically seeded learner per player.
 
-The experiment layer creates one learner per player and gives each learner a deterministic seed.
+Hedge, Exp3, and Exp3-IX use the configured horizon for their learning rate. Direct construction with `horizon=0` uses an anytime schedule, while experiments require a positive horizon. Exponential weights use a stable softmax and the probability floor from `config.py`.
 
-## Learning Rates
+The reductions are:
 
-Hedge, Exp3, and Exp3-IX use the configured horizon in their learning-rate schedule. Direct construction with `horizon=0` gives an anytime schedule; experiment runs require a positive horizon.
+- Regret Matching: positive action-replacement regret.
+- SRM: a stationary distribution of the regret transition matrix.
+- Blum–Mansour: one external learner per outer action.
+- Ito: one sampled inner learner per round.
+- LCE-IX: Exp3-IX-based bandit updates.
 
-The shared exponential-weights implementation uses a stable softmax and floors probabilities at `NUMERICAL_TOLERANCE`.
-
-## Regret Reductions
-
-- Regret Matching uses positive action-replacement regret.
-- SRM uses a stationary distribution of the regret transition matrix.
-- Blum–Mansour updates one external-regret learner per outer action.
-- Ito updates one sampled inner learner per round.
-- LCE-IX uses Exp3-IX-based bandit updates.
-
-`stationary_distribution(...)` supports `solve`, `pinv`, and `iteration`; the project default is `solve`.
-
-```text
-algorithms/
-├── base.py
-├── stationary.py
-├── external_regret/
-├── internal_regret/
-└── swap_regret/
-```
-
-Games and feedback belong to `environments/`; experiment construction to `experiments/`; regret measurement to `metrics/`.
+The SRM solver supports `solve`, `pinv`, and `iteration`; `solve` is the default. Games and feedback live in `environments/`, orchestration in `experiments/`, and evaluation in `metrics/`.

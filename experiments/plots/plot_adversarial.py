@@ -14,9 +14,11 @@ from config import ADVERSARIAL_FIGURE_DIR, ADVERSARIAL_RAW_DIR
 from experiments.algorithm_labels import algorithm_label
 from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
 from experiments.scenarios.adversarial import (
+    ENVIRONMENT_LABELS,
+    FEEDBACK_MODE_LABELS,
+    HISTORICAL_FREQUENCY_ENVIRONMENT,
     TARGET_REGRET_BY_ALGORITHM,
-    adversarial_memory_label,
-    adversarial_memory_window,
+    adversarial_environment_detail,
     load_adversarial_rows,
 )
 
@@ -25,8 +27,11 @@ logger = logging.getLogger(__name__)
 MAX_PLOT_POINTS = 2_000
 ALGORITHM_COLORS = {
     "hedge": "#0072B2",
+    "exp3": "#56B4E9",
+    "exp3_ix": "#332288",
     "bm": "#D55E00",
     "ito": "#009E73",
+    "lce_ix": "#882255",
     "regret_matching": "#CC79A7",
     "stationary_regret_matching": "#E69F00",
 }
@@ -61,11 +66,17 @@ def _plot_regret(
     figure, axes = plt.subplots(figsize=(10, 5.2))
     algorithm_occurrences = defaultdict(int)
     selected = [rows for _, rows in results if int(rows[0]["n_actions"]) == n_actions]
-    sort_fields = ("algorithm", "memory", "horizon", "seed")
+    sort_fields = (
+        "environment",
+        "feedback_mode",
+        "algorithm",
+        "horizon",
+        "learner_seed",
+    )
     for rows in sorted(selected, key=lambda item: tuple(item[0][field] for field in sort_fields)):
         first = rows[0]
         algorithm = first["algorithm"]
-        memory_window = adversarial_memory_window(first["memory"])
+        environment_detail = adversarial_environment_detail(first, include_environment_seed=True)
         times = np.asarray([int(row["t"]) for row in rows])
         if average:
             column = f"average_{source}_{regret_name}_regret"
@@ -79,8 +90,10 @@ def _plot_regret(
         target = TARGET_REGRET_BY_ALGORITHM.get(algorithm) == regret_name
         label = (
             f"{algorithm_label(algorithm)} · "
-            f"{adversarial_memory_label(memory_window)} · "
-            f"T={int(first['horizon']):,} · seed {first['seed']}"
+            f"{FEEDBACK_MODE_LABELS[first['feedback_mode']]} · "
+            f"{ENVIRONMENT_LABELS[first['environment']]} · "
+            f"{environment_detail} · "
+            f"T={int(first['horizon']):,} · learner seed {first['learner_seed']}"
         )
         axes.plot(
             times,
@@ -102,7 +115,7 @@ def _plot_regret(
     )
     axes.set_ylabel(ylabel)
     axes.set_title(
-        f"Historical-frequency adversary · {n_actions} actions · "
+        f"Adversarial experiments · {n_actions} actions · "
         f"{view_label.lower()} {source} {regret_name} regret"
     )
     axes.grid(True)
@@ -119,28 +132,33 @@ def _frequency_curves(
     n_actions = int(metadata["n_actions"])
     horizon = int(metadata["horizon"])
     action_counts = np.zeros(n_actions, dtype=np.int64)
-    punished_counts = np.zeros(n_actions, dtype=np.int64)
+    reference_counts = np.zeros(n_actions, dtype=np.int64)
     times = []
     action_frequencies = []
-    punished_frequencies = []
+    reference_frequencies = []
+    reference_field = (
+        "punished_action"
+        if metadata["environment"] == HISTORICAL_FREQUENCY_ENVIRONMENT
+        else "current_best_action"
+    )
     stride = max(1, (horizon + MAX_PLOT_POINTS - 1) // MAX_PLOT_POINTS)
 
     with input_path.open("r", encoding="utf-8", newline="") as file:
         for row in csv.DictReader(file):
             time = int(row["t"])
             action = int(row["action"])
-            punished_action = int(row["punished_action"])
+            reference_action = int(row[reference_field])
             action_counts[action] += 1
-            punished_counts[punished_action] += 1
+            reference_counts[reference_action] += 1
             if time == 1 or time == horizon or time % stride == 0:
                 times.append(time)
                 action_frequencies.append(action_counts / time)
-                punished_frequencies.append(punished_counts / time)
+                reference_frequencies.append(reference_counts / time)
 
     return (
         np.asarray(times, dtype=int),
         np.asarray(action_frequencies, dtype=float),
-        np.asarray(punished_frequencies, dtype=float),
+        np.asarray(reference_frequencies, dtype=float),
     )
 
 
@@ -163,8 +181,12 @@ def _plot_frequencies(
             label=f"Action {action}",
         )
 
-    memory_window = adversarial_memory_window(metadata["memory"])
-    kind_label = "Learner action" if kind == "action" else "Punished-action"
+    environment_detail = adversarial_environment_detail(metadata, include_environment_seed=True)
+    kind_label = {
+        "action": "Learner action",
+        "punished_action": "Punished-action",
+        "best_action": "Best-action",
+    }[kind]
     axes.set_xscale("log")
     axes.set_ylim(-0.02, 1.02)
     axes.set_xlabel("Round")
@@ -172,7 +194,8 @@ def _plot_frequencies(
     axes.set_title(
         f"{kind_label} frequency · "
         f"{algorithm_label(metadata['algorithm'])} · "
-        f"{adversarial_memory_label(memory_window)}"
+        f"{FEEDBACK_MODE_LABELS[metadata['feedback_mode']]} · "
+        f"{environment_detail}"
     )
     axes.grid(True)
     if n_actions <= 12:
@@ -197,12 +220,12 @@ def plot_adversarial_results(
                 for average in (True, False):
                     if average:
                         filename = (
-                            f"historical_frequency_{n_actions}_actions_average_"
+                            f"adversarial_{n_actions}_actions_average_"
                             f"{source}_{regret_name}_regret.png"
                         )
                     else:
                         filename = (
-                            f"historical_frequency_{n_actions}_actions_{source}_"
+                            f"adversarial_{n_actions}_actions_{source}_"
                             f"{regret_name}_regret_over_sqrt_t.png"
                         )
                     output_path = output_dir / filename
@@ -218,12 +241,17 @@ def plot_adversarial_results(
 
     for input_path, rows in results:
         metadata = rows[0]
-        times, action_frequencies, punished_frequencies = _frequency_curves(
+        times, action_frequencies, reference_frequencies = _frequency_curves(
             input_path, metadata
+        )
+        reference_kind = (
+            "punished_action"
+            if metadata["environment"] == HISTORICAL_FREQUENCY_ENVIRONMENT
+            else "best_action"
         )
         for kind, frequencies in (
             ("action", action_frequencies),
-            ("punished_action", punished_frequencies),
+            (reference_kind, reference_frequencies),
         ):
             output_path = output_dir / f"{input_path.stem}_{kind}_frequency.png"
             _plot_frequencies(
@@ -241,7 +269,7 @@ def plot_adversarial_results(
         for suffix in FIGURE_SUFFIXES
     }
     for suffix in FIGURE_SUFFIXES:
-        for old_path in output_dir.glob(f"historical_frequency_*{suffix}"):
+        for old_path in output_dir.glob(f"*{suffix}"):
             if old_path.name not in generated_names:
                 old_path.unlink()
     return generated

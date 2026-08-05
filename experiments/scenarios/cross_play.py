@@ -80,7 +80,7 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
     with CsvRecorder(regret_fieldnames(spec.regret_evaluation), output_path) as recorder:
         run_game(
             game_name=spec.game_name, feedback_mode=spec.feedback_mode, algorithm_name=spec.algorithm_profile_name, game=game, players=players, recorder=recorder, horizon=spec.horizon,
-            metadata=spec.metadata(), should_cancel=should_cancel, algorithm_names=spec.algorithm_names, regret_evaluation=spec.regret_evaluation,
+            metadata=spec.metadata(), should_cancel=should_cancel, regret_evaluation=spec.regret_evaluation,
         )
 
     return output_path

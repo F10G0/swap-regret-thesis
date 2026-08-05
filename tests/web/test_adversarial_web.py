@@ -1,77 +1,58 @@
 from pathlib import Path
-import time
+import re
 
 import pytest
 
-from web import create_app
-from web.services import DashboardService
+from tests.web.support import create_test_app, csrf_token as _csrf_token, wait_for_job as _wait_for_job
 from web.validation import parse_adversarial_experiment_form
+from experiments.scenarios.adversarial import (
+    HISTORICAL_FREQUENCY_ENVIRONMENT,
+    RANDOM_WALK_ENVIRONMENT,
+)
 
 
 VALID_FORM = {
+    "environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
+    "initialization_mode": "centered",
+    "feedback_mode": "full_information",
     "algorithm_name": "hedge",
     "n_actions": "3",
     "memory_window": "0",
     "horizon": "4",
-    "seed": "7",
+    "environment_seed": "11",
+    "learner_seed": "7",
 }
+ENVIRONMENTS = {HISTORICAL_FREQUENCY_ENVIRONMENT, RANDOM_WALK_ENVIRONMENT}
+INITIALIZATION_MODES = {"centered", "uniform_grid"}
 
 
 def _app(tmp_path: Path):
-    service = DashboardService(
-        results_dir=tmp_path,
-        raw_dir=tmp_path / "raw",
-        figure_dir=tmp_path / "figures",
-        custom_game_dir=tmp_path / "custom-games",
-    )
-    service._publish_adversarial_plots = lambda: None
-    app = create_app(
-        {
-            "TESTING": True,
-            "SECRET_KEY": "test-secret",
-            "MAX_HORIZON": 100,
-            "MAX_REPLICATES": 10,
-        },
-        service=service,
-    )
-    return app, service
-
-
-def _csrf_token(client) -> str:
-    client.get("/adversarial")
-    with client.session_transaction() as session:
-        return session["_csrf_token"]
-
-
-def _wait_for_job(service: DashboardService, job_id: str) -> str:
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        job = service.jobs.get(job_id)
-        if job is not None and job.status in {
-            "succeeded",
-            "failed",
-            "cancelled",
-        }:
-            return job.status
-        time.sleep(0.01)
-    raise AssertionError(f"job {job_id} did not finish")
+    return create_test_app(tmp_path, experimental=False, max_replicates=10, disable_adversarial_plots=True)
 
 
 def test_adversarial_form_validation() -> None:
     form = parse_adversarial_experiment_form(
         VALID_FORM,
-        algorithms=["hedge"],
+        algorithms_by_feedback_mode={
+            "full_information": ["hedge"],
+            "bandit": ["exp3"],
+        },
+        environments=ENVIRONMENTS,
+        initialization_modes=INITIALIZATION_MODES,
         max_actions=100,
         max_horizon=100,
     )
 
     assert form.algorithm_name == "hedge"
+    assert form.feedback_mode == "full_information"
     assert form.n_actions == 3
     assert form.memory_window == 0
 
     custom = parse_adversarial_experiment_form(
         VALID_FORM | {"memory_window": "37"},
-        algorithms=["hedge"],
+        algorithms_by_feedback_mode={"full_information": ["hedge"]},
+        environments=ENVIRONMENTS,
+        initialization_modes=INITIALIZATION_MODES,
         max_actions=100,
         max_horizon=100,
     )
@@ -83,7 +64,24 @@ def test_adversarial_memory_window_validation(memory_window: str) -> None:
     with pytest.raises(ValueError, match="memory window"):
         parse_adversarial_experiment_form(
             VALID_FORM | {"memory_window": memory_window},
-            algorithms=["hedge"],
+            algorithms_by_feedback_mode={"full_information": ["hedge"]},
+            environments=ENVIRONMENTS,
+            initialization_modes=INITIALIZATION_MODES,
+            max_actions=100,
+            max_horizon=100,
+        )
+
+
+def test_adversarial_algorithm_must_match_feedback_mode() -> None:
+    with pytest.raises(ValueError, match="not available for bandit"):
+        parse_adversarial_experiment_form(
+            VALID_FORM | {"feedback_mode": "bandit"},
+            algorithms_by_feedback_mode={
+                "full_information": ["hedge"],
+                "bandit": ["exp3"],
+            },
+            environments=ENVIRONMENTS,
+            initialization_modes=INITIALIZATION_MODES,
             max_actions=100,
             max_horizon=100,
         )
@@ -98,9 +96,17 @@ def test_adversarial_page_is_separate_from_fixed_game_controls(tmp_path) -> None
 
     assert "Punish the historical leader" in page
     assert 'name="algorithm_name"' in page
+    assert 'name="environment"' in page
+    assert 'name="initialization_mode"' in page
+    assert 'name="feedback_mode"' in page
     assert 'name="n_actions"' in page
     assert 'name="memory_window"' in page
+    assert 'name="environment_seed"' in page
+    assert 'name="learner_seed"' in page
     assert "0 means full history" in page
+    assert "exp3" in page
+    assert "Independent lazy random walk" in page
+    assert "Independent lazy reward walks" in page
     assert 'name="replicates"' not in page
     assert 'name="replicate"' not in page
     assert 'name="game"' not in page
@@ -108,6 +114,12 @@ def test_adversarial_page_is_separate_from_fixed_game_controls(tmp_path) -> None
     assert "Clear results" in page
     assert "swap-regret-adversarial-form" in script
     assert "adversarialForm.elements" in script
+    assert page.count('id="adversarial-memory-field"') == 1
+    assert re.search(
+        r'id="adversarial-memory-field"[^>]*>\s*'
+        r'<label for="adversarial-memory-window">',
+        page,
+    )
 
 
 def test_adversarial_page_queues_one_run_and_renders_results(tmp_path) -> None:
@@ -133,6 +145,55 @@ def test_adversarial_page_queues_one_run_and_renders_results(tmp_path) -> None:
     assert "Last 37 rounds" in page
 
 
+def test_adversarial_page_queues_bandit_run(tmp_path) -> None:
+    app, service = _app(tmp_path)
+    client = app.test_client()
+
+    response = client.post(
+        "/adversarial",
+        data=VALID_FORM
+        | {
+            "feedback_mode": "bandit",
+            "algorithm_name": "exp3",
+            "_csrf_token": _csrf_token(client),
+        },
+    )
+
+    assert response.status_code == 302
+    job = service.jobs.recent()[0]
+    assert _wait_for_job(service, job.id) == "succeeded"
+    result = next(service.adversarial_raw_dir.glob("*.csv"))
+    assert ",bandit," in result.read_text(encoding="utf-8").splitlines()[1]
+    assert "Bandit feedback" in client.get("/adversarial").get_data(as_text=True)
+
+
+def test_adversarial_page_queues_random_walk_run(tmp_path) -> None:
+    app, service = _app(tmp_path)
+    client = app.test_client()
+
+    response = client.post(
+        "/adversarial",
+        data=VALID_FORM
+        | {
+            "environment": RANDOM_WALK_ENVIRONMENT,
+            "initialization_mode": "uniform_grid",
+            "environment_seed": "23",
+            "learner_seed": "29",
+            "_csrf_token": _csrf_token(client),
+        },
+    )
+
+    assert response.status_code == 302
+    job = service.jobs.recent()[0]
+    assert _wait_for_job(service, job.id) == "succeeded"
+    result = next(service.adversarial_raw_dir.glob("*.csv"))
+    row = result.read_text(encoding="utf-8").splitlines()[1]
+    assert ",lazy_random_walk_v1,uniform_grid,0.1,23,29," in row
+    page = client.get("/adversarial").get_data(as_text=True)
+    assert "Uniform over the reward grid" in page
+    assert "Independent lazy random walk" in page
+
+
 def test_adversarial_download_and_figure_routes_are_scoped(tmp_path) -> None:
     app, service = _app(tmp_path)
     client = app.test_client()
@@ -153,8 +214,8 @@ def test_adversarial_download_and_figure_routes_are_scoped(tmp_path) -> None:
 
     service.adversarial_figure_dir.mkdir(parents=True, exist_ok=True)
     figure_names = (
-        "historical_frequency_3_actions_average_expected_external_regret.png",
-        "historical_frequency_3_actions_expected_external_regret_over_sqrt_t.png",
+        "adversarial_3_actions_average_expected_external_regret.png",
+        "adversarial_3_actions_expected_external_regret_over_sqrt_t.png",
     )
     for figure_name in figure_names:
         pdf_name = Path(figure_name).with_suffix(".pdf").name

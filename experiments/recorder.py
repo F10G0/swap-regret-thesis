@@ -4,6 +4,43 @@ from pathlib import Path
 import tempfile
 
 
+def read_final_csv_rows(input_path: str | Path, group_column: str | None = None) -> tuple[set[str], list[dict[str, str]]]:
+    input_path = Path(input_path)
+    with input_path.open("rb") as file:
+        header = file.readline()
+        if not header:
+            return set(), []
+        header_text = header.decode("utf-8")
+        fieldnames = set(next(csv.reader([header_text]), []))
+        if group_column is not None and group_column not in fieldnames:
+            return fieldnames, []
+        data_start = file.tell()
+        file.seek(0, 2)
+        position = file.tell()
+        buffer = b""
+
+        while True:
+            chunk_start = max(data_start, position - 8192)
+            file.seek(chunk_start)
+            buffer = file.read(position - chunk_start) + buffer
+            position = chunk_start
+            lines = buffer.splitlines()
+            if position > data_start and lines:
+                lines = lines[1:]
+            if lines:
+                rows = list(csv.DictReader([header_text, *(line.decode("utf-8") for line in lines)]))
+                if group_column is None:
+                    return fieldnames, rows[-1:]
+                final_value = rows[-1][group_column]
+                first_final = len(rows) - 1
+                while first_final > 0 and rows[first_final - 1][group_column] == final_value:
+                    first_final -= 1
+                if first_final > 0 or position == data_start:
+                    return fieldnames, rows[first_final:]
+            if position == data_start:
+                return fieldnames, []
+
+
 class CsvRecorder:
     def __init__(self, fieldnames: list[str], output_path: str | Path):
         self.fieldnames = fieldnames

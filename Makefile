@@ -12,7 +12,7 @@ FIGURE_DIR ?= $(RESULTS_DIR)/figures
 ADVERSARIAL_DIR ?= $(RESULTS_DIR)/adversarial
 EXPERIMENTAL_TRAJECTORIES ?= 0
 
-.PHONY: help install install-experimental
+.PHONY: help all install install-experimental
 .PHONY: web plot precompute-equilibria
 .PHONY: test clean reset
 
@@ -20,6 +20,8 @@ EXPERIMENTAL_TRAJECTORIES ?= 0
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n"} /^##@ / {printf "\n%s:\n", substr($$0, 5)} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+all: install plot ## Install the default build and refresh existing plots
 
 ##@ Setup
 
@@ -52,11 +54,9 @@ test: ## Run the complete test suite without creating caches
 ##@ Cleanup
 
 clean: ## Remove Python and pytest caches
-	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name ".pytest_cache" -prune -exec rm -rf {} +
-	find . -maxdepth 1 -type f -name "*-pulp.*" -delete
-	find results web/static/equilibria data/custom_games -type d \( -name ".figures-*" -o -name ".equilibrium-*" -o -name ".equilibrium-convergence-*" -o -name ".precompute-equilibrium-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
+	find . -type d \( -name "__pycache__" -o -name ".pytest_cache" \) -prune -exec rm -rf {} +
+	find . -type f \( -name "*.pyc" -o -name "*-pulp.*" \) -delete
+	find "$(RESULTS_DIR)" web/static/equilibria data/custom_games -type d \( -name ".figures-*" -o -name ".equilibrium-*" -o -name ".equilibrium-convergence-*" -o -name ".precompute-equilibrium-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 reset: clean ## Remove caches and generated results
 	@if [ -d "$(RAW_DIR)" ]; then \

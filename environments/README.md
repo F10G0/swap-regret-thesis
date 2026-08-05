@@ -1,42 +1,24 @@
 # Environments
 
-The package contains fixed-payoff repeated games and one isolated adaptive stress-test environment.
+Fixed repeated games and two isolated one-player stress-test environments.
 
-## Payoff Tensor
+Fixed-game payoffs use:
 
 ```text
 payoff_tensor[player, action_player_0, ..., action_player_(n-1)]
 ```
 
-The tensor must contain one action dimension per player, at least one action per player, and finite payoffs in `[0, 1]`. Different players may have different action counts.
+There is one nonempty action dimension per player. Action counts may differ, and every payoff must be finite and in `[0, 1]`.
 
-## Round Interfaces
+| Environment | Step | Feedback |
+|---|---|---|
+| `RepeatedGame` | `step(actions)` | Full deviation-payoff vector |
+| `BanditRepeatedGame` | `step(actions)` | Selected payoff only |
+| `HistoricalFrequencyAdversary` | `step((action,))` | Full payoff vector for evaluation |
+| `LazyRandomWalkEnvironment` | `step()` | Precomputed action-independent reward vector |
 
-Fixed games use:
+Call `step()` before reading feedback. Bandit fixed-game runs use `deviation_payoffs()` only for offline regret evaluation; the learner never sees it.
 
-```python
-game.step(actions)
-feedback = game.feedback(player)
-deviation_payoffs = game.deviation_payoffs(player)
-```
+The historical-frequency adversary constructs each payoff vector from earlier actions, using either full history or a positive memory window. Bandit mode passes only the sampled payoff to the learner.
 
-The one-player adversary uses:
-
-```python
-environment.step((action,))
-feedback = environment.feedback()
-```
-
-Call `step()` before requesting feedback in either case.
-
-| Environment | Learner feedback |
-|---|---|
-| `RepeatedGame` | Full unilateral-deviation payoff vector |
-| `BanditRepeatedGame` | Realized scalar payoff |
-| `HistoricalFrequencyAdversary` | Full payoff vector; the most frequent action in its memory receives 0 and all others receive 1 |
-
-In bandit runs, `deviation_payoffs()` is used only by the offline regret evaluator and is never passed to the learner.
-
-`HistoricalFrequencyAdversary` has one learner. Its memory may cover any positive number of previous rounds or the full history. It constructs the payoff vector before adding the current action and rotates ties deterministically.
-
-The experiment runner owns round counting and learner updates. Game construction belongs to `experiments/`, learning to `algorithms/`, and analysis to `metrics/`.
+The lazy random walk precomputes an independent integer-state walk for every action. Rewards lie on `0, 0.1, ..., 1`; initialization is centered at `0.5` or uniform on that grid. Its environment seed controls the sequence, which never depends on learner actions or the learner seed.

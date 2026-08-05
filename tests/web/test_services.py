@@ -16,6 +16,7 @@ from web.jobs import JobManager, ServiceBusyError
 from web.presentations import GAME_PRESENTATIONS
 from web.result_groups import aggregate_result_summaries
 from web.services import DashboardService
+from tests.web.support import create_service, wait_for_async_result, wait_for_job
 from experimental.equilibrium_trajectory.web_models import (
     comparison_member_colors,
     stable_member_color,
@@ -23,31 +24,10 @@ from experimental.equilibrium_trajectory.web_models import (
 from web.validation import ExperimentForm
 
 
-def create_service(tmp_path: Path) -> DashboardService:
-    service = DashboardService(
-        results_dir=tmp_path,
-        raw_dir=tmp_path / "raw",
-        figure_dir=tmp_path / "figures",
-        custom_game_dir=tmp_path / "custom-games",
-    )
-    service._publish_plots = lambda game_name=None: None
-    return service
-
-
 def write_figure_pair(output_path, content: bytes) -> None:
     output_path = Path(output_path)
     output_path.write_bytes(content)
     output_path.with_suffix(".pdf").write_bytes(content)
-
-
-def wait_for_job(service: DashboardService, job_id: str) -> str:
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        job = service.jobs.get(job_id)
-        if job is not None and job.status in {"succeeded", "failed", "cancelled"}:
-            return job.status
-        time.sleep(0.01)
-    raise AssertionError(f"job {job_id} did not finish")
 
 
 def wait_for_trajectory_comparison(
@@ -57,18 +37,18 @@ def wait_for_trajectory_comparison(
     focus_final_interval: bool = False,
     comparison_view: str = "geometry",
 ):
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        result, error = service.experimental_trajectory.request(
+    return wait_for_async_result(
+        lambda: service.experimental_trajectory.request(
             group_ids,
             final_interval_segments,
             focus_final_interval,
             comparison_view,
         )
-        if result is not None or error is not None:
-            return result, error
-        time.sleep(0.01)
-    raise AssertionError("trajectory comparison did not finish")
+    )
+
+
+def wait_for_equilibrium_figure(request_figure):
+    return wait_for_async_result(request_figure, timeout=3)
 
 
 def experiment_form() -> ExperimentForm:
@@ -137,18 +117,8 @@ def test_job_manager_runs_queued_operations_in_submission_order() -> None:
     assert manager.reserved_resources() == {"first-run", "second-run"}
     release_first.set()
 
-    terminal_statuses = {}
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        terminal_statuses = {
-            job_id: manager.get(job_id).status
-            for job_id in (first.id, second.id)
-        }
-        if set(terminal_statuses.values()) == {"succeeded"}:
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError(f"queued jobs did not complete: {terminal_statuses}")
+    assert wait_for_job(manager, first.id) == "succeeded"
+    assert wait_for_job(manager, second.id) == "succeeded"
 
     assert execution_order == ["first", "second"]
     assert manager.reserved_resources() == set()
@@ -174,13 +144,8 @@ def test_cancelling_queued_job_releases_its_reserved_resources() -> None:
     assert manager.get(queued.id).status == "cancelled"
     assert manager.get(replacement.id).status == "queued"
     release_first.set()
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        if manager.get(first.id).status == "succeeded" and manager.get(replacement.id).status == "succeeded":
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("replacement job did not complete")
+    assert wait_for_job(manager, first.id) == "succeeded"
+    assert wait_for_job(manager, replacement.id) == "succeeded"
 
 
 def test_maintenance_remains_blocked_while_jobs_are_queued() -> None:
@@ -199,13 +164,7 @@ def test_maintenance_remains_blocked_while_jobs_are_queued() -> None:
         manager.run_maintenance(lambda: None)
 
     release.set()
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        if manager.get(job.id).status == "succeeded":
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("active job did not complete")
+    assert wait_for_job(manager, job.id) == "succeeded"
 
 
 def test_job_manager_records_and_logs_failures(caplog) -> None:
@@ -216,14 +175,8 @@ def test_job_manager_records_and_logs_failures(caplog) -> None:
         raise RuntimeError("failed operation")
 
     job = manager.submit("failure", operation)
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        failed_job = manager.get(job.id)
-        if failed_job is not None and failed_job.status == "failed":
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("job did not fail")
+    assert wait_for_job(manager, job.id) == "failed"
+    failed_job = manager.get(job.id)
 
     assert failed_job.message == "RuntimeError: failed operation"
     assert "Dashboard job" in caplog.text
@@ -244,14 +197,8 @@ def test_job_manager_reports_progress_and_cancels() -> None:
     assert started.wait(timeout=1)
     manager.cancel(submitted.id)
 
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        job = manager.get(submitted.id)
-        if job.status == "cancelled":
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("job was not cancelled")
+    assert wait_for_job(manager, submitted.id) == "cancelled"
+    job = manager.get(submitted.id)
 
     assert job.completed == 1
     assert job.total == 4
@@ -622,7 +569,7 @@ def test_replicate_group_joint_action_heatmap_is_generated_and_cached(tmp_path: 
 
 def test_custom_zero_sum_joint_action_heatmap_uses_saved_game(tmp_path: Path) -> None:
     service = create_service(tmp_path)
-    definition = service.create_custom_game("Joint Actions", 2, [2, 3], 7, "zero_sum")
+    definition = service.create_custom_game("Joint Actions", 2, [3, 3], 7, "zero_sum")
     result_path = run_full_information_cross_play_experiment(
         definition.id,
         ["hedge", "hedge"],
@@ -657,19 +604,18 @@ def test_equilibrium_convergence_figures_share_computation_and_use_paired_cache(
         fake_plot,
     )
 
-    first = service.equilibrium_convergence_figures(result_path.name)
-    timestamps = {name: path.stat().st_mtime_ns for name, path in first.items()}
-    second = service.equilibrium_convergence_figures(result_path.name)
+    request_figure = lambda: service.request_equilibrium_convergence_figure(result_path.name)
+    first_path, first_error = wait_for_equilibrium_figure(request_figure)
+    second_path, second_error = wait_for_equilibrium_figure(request_figure)
 
     assert calls == 1
-    assert first == second
-    assert set(second) == {"distance"}
-    assert {name: path.stat().st_mtime_ns for name, path in second.items()} == timestamps
-    assert second["distance"].read_bytes() == b"distance"
-    assert second["distance"].with_suffix(".pdf").read_bytes() == b"distance"
+    assert first_error is second_error is None
+    assert first_path == second_path
+    assert first_path.read_bytes() == b"distance"
+    assert first_path.with_suffix(".pdf").read_bytes() == b"distance"
 
     service.clear_results()
-    assert not any(path.exists() for path in second.values())
+    assert not first_path.exists()
 
 
 def test_replicate_group_equilibrium_figures_share_computation_and_use_paired_cache(tmp_path: Path, monkeypatch) -> None:
@@ -693,17 +639,16 @@ def test_replicate_group_equilibrium_figures_share_computation_and_use_paired_ca
         fake_plot,
     )
 
-    first = service.group_equilibrium_convergence_figures(group_id)
-    timestamps = {name: path.stat().st_mtime_ns for name, path in first.items()}
-    second = service.group_equilibrium_convergence_figures(group_id)
+    request_figure = lambda: service.request_group_equilibrium_convergence_figure(group_id)
+    first_path, first_error = wait_for_equilibrium_figure(request_figure)
+    second_path, second_error = wait_for_equilibrium_figure(request_figure)
 
     assert len(received_paths) == 2
     assert {path.name for path in received_paths} == set(service.result_snapshot().filenames)
-    assert first == second
-    assert set(second) == {"distance"}
-    assert {name: path.stat().st_mtime_ns for name, path in second.items()} == timestamps
-    assert second["distance"].read_bytes() == b"mean distance"
-    assert second["distance"].with_suffix(".pdf").read_bytes() == b"mean distance"
+    assert first_error is second_error is None
+    assert first_path == second_path
+    assert first_path.read_bytes() == b"mean distance"
+    assert first_path.with_suffix(".pdf").read_bytes() == b"mean distance"
 
 
 def test_core_distance_generation_does_not_load_experimental_trajectory(
@@ -730,16 +675,13 @@ def test_core_distance_generation_does_not_load_experimental_trajectory(
     )
 
     assert service._experimental_trajectory_dashboard is None
-    generated = service.equilibrium_convergence_figures(result_path.name)
+    generated, error = wait_for_equilibrium_figure(
+        lambda: service.request_equilibrium_convergence_figure(result_path.name)
+    )
 
     assert calls == 1
-    assert set(generated) == {"distance"}
-    assert service._experimental_trajectory_dashboard is None
-    with pytest.raises(ValueError, match="unknown equilibrium convergence"):
-        service.request_equilibrium_convergence_figure(
-            result_path.name,
-            "trajectory",
-        )
+    assert error is None
+    assert generated is not None
     assert service._experimental_trajectory_dashboard is None
 
 
@@ -1027,32 +969,22 @@ def test_equilibrium_distance_is_available_before_projected_regions_finish(tmp_p
     )
     assert trajectory_started.wait(timeout=1)
 
-    first_path, first_error = service.request_equilibrium_convergence_figure(result_path.name, "distance")
+    first_path, first_error = service.request_equilibrium_convergence_figure(result_path.name)
     assert (first_path, first_error) == (None, None)
 
-    deadline = time.monotonic() + 1
-    while time.monotonic() < deadline:
-        distance_path, distance_error = service.request_equilibrium_convergence_figure(result_path.name, "distance")
-        if distance_path is not None:
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("distance figure did not finish")
+    distance_path, distance_error = wait_for_async_result(
+        lambda: service.request_equilibrium_convergence_figure(result_path.name),
+        timeout=1,
+    )
     assert distance_error is None
     assert distance_path is not None
     assert distance_path.read_bytes() == b"distance"
 
     release_trajectory.set()
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        result, trajectory_error = service.experimental_trajectory.request(
-            [group_id]
-        )
-        if result is not None:
-            break
-        time.sleep(0.01)
-    else:
-        raise AssertionError("trajectory figure did not finish")
+    result, trajectory_error = wait_for_async_result(
+        lambda: service.experimental_trajectory.request([group_id]),
+        timeout=2,
+    )
     assert trajectory_error is None
     assert result.output_path.read_bytes() == b"trajectory"
 

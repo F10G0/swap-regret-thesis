@@ -98,8 +98,6 @@ class ResultIndex:
             "algorithm_profile": list(algorithm_profile),
             "player_algorithm": result_player_algorithm(row),
             "co_player_algorithms": [algorithm for position, algorithm in enumerate(algorithm_profile) if position != player],
-            "algorithm_player_0": algorithm_profile[0],
-            "algorithm_player_1": algorithm_profile[1],
             "horizon": int(row["horizon"]),
         }
         for field in SUMMARY_REGRET_FIELDS:

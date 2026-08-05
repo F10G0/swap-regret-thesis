@@ -18,8 +18,6 @@ def summary(replicate: int, player: int, regret: float) -> dict:
         "algorithm_profile": ["exp3", "exp3"],
         "player_algorithm": "exp3",
         "co_player_algorithms": ["exp3"],
-        "algorithm_player_0": "exp3",
-        "algorithm_player_1": "exp3",
         "horizon": 100,
         "average_realized_external_regret": regret,
     }

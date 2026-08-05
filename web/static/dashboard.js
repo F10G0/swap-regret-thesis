@@ -32,21 +32,11 @@ function gamePresentation(game) {
 function saveFormState() {
     const state = Object.fromEntries(formFieldIds.map((id) => [id, element(id)?.value ?? ""]));
     state.algorithmNames = playerAlgorithmSelects().map((select) => select.value);
-    try {
-        window.localStorage.setItem(formStorageKey, JSON.stringify(state));
-    } catch (error) {
-        console.warn("Could not save experiment parameters", error);
-    }
+    saveLocalJson(formStorageKey, state, "experiment parameters");
 }
 
 function restoreFormState() {
-    let state;
-    try {
-        state = JSON.parse(window.localStorage.getItem(formStorageKey));
-    } catch (error) {
-        console.warn("Could not restore experiment parameters", error);
-        return;
-    }
+    const state = restoreLocalJson(formStorageKey, "experiment parameters");
     if (!state) {
         return;
     }
@@ -237,21 +227,11 @@ function selectedFilter(id) {
 
 function saveFilterState() {
     const state = Object.fromEntries(filterFieldIds.map((id) => [id, element(id)?.value ?? ""]));
-    try {
-        window.localStorage.setItem(filterStorageKey, JSON.stringify(state));
-    } catch (error) {
-        console.warn("Could not save result filters", error);
-    }
+    saveLocalJson(filterStorageKey, state, "result filters");
 }
 
 function restoreFilterState() {
-    let state;
-    try {
-        state = JSON.parse(window.localStorage.getItem(filterStorageKey));
-    } catch (error) {
-        console.warn("Could not restore result filters", error);
-        return;
-    }
+    const state = restoreLocalJson(filterStorageKey, "result filters");
     if (!state) {
         return;
     }

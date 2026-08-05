@@ -18,11 +18,15 @@ class ExperimentForm:
 
 @dataclass(frozen=True)
 class AdversarialExperimentForm:
+    environment: str
+    initialization_mode: str
+    feedback_mode: str
     algorithm_name: str
     n_actions: int
     memory_window: int
     horizon: int
-    seed: int
+    environment_seed: int
+    learner_seed: int
 
 
 def parse_positive_integer(
@@ -68,22 +72,15 @@ def _form_algorithm_names(values: Mapping[str, str]) -> tuple[str, ...]:
     getlist = getattr(values, "getlist", None)
     if getlist is not None:
         names = tuple(getlist("algorithm_names"))
-        if names:
-            return names
-    generic = values.get("algorithm_names")
-    if isinstance(generic, (list, tuple)):
-        return tuple(generic)
-    if generic:
-        return (generic,)
-
-    names = []
-    player = 0
-    while f"algorithm_player_{player}" in values:
-        names.append(values[f"algorithm_player_{player}"])
-        player += 1
+    else:
+        value = values.get("algorithm_names")
+        if isinstance(value, (list, tuple)):
+            names = tuple(value)
+        else:
+            names = (value,) if value else ()
     if not names:
         raise ValueError("missing form field: algorithm_names")
-    return tuple(names)
+    return names
 
 
 def parse_experiment_form(
@@ -139,22 +136,34 @@ def parse_experiment_form(
 
 def parse_adversarial_experiment_form(
     values: Mapping[str, str],
-    algorithms: set[str] | list[str] | tuple[str, ...],
+    algorithms_by_feedback_mode: Mapping[str, list[str]],
+    environments: set[str],
+    initialization_modes: set[str],
     max_actions: int,
     max_horizon: int,
 ) -> AdversarialExperimentForm:
     try:
+        environment = values["environment"]
+        feedback_mode = values["feedback_mode"]
         algorithm_name = values["algorithm_name"]
         n_actions = values["n_actions"]
-        memory_window = values["memory_window"]
         horizon = values["horizon"]
-        seed = values["seed"]
+        learner_seed = values["learner_seed"]
     except KeyError as error:
         raise ValueError(f"missing form field: {error.args[0]}") from error
 
-    if algorithm_name not in algorithms:
+    initialization_mode = values.get("initialization_mode", "centered")
+    memory_window = values.get("memory_window", "0")
+    environment_seed = values.get("environment_seed", "0")
+    if environment not in environments:
+        raise ValueError(f"unknown adversarial environment: {environment}")
+    if initialization_mode not in initialization_modes:
+        raise ValueError(f"unknown initialization mode: {initialization_mode}")
+    if feedback_mode not in algorithms_by_feedback_mode:
+        raise ValueError(f"unknown feedback mode: {feedback_mode}")
+    if algorithm_name not in algorithms_by_feedback_mode[feedback_mode]:
         raise ValueError(
-            f"algorithm {algorithm_name} is not available for the adversarial environment"
+            f"algorithm {algorithm_name} is not available for {feedback_mode}"
         )
     action_count = parse_positive_integer(
         n_actions,
@@ -167,9 +176,16 @@ def parse_adversarial_experiment_form(
     if window > max_horizon:
         raise ValueError(f"memory window must not exceed {max_horizon}")
     return AdversarialExperimentForm(
+        environment=environment,
+        initialization_mode=initialization_mode,
+        feedback_mode=feedback_mode,
         algorithm_name=algorithm_name,
         n_actions=action_count,
         memory_window=window,
         horizon=parse_positive_integer(horizon, "horizon", max_horizon),
-        seed=parse_non_negative_integer(seed, "seed"),
+        environment_seed=parse_non_negative_integer(
+            environment_seed,
+            "environment seed",
+        ),
+        learner_seed=parse_non_negative_integer(learner_seed, "learner seed"),
     )

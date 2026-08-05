@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{% set current_algorithms = algorithms_by_feedback_mode.get(
+    form_state.feedback_mode,
+    algorithms_by_feedback_mode["full_information"]
+) %}
+
 {% block title %}Adversarial Stress Test · Swap Regret{% endblock %}
 
 {% block content %}
@@ -8,7 +13,7 @@
             <div class="brand">
                 <p class="eyebrow">One-player stress test</p>
                 <h1>Adversarial</h1>
-                <p>Test full-information learners against an adaptive but non-anticipating payoff sequence.</p>
+                <p>Test learners against either an adaptive adversary or an action-independent reward process.</p>
             </div>
 
             {% if inline_error %}
@@ -19,16 +24,44 @@
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 
                 <div class="field">
-                    <label for="adversarial-algorithm">Learner algorithm</label>
-                    <select id="adversarial-algorithm" name="algorithm_name" required>
-                        {% for algorithm in algorithms %}
-                            <option value="{{ algorithm }}" {% if algorithm == form_state.algorithm_name %}selected{% endif %}>{{ algorithm_labels[algorithm] }}</option>
+                    <label for="adversarial-environment">Environment</label>
+                    <select id="adversarial-environment" name="environment" required>
+                        {% for environment, label in adversarial_environments.items() %}
+                            <option value="{{ environment }}" {% if environment == form_state.environment %}selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                     </select>
-                    <span class="hint">Only full-information algorithms are applicable because every round returns a payoff vector.</span>
+                </div>
+
+                <div id="adversarial-initialization-field" class="field">
+                    <label for="adversarial-initialization">Initialization</label>
+                    <select id="adversarial-initialization" name="initialization_mode" required>
+                        {% for mode, label in initialization_modes.items() %}
+                            <option value="{{ mode }}" {% if mode == form_state.initialization_mode %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
 
                 <div class="field">
+                    <label for="adversarial-feedback-mode">Feedback</label>
+                    <select id="adversarial-feedback-mode" name="feedback_mode" required>
+                        {% for mode, label in feedback_modes.items() %}
+                            <option value="{{ mode }}" {% if mode == form_state.feedback_mode %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="hint">Choose whether the learner receives the full payoff vector or only its sampled payoff.</span>
+                </div>
+
+                <div class="field">
+                    <label for="adversarial-algorithm">Learner algorithm</label>
+                    <select id="adversarial-algorithm" name="algorithm_name" required>
+                        {% for algorithm in current_algorithms %}
+                            <option value="{{ algorithm }}" {% if algorithm == form_state.algorithm_name %}selected{% endif %}>{{ algorithm_labels[algorithm] }}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="hint">The available learners follow the selected feedback mode.</span>
+                </div>
+
+                <div id="adversarial-memory-field" class="field">
                     <label for="adversarial-memory-window">Memory window</label>
                     <input id="adversarial-memory-window" name="memory_window" type="number" value="{{ form_state.memory_window }}" min="0" max="{{ max_horizon }}" required>
                     <span class="hint">Number of previous rounds used by the adversary; 0 means full history.</span>
@@ -45,9 +78,15 @@
                     </div>
                 </div>
 
-                <div class="field">
-                    <label for="adversarial-seed">Seed</label>
-                    <input id="adversarial-seed" name="seed" type="number" value="{{ form_state.seed }}" min="0" required>
+                <div class="field-grid field-grid-two">
+                    <div id="adversarial-environment-seed-field" class="field">
+                        <label for="adversarial-environment-seed">Environment seed</label>
+                        <input id="adversarial-environment-seed" name="environment_seed" type="number" value="{{ form_state.environment_seed }}" min="0" required>
+                    </div>
+                    <div class="field">
+                        <label for="adversarial-learner-seed">Learner seed</label>
+                        <input id="adversarial-learner-seed" name="learner_seed" type="number" value="{{ form_state.learner_seed }}" min="0" required>
+                    </div>
                 </div>
 
                 <div class="button-stack">
@@ -91,11 +130,18 @@
                 </section>
             {% endif %}
 
-            <section class="panel adversarial-rule" aria-labelledby="adversarial-rule-heading">
+            <section id="historical-frequency-rule" class="panel adversarial-rule" aria-labelledby="historical-frequency-rule-heading">
                 <p class="eyebrow">Environment rule</p>
-                <h2 id="adversarial-rule-heading">Punish the historical leader</h2>
+                <h2 id="historical-frequency-rule-heading">Punish the historical leader</h2>
                 <p>Before round <em>t</em>, the most frequent action in the selected past window receives payoff 0. Every other action receives payoff 1. Ties rotate deterministically across the tied actions.</p>
-                <p class="hint">The current sampled action is never used to construct its own payoff vector. Average regret, rather than cumulative regret, is expected to approach zero.</p>
+                <p class="hint">The current sampled action is never used to construct its own payoff vector. Bandit learners observe only the sampled payoff; the full vector is retained solely for offline regret evaluation.</p>
+            </section>
+
+            <section id="random-walk-rule" class="panel adversarial-rule" aria-labelledby="random-walk-rule-heading">
+                <p class="eyebrow">Environment rule</p>
+                <h2 id="random-walk-rule-heading">Independent lazy reward walks</h2>
+                <p>Each action follows its own precomputed random walk on the grid 0, 0.1, …, 1. Interior rewards move down, stay, or move up with equal probability; boundaries stay or move inward with equal probability.</p>
+                <p class="hint">The complete reward sequence depends only on the environment seed and never on learner actions. The learner seed controls only action sampling.</p>
             </section>
 
             <section class="panel jobs-panel" aria-labelledby="adversarial-jobs-heading" aria-live="polite" {% if not jobs %}hidden{% endif %}>
@@ -144,7 +190,7 @@
                                 <article class="figure-card">
                                     <h3>{% if figure.view == "average" %}Average {{ figure.regret }}{% else %}{{ figure.regret | title }} / sqrt(t){% endif %} · {{ figure.n_actions }} actions</h3>
                                     <a href="{{ figure.url }}">
-                                        <img src="{{ figure.url }}" alt="{{ source }} {{ figure.regret }} regret, {{ figure.view }}, against the historical-frequency adversary with {{ figure.n_actions }} actions" loading="lazy">
+                                        <img src="{{ figure.url }}" alt="{{ source }} {{ figure.regret }} regret, {{ figure.view }}, with {{ figure.n_actions }} actions" loading="lazy">
                                     </a>
                                     <a href="{{ figure.pdf_url or figure.url }}" download="{{ figure.pdf_filename or figure.filename }}">Download {{ "PDF" if figure.pdf_url else "PNG" }}</a>
                                 </article>
@@ -167,9 +213,9 @@
                             {% for figure in behavior_figures %}
                                 <article class="figure-card">
                                     <h3>{{ figure.diagnostic_label }}</h3>
-                                    <p>{{ figure.algorithm_label }} · {{ figure.memory_label }} · {{ figure.n_actions }} actions</p>
+                                    <p>{{ figure.algorithm_label }} · {{ figure.feedback_label }} · {{ figure.environment_label }} · {{ figure.environment_detail }} · {{ figure.n_actions }} actions</p>
                                     <a href="{{ figure.url }}">
-                                        <img src="{{ figure.url }}" alt="{{ figure.diagnostic_label }} for {{ figure.algorithm_label }} with {{ figure.memory_label | lower }}" loading="lazy">
+                                        <img src="{{ figure.url }}" alt="{{ figure.diagnostic_label }} for {{ figure.algorithm_label }} in {{ figure.environment_label }}" loading="lazy">
                                     </a>
                                     <a href="{{ figure.pdf_url or figure.url }}" download="{{ figure.pdf_filename or figure.filename }}">Download {{ "PDF" if figure.pdf_url else "PNG" }}</a>
                                 </article>
@@ -193,10 +239,13 @@
                             <thead>
                                 <tr>
                                     <th>Learner</th>
+                                    <th>Environment</th>
+                                    <th>Feedback</th>
                                     <th>Actions</th>
-                                    <th>Memory</th>
+                                    <th>Configuration</th>
                                     <th>Horizon</th>
-                                    <th>Seed</th>
+                                    <th>Environment seed</th>
+                                    <th>Learner seed</th>
                                     <th>Target</th>
                                     <th>Expected</th>
                                     <th>Realized</th>
@@ -207,10 +256,13 @@
                                 {% for row in summaries %}
                                     <tr>
                                         <td>{{ row.algorithm_label }}</td>
+                                        <td>{{ row.environment_label }}</td>
+                                        <td>{{ row.feedback_label }}</td>
                                         <td>{{ row.n_actions }}</td>
-                                        <td>{{ row.memory_label }}</td>
+                                        <td>{{ row.environment_detail }}</td>
                                         <td>{{ row.horizon }}</td>
-                                        <td>{{ row.seed }}</td>
+                                        <td>{{ row.environment_seed if row.environment_seed is not none else "—" }}</td>
+                                        <td>{{ row.learner_seed }}</td>
                                         <td>{{ row.target_regret }}</td>
                                         <td>{{ "%.6f" | format(row.expected_regret) }}</td>
                                         <td>{{ "%.6f" | format(row.realized_regret) }}</td>
@@ -229,5 +281,11 @@
 {% endblock %}
 
 {% block scripts %}
+    <script id="adversarial-data" type="application/json">{{ {
+        "algorithms": algorithms_by_feedback_mode,
+        "algorithmLabels": algorithm_labels,
+        "historicalEnvironment": historical_frequency_environment,
+        "randomWalkEnvironment": random_walk_environment
+    } | tojson }}</script>
     <script src="{{ url_for('static', filename='adversarial.js') }}" defer></script>
 {% endblock %}

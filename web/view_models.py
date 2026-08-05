@@ -1,7 +1,14 @@
 from flask import current_app, url_for
 
 from config import SEED
-from experiments.scenarios.adversarial import MAX_ADVERSARIAL_ACTIONS
+from experiments.scenarios.adversarial import (
+    ENVIRONMENT_LABELS,
+    FEEDBACK_MODE_LABELS,
+    HISTORICAL_FREQUENCY_ENVIRONMENT,
+    INITIALIZATION_LABELS,
+    MAX_ADVERSARIAL_ACTIONS,
+    RANDOM_WALK_ENVIRONMENT,
+)
 from experiments.game_catalog import (
     CUSTOM_PAYOFF_STRUCTURES,
     MAX_CUSTOM_ACTIONS_PER_PLAYER,
@@ -10,22 +17,33 @@ from experiments.game_catalog import (
 )
 from web.result_groups import aggregate_result_summaries
 from web.services import DashboardService
-from web.experiment_modes import REGRET_EVALUATIONS
+from web.experiment_modes import REGRET_EVALUATION_LABELS
 
 
-def figure_data(service: DashboardService) -> list[dict]:
-    figures = []
-    for figure in service.figure_records():
-        figures.append({
+def _figure_data(records: list[dict], endpoint: str) -> list[dict]:
+    return [
+        {
             **figure,
-            "url": url_for("dashboard.serve_figure", filename=figure["filename"]),
+            "url": url_for(endpoint, filename=figure["filename"]),
             "pdf_url": (
-                url_for("dashboard.serve_figure", filename=figure["pdf_filename"])
+                url_for(endpoint, filename=figure["pdf_filename"])
                 if figure["pdf_filename"]
                 else None
             ),
-        })
-    return figures
+        }
+        for figure in records
+    ]
+
+
+def figure_data(service: DashboardService) -> list[dict]:
+    return _figure_data(service.figure_records(), "dashboard.serve_figure")
+
+
+def _recent_jobs(service: DashboardService) -> list[dict]:
+    return [
+        {**job.public_data(), "url": url_for("dashboard.job_status", job_id=job.id)}
+        for job in service.jobs.recent()[:5]
+    ]
 
 
 def _equilibrium_figure_data(service: DashboardService) -> dict[str, dict[str, dict[str, str]]]:
@@ -87,7 +105,6 @@ def dashboard_context(
             ),
         })
 
-    jobs = service.jobs.recent()[:5]
     return {
         "games": service.games,
         "game_definitions": {game_id: definition.public_data() for game_id, definition in game_definitions.items()},
@@ -95,7 +112,7 @@ def dashboard_context(
         "custom_games": [game_id for game_id, definition in game_definitions.items() if definition.source == "custom"],
         "game_presentations": service.game_presentations,
         "feedback_modes": service.feedback_modes,
-        "regret_evaluations": REGRET_EVALUATIONS,
+        "regret_evaluations": REGRET_EVALUATION_LABELS,
         "algorithms_by_feedback_mode": service.algorithms_by_feedback_mode,
         "algorithm_labels": service.algorithm_labels,
         "experiments": results.filenames,
@@ -103,7 +120,7 @@ def dashboard_context(
         "equilibrium_figures": _equilibrium_figure_data(service),
         "summaries": summaries,
         "warnings": results.warnings,
-        "jobs": [{**job.public_data(), "url": url_for("dashboard.job_status", job_id=job.id)} for job in jobs],
+        "jobs": _recent_jobs(service),
         "busy": service.jobs.is_busy(),
         "form_state": form_state or service.default_form_state(),
         "inline_error": inline_error,
@@ -119,23 +136,14 @@ def adversarial_context(
     inline_error: str | None = None,
 ) -> dict:
     summaries, warnings = service.adversarial_result_summaries()
-    figures = [
-        {
-            **record,
-            "url": url_for(
-                "dashboard.adversarial_figure",
-                filename=record["filename"],
-            ),
-            "pdf_url": (
-                url_for("dashboard.adversarial_figure", filename=record["pdf_filename"])
-                if record["pdf_filename"]
-                else None
-            ),
-        }
-        for record in service.adversarial_figure_records()
-    ]
+    figures = _figure_data(service.adversarial_figure_records(), "dashboard.adversarial_figure")
     return {
-        "algorithms": service.adversarial_algorithms,
+        "adversarial_environments": ENVIRONMENT_LABELS,
+        "initialization_modes": INITIALIZATION_LABELS,
+        "random_walk_environment": RANDOM_WALK_ENVIRONMENT,
+        "historical_frequency_environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
+        "feedback_modes": FEEDBACK_MODE_LABELS,
+        "algorithms_by_feedback_mode": service.adversarial_algorithms_by_feedback_mode,
         "algorithm_labels": service.algorithm_labels,
         "form_state": form_state or service.default_adversarial_form_state(),
         "inline_error": inline_error,
@@ -151,13 +159,7 @@ def adversarial_context(
         ],
         "figures": figures,
         "warnings": warnings,
-        "jobs": [
-            {
-                **job.public_data(),
-                "url": url_for("dashboard.job_status", job_id=job.id),
-            }
-            for job in service.jobs.recent()[:5]
-        ],
+        "jobs": _recent_jobs(service),
         "busy": service.jobs.is_busy(),
         "max_actions": MAX_ADVERSARIAL_ACTIONS,
         "max_horizon": current_app.config["MAX_HORIZON"],

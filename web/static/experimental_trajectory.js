@@ -42,14 +42,7 @@ function finalIntervalSegments() {
 }
 
 function saveFinalIntervalSegments() {
-    try {
-        window.localStorage.setItem(
-            finalIntervalSegmentsStorageKey,
-            String(finalIntervalSegments()),
-        );
-    } catch (error) {
-        console.warn("Could not save final-interval segments", error);
-    }
+    saveLocalValue(finalIntervalSegmentsStorageKey, String(finalIntervalSegments()), "final-interval segments");
 }
 
 function restoreFinalIntervalSegments() {
@@ -57,15 +50,9 @@ function restoreFinalIntervalSegments() {
     if (!input) {
         return;
     }
-    try {
-        const stored = window.localStorage.getItem(
-            finalIntervalSegmentsStorageKey,
-        );
-        if (stored !== null) {
-            input.value = stored;
-        }
-    } catch (error) {
-        console.warn("Could not restore final-interval segments", error);
+    const stored = restoreLocalValue(finalIntervalSegmentsStorageKey, "final-interval segments");
+    if (stored !== null) {
+        input.value = stored;
     }
     finalIntervalSegments();
 }
@@ -75,17 +62,7 @@ function focusFinalInterval() {
 }
 
 function saveFocusFinalInterval() {
-    try {
-        window.localStorage.setItem(
-            focusFinalIntervalStorageKey,
-            focusFinalInterval() ? "1" : "0",
-        );
-    } catch (error) {
-        console.warn(
-            "Could not save final-interval focus preference",
-            error,
-        );
-    }
+    saveLocalValue(focusFinalIntervalStorageKey, focusFinalInterval() ? "1" : "0", "final-interval focus preference");
 }
 
 function restoreFocusFinalInterval() {
@@ -93,16 +70,7 @@ function restoreFocusFinalInterval() {
     if (!input) {
         return;
     }
-    try {
-        input.checked = window.localStorage.getItem(
-            focusFinalIntervalStorageKey,
-        ) === "1";
-    } catch (error) {
-        console.warn(
-            "Could not restore final-interval focus preference",
-            error,
-        );
-    }
+    input.checked = restoreLocalValue(focusFinalIntervalStorageKey, "final-interval focus preference") === "1";
 }
 
 function trajectoryComparisonView() {
@@ -110,14 +78,7 @@ function trajectoryComparisonView() {
 }
 
 function saveTrajectoryComparisonView() {
-    try {
-        window.localStorage.setItem(
-            trajectoryComparisonViewStorageKey,
-            trajectoryComparisonView(),
-        );
-    } catch (error) {
-        console.warn("Could not save trajectory-comparison view", error);
-    }
+    saveLocalValue(trajectoryComparisonViewStorageKey, trajectoryComparisonView(), "trajectory-comparison view");
 }
 
 function restoreTrajectoryComparisonView() {
@@ -125,19 +86,9 @@ function restoreTrajectoryComparisonView() {
     if (!select) {
         return;
     }
-    try {
-        const stored = window.localStorage.getItem(
-            trajectoryComparisonViewStorageKey,
-        );
-        if (
-            [...select.options].some(
-                (option) => option.value === stored,
-            )
-        ) {
-            select.value = stored;
-        }
-    } catch (error) {
-        console.warn("Could not restore trajectory-comparison view", error);
+    const stored = restoreLocalValue(trajectoryComparisonViewStorageKey, "trajectory-comparison view");
+    if ([...select.options].some((option) => option.value === stored)) {
+        select.value = stored;
     }
 }
 

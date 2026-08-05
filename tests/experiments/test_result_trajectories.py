@@ -30,10 +30,7 @@ def test_result_loader_keeps_three_player_profiles_and_final_rows(
         "stationary_method": "solve",
         "game": "test_three_player",
         "algorithm": "test",
-        "n_players": 3,
         "algorithm_profile": '["test","test","test"]',
-        "algorithm_player_0": "test",
-        "algorithm_player_1": "test",
         "horizon": 2,
     })
     profiles = [(0, 2, 1), (1, 0, 0)]

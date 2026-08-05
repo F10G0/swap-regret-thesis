@@ -92,9 +92,6 @@ class ExperimentSpec:
             "replicate": self.replicate,
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
-            "n_players": len(self.algorithm_names),
             "algorithm_profile": json.dumps(self.algorithm_names, separators=(",", ":")),
-            "algorithm_player_0": self.algorithm_names[0],
-            "algorithm_player_1": self.algorithm_names[1],
             "horizon": self.horizon,
         }

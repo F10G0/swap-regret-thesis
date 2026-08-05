@@ -37,8 +37,6 @@ def write_result(path, spec: ExperimentSpec) -> None:
         {
             "game": spec.game_name,
             "algorithm": spec.algorithm_profile_name,
-            "algorithm_player_0": spec.algorithm_names[0],
-            "algorithm_player_1": spec.algorithm_names[1],
             "horizon": spec.horizon,
         }
     )
@@ -53,7 +51,6 @@ def write_result(path, spec: ExperimentSpec) -> None:
                     | {
                         "t": time,
                         "player": player,
-                        "player_algorithm": spec.algorithm_names[player],
                     }
                 )
 

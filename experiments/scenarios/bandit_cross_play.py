@@ -3,7 +3,7 @@ from pathlib import Path
 
 from algorithms.external_regret import Exp3, Exp3IX
 from algorithms.swap_regret import BanditBM, BanditIto, LCEIX
-from config import BANDIT_REPLICATES, CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
+from config import CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
 from environments import BanditRepeatedGame
 from experiments.scenarios.cross_play import AlgorithmFactory, run_cross_play_experiment
 
@@ -23,16 +23,3 @@ def run_bandit_cross_play_experiment(game_name: str, algorithm_names: list[str],
     return run_cross_play_experiment(game_name=game_name, feedback_mode="bandit", algorithm_names=algorithm_names, horizon=horizon, seed=seed, replicate=replicate,
                                      environment_factory=BanditRepeatedGame, algorithm_registry=ALGORITHMS, output_dir=RAW_DIR if output_dir is None else output_dir,
                                      should_cancel=should_cancel, custom_game_dir=custom_game_dir, regret_evaluation=regret_evaluation)
-
-
-def run_bandit_cross_play_replicates(game_name: str, algorithm_names: list[str], n_replicates: int = BANDIT_REPLICATES, horizon: int = HORIZON, seed: int = SEED,
-                                     output_dir: str | Path | None = None, custom_game_dir: str | Path = CUSTOM_GAME_DIR,
-                                     regret_evaluation: str = "feedback_aligned") -> list[Path]:
-    if n_replicates <= 0:
-        raise ValueError("n_replicates must be positive")
-
-    return [
-        run_bandit_cross_play_experiment(game_name=game_name, algorithm_names=algorithm_names, horizon=horizon, seed=seed, replicate=replicate, output_dir=output_dir,
-                                         custom_game_dir=custom_game_dir, regret_evaluation=regret_evaluation)
-        for replicate in range(n_replicates)
-    ]

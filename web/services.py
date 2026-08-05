@@ -36,11 +36,13 @@ from experiments.plots import (
 from experiments.results import iter_result_rows
 from experiments.spec import ExperimentSpec
 from experiments.scenarios.adversarial import (
-    ALGORITHMS as ADVERSARIAL_ALGORITHMS,
+    ALGORITHMS_BY_FEEDBACK_MODE as ADVERSARIAL_ALGORITHMS_BY_FEEDBACK_MODE,
     AdversarialExperimentSpec,
+    ENVIRONMENT_LABELS,
+    FEEDBACK_MODE_LABELS,
+    HISTORICAL_FREQUENCY_ENVIRONMENT,
     TARGET_REGRET_BY_ALGORITHM,
-    adversarial_memory_label,
-    adversarial_memory_window,
+    adversarial_environment_detail,
     load_final_adversarial_row,
     run_adversarial_experiment,
 )
@@ -60,7 +62,16 @@ from web.validation import (
 
 
 logger = logging.getLogger(__name__)
-EQUILIBRIUM_DISTANCE_FIGURE = "distance"
+
+
+def _publish_figure_files(source_paths: list[Path], output_dir: Path, filename_prefix: str | None = None) -> None:
+    generated_names = {path.name for path in source_paths}
+    for path in source_paths:
+        os.replace(path, output_dir / path.name)
+    for path in output_dir.iterdir():
+        matches_prefix = filename_prefix is None or path.name.startswith(filename_prefix)
+        if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES and matches_prefix and path.name not in generated_names:
+            path.unlink()
 
 
 class PlotUpdateError(RuntimeError):
@@ -251,8 +262,11 @@ class DashboardService:
         }
 
     @property
-    def adversarial_algorithms(self) -> list[str]:
-        return list(ADVERSARIAL_ALGORITHMS)
+    def adversarial_algorithms_by_feedback_mode(self) -> dict[str, list[str]]:
+        return {
+            mode: list(algorithms)
+            for mode, algorithms in ADVERSARIAL_ALGORITHMS_BY_FEEDBACK_MODE.items()
+        }
 
     @property
     def algorithm_labels(self) -> dict[str, str]:
@@ -273,12 +287,19 @@ class DashboardService:
         }
 
     def default_adversarial_form_state(self) -> dict:
+        feedback_mode = "full_information"
         return {
-            "algorithm_name": self.adversarial_algorithms[0],
+            "environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
+            "initialization_mode": "centered",
+            "feedback_mode": feedback_mode,
+            "algorithm_name": self.adversarial_algorithms_by_feedback_mode[
+                feedback_mode
+            ][0],
             "n_actions": ADVERSARIAL_ACTIONS,
             "memory_window": ADVERSARIAL_MEMORY_WINDOW,
             "horizon": HORIZON,
-            "seed": SEED,
+            "environment_seed": SEED,
+            "learner_seed": SEED,
         }
 
     def submit_adversarial_experiment(
@@ -286,11 +307,15 @@ class DashboardService:
         form: AdversarialExperimentForm,
     ) -> Job:
         spec = AdversarialExperimentSpec(
+            environment=form.environment,
+            initialization_mode=form.initialization_mode,
+            environment_seed=form.environment_seed,
+            feedback_mode=form.feedback_mode,
             algorithm_name=form.algorithm_name,
             n_actions=form.n_actions,
             memory_window=form.memory_window,
             horizon=form.horizon,
-            seed=form.seed,
+            seed=form.learner_seed,
         )
         resource_key = f"adversarial:{spec.run_id}"
         reserved = self.jobs.reserved_resources()
@@ -305,6 +330,10 @@ class DashboardService:
         def operation(job: JobContext) -> str:
             job.check_cancelled()
             run_adversarial_experiment(
+                environment=spec.environment,
+                initialization_mode=spec.initialization_mode,
+                environment_seed=spec.environment_seed,
+                feedback_mode=spec.feedback_mode,
                 algorithm_name=spec.algorithm_name,
                 n_actions=spec.n_actions,
                 memory_window=spec.memory_window,
@@ -327,8 +356,10 @@ class DashboardService:
         return self.jobs.submit(
             (
                 f"Adversarial: {algorithm_label(form.algorithm_name)} · "
+                f"{ENVIRONMENT_LABELS[form.environment]} · "
+                f"{FEEDBACK_MODE_LABELS[form.feedback_mode]} · "
                 f"{form.n_actions} actions · "
-                f"{adversarial_memory_label(spec.memory_window)}"
+                f"learner seed {form.learner_seed}"
             ),
             operation,
             resource_keys={resource_key},
@@ -354,14 +385,7 @@ class DashboardService:
                 for path in generated
                 for companion in figure_paths(path)
             ]
-            generated_names = {path.name for path in generated_paths}
-            for generated_path in generated_paths:
-                os.replace(generated_path, self.adversarial_figure_dir / generated_path.name)
-            for old_path in self.adversarial_figure_dir.iterdir():
-                if old_path.suffix.lower() not in FIGURE_SUFFIXES:
-                    continue
-                if old_path.name not in generated_names:
-                    old_path.unlink()
+            _publish_figure_files(generated_paths, self.adversarial_figure_dir)
 
     def adversarial_result_summaries(self) -> tuple[list[dict], list[str]]:
         summaries = []
@@ -374,16 +398,24 @@ class DashboardService:
                     algorithm,
                     "external",
                 )
-                memory_window = adversarial_memory_window(row["memory"])
                 summaries.append(
                     {
                         "filename": path.name,
                         "algorithm": algorithm,
                         "algorithm_label": algorithm_label(algorithm),
+                        "feedback_mode": row["feedback_mode"],
+                        "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
+                        "environment": row["environment"],
+                        "environment_label": ENVIRONMENT_LABELS[row["environment"]],
+                        "environment_detail": adversarial_environment_detail(row),
                         "n_actions": int(row["n_actions"]),
-                        "memory_label": adversarial_memory_label(memory_window),
                         "horizon": int(row["horizon"]),
-                        "seed": int(row["seed"]),
+                        "environment_seed": (
+                            int(row["environment_seed"])
+                            if row["environment_seed"]
+                            else None
+                        ),
+                        "learner_seed": int(row["learner_seed"]),
                         "target_regret": target_regret,
                         "expected_regret": float(
                             row[
@@ -404,7 +436,7 @@ class DashboardService:
     def adversarial_figure_records(self) -> list[dict]:
         records = []
         regret_pattern = re.compile(
-            r"historical_frequency_(\d+)_actions_(average_)?"
+            r"adversarial_(\d+)_actions_(average_)?"
             r"(expected|realized)_(external|internal|swap)_regret"
             r"(_over_sqrt_t)?\.png"
         )
@@ -433,7 +465,7 @@ class DashboardService:
             diagnostic = next(
                 (
                     name
-                    for name in ("punished_action", "action")
+                    for name in ("punished_action", "best_action", "action")
                     if path.name.endswith(f"_{name}_frequency.png")
                 ),
                 None,
@@ -449,7 +481,6 @@ class DashboardService:
                         self.adversarial_raw_dir / f"{run_stem}.csv"
                     )
                 row = run_metadata[run_stem]
-                memory_window = adversarial_memory_window(row["memory"])
                 pdf_path = path.with_suffix(".pdf")
                 records.append(
                     {
@@ -460,10 +491,16 @@ class DashboardService:
                         "diagnostic_label": (
                             "Learner action frequency"
                             if diagnostic == "action"
-                            else "Punished-action frequency"
+                            else (
+                                "Punished-action frequency"
+                                if diagnostic == "punished_action"
+                                else "Best-action frequency"
+                            )
                         ),
                         "algorithm_label": algorithm_label(row["algorithm"]),
-                        "memory_label": adversarial_memory_label(memory_window),
+                        "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
+                        "environment_label": ENVIRONMENT_LABELS[row["environment"]],
+                        "environment_detail": adversarial_environment_detail(row, include_environment_seed=True),
                         "n_actions": int(row["n_actions"]),
                     }
                 )
@@ -617,30 +654,19 @@ class DashboardService:
             temporary_path = Path(temporary_directory)
             if game_name is None:
                 plot_all_results(self.raw_dir, temporary_path, skip_invalid=True)
-                matches_target = lambda path: path.suffix.lower() in FIGURE_SUFFIXES
             else:
                 plot_selected_results(game_name, self.raw_dir, temporary_path, skip_invalid=True)
-                matches_target = lambda path: (
-                    path.suffix.lower() in FIGURE_SUFFIXES
-                    and path.name.startswith(f"{game_name}_")
-                )
 
             generated_paths = [
                 path
                 for path in temporary_path.iterdir()
                 if path.suffix.lower() in FIGURE_SUFFIXES
             ]
-            generated_names = {path.name for path in generated_paths}
-            for generated_path in generated_paths:
-                os.replace(generated_path, self.figure_dir / generated_path.name)
-
-            for old_path in self.figure_dir.iterdir():
-                if (
-                    old_path.is_file()
-                    and matches_target(old_path)
-                    and old_path.name not in generated_names
-                ):
-                    old_path.unlink()
+            _publish_figure_files(
+                generated_paths,
+                self.figure_dir,
+                None if game_name is None else f"{game_name}_",
+            )
 
     def _clear_figure_files(self, game_name: str | None = None) -> None:
         if not self.figure_dir.exists():
@@ -811,13 +837,6 @@ class DashboardService:
             cache_stem,
         )
 
-    @staticmethod
-    def _validate_convergence_figure(figure: str) -> None:
-        if figure != EQUILIBRIUM_DISTANCE_FIGURE:
-            raise ValueError(
-                f"unknown equilibrium convergence figure: {figure}"
-            )
-
     def _request_convergence_figure(
         self,
         input_paths: list[Path],
@@ -858,14 +877,12 @@ class DashboardService:
     def request_equilibrium_convergence_figure(
         self,
         filename: str,
-        figure: str,
     ) -> tuple[Path | None, str | None]:
-        self._validate_convergence_figure(figure)
         input_path, output_path = self._convergence_figure_path(filename)
         return self._request_convergence_figure(
             [input_path],
             output_path,
-            f"{filename}:{figure}",
+            filename,
             lambda: self._generate_equilibrium_distance(
                 [input_path],
                 output_path,
@@ -876,52 +893,20 @@ class DashboardService:
     def request_group_equilibrium_convergence_figure(
         self,
         group_id: str,
-        figure: str,
     ) -> tuple[Path | None, str | None]:
-        self._validate_convergence_figure(figure)
         input_paths, output_path, cache_stem = self._group_convergence_figure_path(
             group_id
         )
         return self._request_convergence_figure(
             input_paths,
             output_path,
-            f"group:{cache_stem}:{figure}",
+            f"group:{cache_stem}",
             lambda: self._generate_equilibrium_distance(
                 input_paths,
                 output_path,
             ),
             f"group {group_id}",
         )
-
-    def equilibrium_convergence_figures(
-        self,
-        filename: str,
-    ) -> dict[str, Path]:
-        input_path, output_path = self._convergence_figure_path(filename)
-        return {
-            EQUILIBRIUM_DISTANCE_FIGURE: (
-                self._generate_equilibrium_distance(
-                    [input_path],
-                    output_path,
-                )
-            )
-        }
-
-    def group_equilibrium_convergence_figures(
-        self,
-        group_id: str,
-    ) -> dict[str, Path]:
-        input_paths, output_path, _ = self._group_convergence_figure_path(
-            group_id
-        )
-        return {
-            EQUILIBRIUM_DISTANCE_FIGURE: (
-                self._generate_equilibrium_distance(
-                    input_paths,
-                    output_path,
-                )
-            )
-        }
 
     def _generate_equilibrium_distance(
         self,

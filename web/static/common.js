@@ -7,6 +7,44 @@ function element(id) {
     return document.getElementById(id);
 }
 
+function saveLocalValue(key, value, label) {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch (error) {
+        console.warn(`Could not save ${label}`, error);
+    }
+}
+
+function restoreLocalValue(key, label) {
+    try {
+        return window.localStorage.getItem(key);
+    } catch (error) {
+        console.warn(`Could not restore ${label}`, error);
+        return null;
+    }
+}
+
+function saveLocalJson(key, value, label) {
+    try {
+        saveLocalValue(key, JSON.stringify(value), label);
+    } catch (error) {
+        console.warn(`Could not save ${label}`, error);
+    }
+}
+
+function restoreLocalJson(key, label) {
+    const value = restoreLocalValue(key, label);
+    if (value === null) {
+        return null;
+    }
+    try {
+        return JSON.parse(value);
+    } catch (error) {
+        console.warn(`Could not restore ${label}`, error);
+        return null;
+    }
+}
+
 function applyPrimaryTheme(theme, persist = false) {
     const selectedTheme = primaryThemes.has(theme) ? theme : "green";
     document.documentElement.dataset.theme = selectedTheme;
@@ -17,20 +55,11 @@ function applyPrimaryTheme(theme, persist = false) {
     if (!persist) {
         return;
     }
-    try {
-        window.localStorage.setItem(themeStorageKey, selectedTheme);
-    } catch (error) {
-        console.warn("Could not save the primary color", error);
-    }
+    saveLocalValue(themeStorageKey, selectedTheme, "the primary color");
 }
 
 function installThemeSelector() {
-    let storedTheme = "";
-    try {
-        storedTheme = window.localStorage.getItem(themeStorageKey) || "";
-    } catch (error) {
-        console.warn("Could not restore the primary color", error);
-    }
+    const storedTheme = restoreLocalValue(themeStorageKey, "the primary color") || "";
     applyPrimaryTheme(storedTheme || document.documentElement.dataset.theme);
     element("primary-theme")?.addEventListener("change", (event) => {
         applyPrimaryTheme(event.target.value, true);

@@ -1,12 +1,16 @@
-import csv
 import json
 
 import numpy as np
 import pytest
 
-from experiments.game_catalog import CUSTOM_GAME_PREFIX, GameCatalog
+from experiments.game_catalog import (
+    CUSTOM_GAME_FORMAT_VERSION,
+    CUSTOM_GAME_PREFIX,
+    GameCatalog,
+)
 from experiments.plots.plot_regret import plot_selected_results
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
+from tests.support import read_csv_rows
 
 
 def test_custom_game_round_trip_is_reproducible(tmp_path) -> None:
@@ -25,7 +29,7 @@ def test_custom_game_round_trip_is_reproducible(tmp_path) -> None:
     assert catalog.custom_path(definition.id) == tmp_path / "three-player-test.npz"
 
 
-def test_two_player_zero_sum_game_is_reproducible_and_constant_sum(
+def test_two_player_zero_sum_game_is_reproducible_symmetric_and_constant_sum(
     tmp_path,
 ) -> None:
     catalog = GameCatalog(tmp_path)
@@ -33,19 +37,23 @@ def test_two_player_zero_sum_game_is_reproducible_and_constant_sum(
     definition = catalog.create_random(
         "Zero Sum Test",
         2,
-        [2, 3],
+        [3, 3],
         17,
         "zero_sum",
     )
     payoffs = catalog.load(definition.id)
-    expected_first_payoff = np.random.default_rng(17).random((2, 3))
+    sample = np.random.default_rng(17).random((3, 3))
+    expected_first_payoff = 0.5 + (sample - sample.T) / 2.0
 
     assert definition.payoff_structure == "zero_sum"
-    assert payoffs.shape == (2, 2, 3)
+    assert definition.action_counts == (3, 3)
+    assert payoffs.shape == (2, 3, 3)
     assert np.array_equal(payoffs[0], expected_first_payoff)
     assert np.array_equal(payoffs[1], 1.0 - expected_first_payoff)
+    assert np.array_equal(payoffs[0], payoffs[1].T)
+    assert np.array_equal(np.diag(payoffs[0]), np.full(3, 0.5))
     assert np.allclose(payoffs.sum(axis=0), 1.0, rtol=0.0, atol=1e-12)
-    assert np.allclose((payoffs - 0.5).sum(axis=0), 0.0, rtol=0.0, atol=1e-12)
+    assert np.allclose(payoffs[0] + payoffs[0].T, 1.0, rtol=0.0, atol=1e-12)
 
 
 def test_version_one_custom_game_defaults_to_general_sum(tmp_path) -> None:
@@ -66,6 +74,23 @@ def test_version_one_custom_game_defaults_to_general_sum(tmp_path) -> None:
     assert np.array_equal(GameCatalog(tmp_path).load(definition.id), payoff_tensor)
 
 
+def test_asymmetric_zero_sum_file_is_rejected(tmp_path) -> None:
+    first_payoff = np.array([[0.5, 0.8], [0.3, 0.5]])
+    np.savez_compressed(
+        tmp_path / "asymmetric.npz",
+        format_version=np.array(CUSTOM_GAME_FORMAT_VERSION),
+        name=np.array("Asymmetric"),
+        slug=np.array("asymmetric"),
+        seed=np.array(4),
+        payoff_structure=np.array("zero_sum"),
+        action_counts=np.array([2, 2]),
+        payoff_tensor=np.stack((first_payoff, 1.0 - first_payoff)),
+    )
+
+    with pytest.raises(ValueError, match="symmetric and have constant sum"):
+        GameCatalog(tmp_path).load(f"{CUSTOM_GAME_PREFIX}asymmetric")
+
+
 @pytest.mark.parametrize(
     ("name", "n_players", "action_counts", "payoff_structure", "message"),
     [
@@ -73,7 +98,8 @@ def test_version_one_custom_game_defaults_to_general_sum(tmp_path) -> None:
         ("one", 1, [2], "general_sum", "between 2"),
         ("missing", 3, [2, 2], "general_sum", "one action count"),
         ("too-large", 8, [100] * 8, "general_sum", "at most"),
-        ("three-player-zero-sum", 3, [2, 2, 2], "zero_sum", "exactly 2"),
+        ("three-player-zero-sum", 3, [2, 2, 2], "zero_sum", "two equal action sets"),
+        ("unequal-zero-sum", 2, [2, 3], "zero_sum", "two equal action sets"),
         ("unknown-structure", 2, [2, 2], "cooperative", "payoff structure"),
     ],
 )
@@ -132,13 +158,12 @@ def test_three_player_custom_game_runs_and_plots_regret_for_every_player(tmp_pat
         output_dir=raw_dir,
         custom_game_dir=game_dir,
     )
-    with output_path.open(encoding="utf-8", newline="") as file:
-        rows = list(csv.DictReader(file))
+    rows = read_csv_rows(output_path)
 
     assert len(rows) == 6
     assert {int(row["player"]) for row in rows} == {0, 1, 2}
     assert json.loads(rows[0]["algorithm_profile"]) == ["hedge", "hedge", "hedge"]
-    assert {row["player_algorithm"] for row in rows} == {"hedge"}
+    assert "player_algorithm" not in rows[0]
     assert "average_expected_swap_regret" in rows[0]
 
     plot_selected_results(definition.id, raw_dir, figure_dir)
