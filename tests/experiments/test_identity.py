@@ -1,5 +1,7 @@
 import csv
+import os
 
+import experiments.plots.plot_regret as plot_regret_module
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
@@ -9,6 +11,7 @@ from experiments.plots.plot_regret import aggregate_metric_curve, collect_result
 from experiments.scenarios.cross_play import player_seed
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.result_schema import regret_fieldnames
+from experiments.results import iter_result_rows, result_implementation_version
 from experiments.spec import MAX_RUN_ID_BYTES, ExperimentSpec
 
 
@@ -70,6 +73,7 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     )
     assert baseline.run_id != changed_horizon.run_id
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, stationary_method="pinv").run_id
+    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=2).run_id
 
 
 def test_experiment_spec_preserves_positional_stationary_method_compatibility() -> None:
@@ -136,9 +140,12 @@ def test_payoff_tensor_fingerprint_changes_run_identity_and_csv_metadata(
     assert second_digest == payoff_tensor_digest(GameCatalog(second_games).load(second_definition.id))
 
 
-def test_replicates_derive_distinct_reproducible_player_seeds() -> None:
-    first = make_spec(feedback_mode="bandit", replicate=0)
-    second = make_spec(feedback_mode="bandit", replicate=1)
+@pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
+def test_replicates_derive_distinct_reproducible_player_seeds(
+    feedback_mode: str,
+) -> None:
+    first = make_spec(feedback_mode=feedback_mode, replicate=0)
+    second = make_spec(feedback_mode=feedback_mode, replicate=1)
 
     assert [player_seed(first, player) for player in range(2)] == [7, 8]
     assert [player_seed(second, player) for player in range(2)] == [9, 10]
@@ -176,6 +183,51 @@ def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:
     results = collect_results(tmp_path)
 
     assert set(results["rps"]) == {full_spec.run_id, bandit_spec.run_id}
+
+
+def test_fixed_game_loader_treats_missing_implementation_version_as_legacy(tmp_path) -> None:
+    spec = make_spec()
+    result_path = tmp_path / f"{spec.run_id}.csv"
+    write_result(result_path, spec)
+    with result_path.open(newline="") as file:
+        reader = csv.DictReader(file)
+        rows = list(reader)
+    fieldnames = [field for field in reader.fieldnames if field != "implementation_version"]
+    with result_path.open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows({field: row[field] for field in fieldnames} for row in rows)
+
+    assert {result_implementation_version(row) for row in iter_result_rows(result_path)} == {0}
+
+
+def test_plot_collection_reuses_validated_sample_cache(tmp_path, monkeypatch) -> None:
+    spec = make_spec()
+    write_result(tmp_path / f"{spec.run_id}.csv", spec)
+    cache_dir = tmp_path / "cache"
+    expected = collect_results(tmp_path, cache_dir=cache_dir)
+
+    def fail_if_csv_is_read(path):
+        raise AssertionError(f"unexpected CSV read: {path}")
+
+    monkeypatch.setattr(plot_regret_module, "iter_result_rows", fail_if_csv_is_read)
+
+    assert collect_results(tmp_path, cache_dir=cache_dir) == expected
+
+
+def test_plot_collection_invalidates_cache_when_source_changes(tmp_path, monkeypatch) -> None:
+    spec = make_spec()
+    result_path = tmp_path / f"{spec.run_id}.csv"
+    write_result(result_path, spec)
+    cache_dir = tmp_path / "cache"
+    collect_results(tmp_path, cache_dir=cache_dir)
+    stat = result_path.stat()
+    os.utime(result_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    monkeypatch.setattr(plot_regret_module, "iter_result_rows", lambda path: (_ for _ in ()).throw(AssertionError(path)))
+
+    with pytest.raises(AssertionError):
+        collect_results(tmp_path, cache_dir=cache_dir)
 
 
 def test_plot_legend_uses_algorithm_abbreviations() -> None:

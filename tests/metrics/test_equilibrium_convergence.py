@@ -28,8 +28,9 @@ def test_distance_aggregation_preserves_horizons_and_replicate_mean() -> None:
     assert np.allclose(result.ce_mean, [0.9, 0.4, 0.2])
     assert np.allclose(result.cce_mean, [0.7, 0.3, 0.15])
     assert result.n_replicates == 2
-    assert np.all(result.ce_confidence > 0.0)
-    assert np.all(result.cce_confidence > 0.0)
+    expected_confidence = [1.2706204736, 1.2706204736, 0.6353102368]
+    assert np.allclose(result.ce_confidence, expected_confidence)
+    assert np.allclose(result.cce_confidence, expected_confidence)
 
 
 def test_distance_aggregation_rejects_mismatched_horizons() -> None:

@@ -7,6 +7,13 @@ function element(id) {
     return document.getElementById(id);
 }
 
+function listen(id, eventName, handler) {
+    const target = element(id);
+    if (target) {
+        target.addEventListener(eventName, handler);
+    }
+}
+
 function saveLocalValue(key, value, label) {
     try {
         window.localStorage.setItem(key, value);
@@ -45,6 +52,43 @@ function restoreLocalJson(key, label) {
     }
 }
 
+function replaceSelectOptions(select, values, labels, preferred = null) {
+    if (!select) {
+        return;
+    }
+    const selected = preferred == null ? select.value : preferred;
+    select.replaceChildren(...values.map((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = labels[value] || value;
+        return option;
+    }));
+    select.value = values.includes(selected) ? selected : values[0] || "";
+}
+
+function updateJobElement(element, job) {
+    if (!element) {
+        return;
+    }
+    element.dataset.status = job.status;
+    element.classList.remove("job-queued", "job-running", "job-succeeded", "job-failed", "job-cancelled");
+    element.classList.add(`job-${job.status}`);
+    const status = element.querySelector("[data-job-status]");
+    const message = element.querySelector("[data-job-message]");
+    if (status) {
+        status.textContent = job.status;
+    }
+    if (message) {
+        message.textContent = job.message;
+    }
+    if (!["queued", "running"].includes(job.status)) {
+        const form = element.querySelector(".job-actions form");
+        if (form) {
+            form.remove();
+        }
+    }
+}
+
 function applyPrimaryTheme(theme, persist = false) {
     const selectedTheme = primaryThemes.has(theme) ? theme : "green";
     document.documentElement.dataset.theme = selectedTheme;
@@ -61,7 +105,7 @@ function applyPrimaryTheme(theme, persist = false) {
 function installThemeSelector() {
     const storedTheme = restoreLocalValue(themeStorageKey, "the primary color") || "";
     applyPrimaryTheme(storedTheme || document.documentElement.dataset.theme);
-    element("primary-theme")?.addEventListener("change", (event) => {
+    listen("primary-theme", "change", (event) => {
         applyPrimaryTheme(event.target.value, true);
     });
 }
@@ -144,7 +188,9 @@ function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loadi
                 }
                 image.dataset.objectUrl = objectUrl;
                 finish(false);
-                onReady?.();
+                if (onReady) {
+                    onReady();
+                }
             };
             image.onerror = () => {
                 URL.revokeObjectURL(objectUrl);
@@ -161,3 +207,4 @@ function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loadi
 
 installThemeSelector();
 installConfirmations();
+listen("experiment-mode", "change", (event) => event.currentTarget.form.submit());

@@ -1,3 +1,2 @@
-from .blum_mansour import FullBM, BanditBM
+from .blum_mansour import BanditBM, FullBM, LCEIX
 from .ito import FullIto, BanditIto
-from .lce_ix import LCEIX

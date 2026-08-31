@@ -33,11 +33,7 @@ from experimental.equilibrium_trajectory.projection import (
     fit_equilibrium_projection,
     fit_unified_equilibrium_comparison_direction,
 )
-
-
-def coordination_game() -> np.ndarray:
-    payoffs = np.array([[1.0, 0.0], [0.0, 1.0]])
-    return np.stack((payoffs, payoffs))
+from tests.support import coordination_game_payoffs
 
 
 def _sample_rps_trajectory(count: int = 12) -> np.ndarray:
@@ -270,7 +266,7 @@ def test_one_member_comparison_preserves_projection_and_ce_reference() -> None:
 
 
 def test_comparison_projection_is_order_independent_and_scale_normalized() -> None:
-    geometry = analyze_equilibrium_projection_geometry(coordination_game())
+    geometry = analyze_equilibrium_projection_geometry(coordination_game_payoffs())
     reference = geometry.ce.reference
     first_direction = geometry.x_subspace_basis[:, 0]
     second_direction = geometry.x_subspace_basis[:, 1]
@@ -827,7 +823,7 @@ def test_rank_deficient_constrained_projection_is_deterministic() -> None:
 
 
 def test_full_dimensional_equilibria_keep_two_dimensional_regions() -> None:
-    payoffs = coordination_game()
+    payoffs = coordination_game_payoffs()
     geometry = analyze_equilibrium_projection_geometry(payoffs)
     empirical = empirical_distribution_trajectory(
         [(0, 0), (0, 1), (1, 0), (1, 1)],
@@ -1236,7 +1232,7 @@ def test_tightening_render_tolerance_monotonically_approaches_exact() -> None:
 
 
 def test_region_tolerance_does_not_change_projection_or_trajectory() -> None:
-    payoffs = coordination_game()
+    payoffs = coordination_game_payoffs()
     geometry = analyze_equilibrium_projection_geometry(payoffs)
     empirical = empirical_distribution_trajectory(
         [(0, 0), (0, 1), (1, 0), (1, 1)],

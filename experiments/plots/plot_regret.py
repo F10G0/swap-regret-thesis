@@ -1,7 +1,10 @@
 import csv
+import json
 import logging
+import os
 from collections import defaultdict
 from pathlib import Path
+import tempfile
 
 import matplotlib
 
@@ -12,7 +15,7 @@ import numpy as np
 
 from config import FIGURE_DIR, RAW_DIR
 from experiments.algorithm_labels import algorithm_profile_label
-from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
+from experiments.plots import FIGURE_SUFFIXES, confidence_free_figure_path, save_figure_pair
 from experiments.results import average_regret_column, iter_result_rows, regret_column
 from experiments.result_schema import REGRET_NAMES
 from metrics.confidence import mean_confidence_interval_half_width
@@ -21,6 +24,7 @@ from metrics.confidence import mean_confidence_interval_half_width
 logger = logging.getLogger(__name__)
 
 MAX_PLOT_POINTS_PER_PLAYER = 2000
+PLOT_ROW_CACHE_VERSION = 1
 
 REGRET_TYPES = {
     "expected": "Expected",
@@ -36,12 +40,66 @@ REPLICATE_GROUP_COLUMNS = (
     "seed",
     "stationary_method",
     "game_payoff_digest",
+    "implementation_version",
 )
 
 
-def load_rows(input_path: str | Path, max_points_per_player: int = MAX_PLOT_POINTS_PER_PLAYER) -> list[dict]:
+def _cached_rows(cache_path: Path, input_path: Path, source_stat, max_points: int) -> list[dict] | None:
+    try:
+        with cache_path.open("r", encoding="utf-8") as file:
+            cached = json.load(file)
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(cached, dict):
+        return None
+    expected = {
+        "version": PLOT_ROW_CACHE_VERSION,
+        "source": str(input_path.resolve()),
+        "mtime_ns": source_stat.st_mtime_ns,
+        "size": source_stat.st_size,
+        "max_points_per_player": max_points,
+    }
+    rows = cached.get("rows")
+    if any(cached.get(key) != value for key, value in expected.items()) or not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        return None
+    return rows
+
+
+def _write_row_cache(cache_path: Path, input_path: Path, source_stat, max_points: int, rows: list[dict]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": PLOT_ROW_CACHE_VERSION,
+        "source": str(input_path.resolve()),
+        "mtime_ns": source_stat.st_mtime_ns,
+        "size": source_stat.st_size,
+        "max_points_per_player": max_points,
+        "rows": rows,
+    }
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_path.parent, delete=False) as file:
+            temporary_path = Path(file.name)
+            json.dump(payload, file, separators=(",", ":"))
+        os.replace(temporary_path, cache_path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def load_rows(
+    input_path: str | Path,
+    max_points_per_player: int = MAX_PLOT_POINTS_PER_PLAYER,
+    cache_dir: str | Path | None = None,
+) -> list[dict]:
     if max_points_per_player <= 0:
         raise ValueError("max_points_per_player must be positive")
+    input_path = Path(input_path)
+    source_stat = input_path.stat()
+    cache_path = Path(cache_dir) / f"{input_path.stem}.json" if cache_dir is not None else None
+    if cache_path is not None:
+        rows = _cached_rows(cache_path, input_path, source_stat, max_points_per_player)
+        if rows is not None:
+            return rows
 
     sampled_rows = []
     for row in iter_result_rows(input_path):
@@ -51,11 +109,26 @@ def load_rows(input_path: str | Path, max_points_per_player: int = MAX_PLOT_POIN
         if time == 1 or time == horizon or time % stride == 0:
             sampled_rows.append(row)
 
+    current_stat = input_path.stat()
+    source_unchanged = current_stat.st_mtime_ns == source_stat.st_mtime_ns and current_stat.st_size == source_stat.st_size
+    if cache_path is not None and source_unchanged:
+        try:
+            _write_row_cache(cache_path, input_path, source_stat, max_points_per_player, sampled_rows)
+        except OSError as error:
+            logger.warning("Could not cache plot rows for %s: %s", input_path, error)
+
     return sampled_rows
 
 
-def collect_results(input_dir: str | Path = RAW_DIR, game_name: str | None = None, skip_invalid: bool = False) -> dict[str, dict[str, list[dict]]]:
+def collect_results(
+    input_dir: str | Path = RAW_DIR,
+    game_name: str | None = None,
+    skip_invalid: bool = False,
+    cache_dir: str | Path | None = None,
+) -> dict[str, dict[str, list[dict]]]:
     input_dir = Path(input_dir)
+    if cache_dir is None:
+        cache_dir = input_dir.parent / "cache" / "plot_rows" if input_dir.name == "raw" else input_dir / ".plot-cache"
     results = defaultdict(dict)
     paths = sorted(input_dir.glob("*.csv"))
     if game_name is not None:
@@ -63,7 +136,7 @@ def collect_results(input_dir: str | Path = RAW_DIR, game_name: str | None = Non
 
     for path in paths:
         try:
-            rows = load_rows(path)
+            rows = load_rows(path, cache_dir=cache_dir)
         except (OSError, KeyError, TypeError, ValueError, csv.Error) as error:
             if not skip_invalid:
                 raise
@@ -83,14 +156,6 @@ def collect_results(input_dir: str | Path = RAW_DIR, game_name: str | None = Non
     return {result_game: dict(rows_by_run) for result_game, rows_by_run in results.items()}
 
 
-def available_players(rows_by_run: dict[str, list[dict]]) -> list[int]:
-    return sorted({int(row["player"]) for rows in rows_by_run.values() for row in rows})
-
-
-def rows_for_player(rows: list[dict], player: int) -> list[dict]:
-    return [row for row in rows if int(row["player"]) == player]
-
-
 def group_replicate_runs(rows_by_run: dict[str, list[dict]]) -> list[list[list[dict]]]:
     groups = defaultdict(list)
     for rows in rows_by_run.values():
@@ -105,7 +170,9 @@ def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column
     values_by_time = defaultdict(list)
 
     for rows in replicate_runs:
-        for row in rows_for_player(rows, player):
+        for row in rows:
+            if int(row["player"]) != player:
+                continue
             time = int(row["t"])
             value = float(row[column])
             if divide_by_sqrt_time:
@@ -159,6 +226,7 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
     output_dir.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots()
     plotted = False
+    confidence_bands = []
 
     color_map = plt.get_cmap("tab20")
     include_solver = len({group[0][0]["stationary_method"] for group in replicate_groups}) > 1
@@ -174,7 +242,7 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
             replicate_runs[0], len(replicate_runs), include_solver, include_feedback, include_evaluation
         ))
         if len(replicate_runs) > 1:
-            axes.fill_between(times, means - confidence, means + confidence, color=color, alpha=0.2)
+            confidence_bands.append((times, means, confidence, color))
 
     if not plotted:
         plt.close(figure)
@@ -195,7 +263,12 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
     figure.set_size_inches(11, figure_height)
     figure.subplots_adjust(left=0.09, right=0.98, top=1.0 - 0.45 / figure_height, bottom=(legend_height + 0.35) / figure_height)
     figure.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.02), ncol=legend_columns, frameon=False, fontsize="small")
-    save_figure_pair(figure, output_dir / filename, png_dpi=150, bbox_inches="tight", pad_inches=0.15)
+    output_path = output_dir / filename
+    if confidence_bands:
+        save_figure_pair(figure, confidence_free_figure_path(output_path), png_dpi=150, bbox_inches="tight", pad_inches=0.15)
+        for times, means, confidence, color in confidence_bands:
+            axes.fill_between(times, means - confidence, means + confidence, color=color, alpha=0.2)
+    save_figure_pair(figure, output_path, png_dpi=150, bbox_inches="tight", pad_inches=0.15)
     plt.close(figure)
 
 
@@ -216,7 +289,8 @@ def plot_game_results(game_name: str, rows_by_run: dict[str, list[dict]], output
         source: [group for group in replicate_groups if regret_column(source, REGRET_NAMES[0]) in group[0][0]]
         for source in REGRET_TYPES
     }
-    for player in available_players(rows_by_run):
+    players = sorted({int(row["player"]) for rows in rows_by_run.values() for row in rows})
+    for player in players:
         for regret_type, source_groups in groups_by_regret_type.items():
             if not source_groups:
                 continue

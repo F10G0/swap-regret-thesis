@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_experiment_ui.html" import figure_dialog, jobs_panel, warning_panel with context %}
+
+{% block content %}
+    <div class="app-shell">
+        <aside class="sidebar" aria-label="{{ sidebar_label }}">
+            <div class="brand">
+                <p class="eyebrow">Bachelor thesis laboratory</p>
+                <h1>Experiments</h1>
+                <p>{% block experiment_description %}{% endblock %}</p>
+            </div>
+            <form class="experiment-mode-switch" method="get" action="{{ url_for('dashboard.index') }}">
+                <label for="experiment-mode">Experiment type</label>
+                <select id="experiment-mode" name="mode">
+                    <option value="fixed" {% if experiment_mode == "fixed" %}selected{% endif %}>Fixed game</option>
+                    <option value="adversarial" {% if experiment_mode == "adversarial" %}selected{% endif %}>One-player environment</option>
+                </select>
+            </form>
+            {% if inline_error %}<div class="notice notice-error" role="alert">{{ inline_error }}</div>{% endif %}
+            {% block experiment_sidebar %}{% endblock %}
+        </aside>
+
+        <main id="main-content" class="content">
+            {{ warning_panel(warnings, warning_heading_id) }}
+            {{ jobs_panel(jobs, busy, job_heading_id, job_return_to, busy_id=job_busy_id) }}
+            {% block experiment_main %}{% endblock %}
+            {{ figure_dialog() }}
+        </main>
+    </div>
+{% endblock %}

@@ -1,6 +1,7 @@
 import pytest
 
 from web.result_groups import aggregate_result_summaries, result_group_filenames
+from web.result_index import SUMMARY_REGRET_FIELDS
 
 
 def summary(replicate: int, player: int, regret: float) -> dict:
@@ -43,6 +44,20 @@ def test_result_summaries_are_aggregated_by_replicate_and_player() -> None:
     assert result_group_filenames(summaries, aggregated[0]["group_id"]) == ["run-3.csv", "run-4.csv"]
 
 
+def test_all_supported_regret_metrics_have_mean_and_student_t_interval() -> None:
+    first = summary(0, 0, 0.0)
+    second = summary(1, 0, 0.0)
+    for index, field in enumerate(SUMMARY_REGRET_FIELDS):
+        first[field] = float(index)
+        second[field] = float(index + 2)
+
+    result = aggregate_result_summaries([first, second])[0]
+
+    for index, field in enumerate(SUMMARY_REGRET_FIELDS):
+        assert result[field] == pytest.approx(index + 1.0)
+        assert result["confidence_intervals"][field] == pytest.approx(12.706204736)
+
+
 def test_different_base_seeds_are_not_combined() -> None:
     first = summary(0, 0, 0.1)
     second = summary(1, 0, 0.2)
@@ -76,3 +91,14 @@ def test_different_payoff_tensors_are_not_combined() -> None:
 
     assert len(aggregated) == 2
     assert all(row["replicate_count"] == 1 for row in aggregated)
+
+
+def test_different_implementation_versions_are_not_combined() -> None:
+    first = summary(0, 0, 0.1)
+    second = summary(1, 0, 0.2)
+    first["implementation_version"] = 0
+    second["implementation_version"] = 1
+
+    aggregated = aggregate_result_summaries([first, second])
+
+    assert len(aggregated) == 2

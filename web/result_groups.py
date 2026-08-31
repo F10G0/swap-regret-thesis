@@ -16,6 +16,7 @@ RESULT_GROUP_FIELDS = (
     "horizon",
     "seed",
     "stationary_method",
+    "implementation_version",
 )
 
 
@@ -29,10 +30,6 @@ def result_group_key(summary: dict) -> tuple:
 def result_group_id(key: tuple) -> str:
     payload = json.dumps(key, separators=(",", ":"))
     return sha256(payload.encode("utf-8")).hexdigest()[:16]
-
-
-def _confidence_interval(values: list[float]) -> float:
-    return float(mean_confidence_interval_half_width(values))
 
 
 def _replicate_label(replicates: list[int]) -> str:
@@ -68,7 +65,7 @@ def aggregate_result_summaries(summaries: list[dict]) -> list[dict]:
                 if len(values) != len(rows):
                     continue
                 result[field] = float(np.mean(values))
-                confidence_intervals[field] = _confidence_interval(values)
+                confidence_intervals[field] = float(mean_confidence_interval_half_width(values))
 
             result.update({
                 "group_id": group_id,

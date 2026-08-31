@@ -5,11 +5,7 @@ from config import EQUILIBRIUM_LP_TOLERANCE
 from experiments.games import create_rock_paper_scissors_payoffs
 import metrics.equilibrium as equilibrium_module
 from metrics.equilibrium_distance import equilibrium_l1_distance
-
-
-def coordination_game() -> np.ndarray:
-    payoffs = np.array([[1.0, 0.0], [0.0, 1.0]])
-    return np.stack((payoffs, payoffs))
+from tests.support import coordination_game_payoffs
 
 
 @pytest.mark.parametrize(("equilibrium", "expected_coarse"), [("ce", False), ("cce", True)])
@@ -24,7 +20,7 @@ def test_distance_reuses_upstream_equilibrium_polytope(monkeypatch, equilibrium:
     monkeypatch.setattr(equilibrium_module.games_learning_equilibrium, "create_cce_lp", recording_create_lp)
     empirical = np.array([[1.0, 0.0], [0.0, 0.0]])
 
-    result = equilibrium_l1_distance(coordination_game(), empirical, equilibrium)
+    result = equilibrium_l1_distance(coordination_game_payoffs(), empirical, equilibrium)
 
     assert coarse_arguments == [expected_coarse]
     assert result.distance == pytest.approx(0.0, abs=EQUILIBRIUM_LP_TOLERANCE)
@@ -57,7 +53,7 @@ def test_distance_supports_heterogeneous_three_player_games() -> None:
 
 def test_distance_rejects_unknown_equilibrium_concept() -> None:
     with pytest.raises(ValueError, match="unknown equilibrium concept"):
-        equilibrium_l1_distance(coordination_game(), np.full((2, 2), 0.25), "nash")
+        equilibrium_l1_distance(coordination_game_payoffs(), np.full((2, 2), 0.25), "nash")
 
 
 @pytest.mark.parametrize(
@@ -71,4 +67,4 @@ def test_distance_rejects_unknown_equilibrium_concept() -> None:
 )
 def test_distance_rejects_malformed_empirical_distributions(empirical: np.ndarray) -> None:
     with pytest.raises(ValueError):
-        equilibrium_l1_distance(coordination_game(), empirical)
+        equilibrium_l1_distance(coordination_game_payoffs(), empirical)

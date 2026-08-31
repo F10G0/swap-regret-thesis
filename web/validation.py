@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Mapping
 
 from experiments.result_schema import REGRET_EVALUATIONS, default_regret_evaluation
@@ -23,22 +24,36 @@ class AdversarialExperimentForm:
     feedback_mode: str
     algorithm_name: str
     n_actions: int
-    memory_window: int
     horizon: int
     environment_seed: int
     learner_seed: int
+    replicates: int
+    regret_evaluation: str
 
 
-def parse_positive_integer(
-    value: str,
-    field_name: str,
-    maximum: int | None = None,
-) -> int:
+@dataclass(frozen=True)
+class AdversarialScalingForm:
+    environment: str
+    initialization_mode: str
+    feedback_mode: str
+    algorithm_name: str
+    action_counts: tuple[int, ...]
+    replicates: int
+    horizon: int
+    environment_seed: int
+    learner_seed: int
+    regret_evaluation: str
+
+
+def _parse_integer(value: str, field_name: str) -> int:
     try:
-        number = int(value)
+        return int(value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{field_name} must be an integer") from error
 
+
+def parse_positive_integer(value: str, field_name: str, maximum: int | None = None) -> int:
+    number = _parse_integer(value, field_name)
     if number <= 0:
         raise ValueError(f"{field_name} must be positive")
     if maximum is not None and number > maximum:
@@ -47,14 +62,31 @@ def parse_positive_integer(
 
 
 def parse_non_negative_integer(value: str, field_name: str) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{field_name} must be an integer") from error
-
+    number = _parse_integer(value, field_name)
     if number < 0:
         raise ValueError(f"{field_name} must be non-negative")
     return number
+
+
+def parse_action_counts(
+    value: str,
+    max_actions: int,
+    max_values: int = 20,
+) -> tuple[int, ...]:
+    tokens = [token for token in re.split(r"[\s,]+", value.strip()) if token]
+    if len(tokens) < 2:
+        raise ValueError("provide at least two action counts")
+    if len(tokens) > max_values:
+        raise ValueError(f"provide at most {max_values} action counts")
+    action_counts = tuple(
+        parse_positive_integer(token, "action count", max_actions)
+        for token in tokens
+    )
+    if any(action_count < 2 for action_count in action_counts):
+        raise ValueError("action counts must be at least 2")
+    if len(set(action_counts)) != len(action_counts):
+        raise ValueError("action counts must be unique")
+    return tuple(sorted(action_counts))
 
 
 def validate_leaf_filename(filename: str, suffix: str) -> str:
@@ -83,6 +115,44 @@ def _form_algorithm_names(values: Mapping[str, str]) -> tuple[str, ...]:
     return names
 
 
+def _validate_learning_configuration(
+    feedback_mode: str,
+    algorithm_names: tuple[str, ...],
+    regret_evaluation: str,
+    algorithms_by_feedback_mode: Mapping[str, list[str]],
+) -> None:
+    if feedback_mode not in algorithms_by_feedback_mode:
+        raise ValueError(f"unknown feedback mode: {feedback_mode}")
+    if regret_evaluation not in REGRET_EVALUATIONS:
+        raise ValueError(f"unknown regret evaluation: {regret_evaluation}")
+    for algorithm_name in algorithm_names:
+        if algorithm_name not in algorithms_by_feedback_mode[feedback_mode]:
+            raise ValueError(f"algorithm {algorithm_name} is not available for {feedback_mode}")
+
+
+def _parse_learning_configuration(
+    values: Mapping[str, str],
+    algorithms_by_feedback_mode: Mapping[str, list[str]],
+    default_evaluation: str | None = None,
+) -> tuple[str, tuple[str, ...], str]:
+    try:
+        feedback_mode = values["feedback_mode"]
+    except KeyError as error:
+        raise ValueError("missing form field: feedback_mode") from error
+    algorithm_names = _form_algorithm_names(values)
+    regret_evaluation = values.get(
+        "regret_evaluation",
+        default_evaluation or default_regret_evaluation(feedback_mode),
+    )
+    _validate_learning_configuration(
+        feedback_mode,
+        algorithm_names,
+        regret_evaluation,
+        algorithms_by_feedback_mode,
+    )
+    return feedback_mode, algorithm_names, regret_evaluation
+
+
 def parse_experiment_form(
     values: Mapping[str, str],
     games: set[str] | Mapping[str, int],
@@ -92,7 +162,6 @@ def parse_experiment_form(
 ) -> ExperimentForm:
     try:
         game = values["game"]
-        feedback_mode = values["feedback_mode"]
         horizon_value = values["horizon"]
         seed_value = values["seed"]
     except KeyError as error:
@@ -100,29 +169,19 @@ def parse_experiment_form(
 
     if game not in games:
         raise ValueError(f"unknown game: {game}")
-    if feedback_mode not in algorithms_by_feedback_mode:
-        raise ValueError(f"unknown feedback mode: {feedback_mode}")
-    regret_evaluation = values.get("regret_evaluation", default_regret_evaluation(feedback_mode))
-    if regret_evaluation not in REGRET_EVALUATIONS:
-        raise ValueError(f"unknown regret evaluation: {regret_evaluation}")
-
-    algorithm_names = _form_algorithm_names(values)
+    feedback_mode, algorithm_names, regret_evaluation = _parse_learning_configuration(
+        values,
+        algorithms_by_feedback_mode,
+    )
     expected_players = games[game] if isinstance(games, Mapping) else 2
     if len(algorithm_names) != expected_players:
         raise ValueError(f"game {game} requires {expected_players} player algorithms")
-    available_algorithms = algorithms_by_feedback_mode[feedback_mode]
-    for algorithm_name in algorithm_names:
-        if algorithm_name not in available_algorithms:
-            raise ValueError(f"algorithm {algorithm_name} is not available for {feedback_mode}")
 
-    if feedback_mode == "bandit":
-        replicates = parse_positive_integer(
-            values.get("replicates", ""),
-            "replicates",
-            max_replicates,
-        )
-    else:
-        replicates = 1
+    replicates = parse_positive_integer(
+        values.get("replicates", ""),
+        "replicates",
+        max_replicates,
+    )
     return ExperimentForm(
         game=game,
         feedback_mode=feedback_mode,
@@ -141,30 +200,31 @@ def parse_adversarial_experiment_form(
     initialization_modes: set[str],
     max_actions: int,
     max_horizon: int,
+    max_replicates: int = 100,
 ) -> AdversarialExperimentForm:
     try:
         environment = values["environment"]
-        feedback_mode = values["feedback_mode"]
-        algorithm_name = values["algorithm_name"]
         n_actions = values["n_actions"]
         horizon = values["horizon"]
-        learner_seed = values["learner_seed"]
+        learner_seed = values["seed"]
     except KeyError as error:
         raise ValueError(f"missing form field: {error.args[0]}") from error
 
+    feedback_mode, algorithm_names, regret_evaluation = _parse_learning_configuration(
+        values,
+        algorithms_by_feedback_mode,
+        default_evaluation="both",
+    )
+    if len(algorithm_names) != 1:
+        raise ValueError("one-player environments require one algorithm")
+    algorithm_name = algorithm_names[0]
+
     initialization_mode = values.get("initialization_mode", "centered")
-    memory_window = values.get("memory_window", "0")
     environment_seed = values.get("environment_seed", "0")
     if environment not in environments:
         raise ValueError(f"unknown adversarial environment: {environment}")
     if initialization_mode not in initialization_modes:
         raise ValueError(f"unknown initialization mode: {initialization_mode}")
-    if feedback_mode not in algorithms_by_feedback_mode:
-        raise ValueError(f"unknown feedback mode: {feedback_mode}")
-    if algorithm_name not in algorithms_by_feedback_mode[feedback_mode]:
-        raise ValueError(
-            f"algorithm {algorithm_name} is not available for {feedback_mode}"
-        )
     action_count = parse_positive_integer(
         n_actions,
         "number of actions",
@@ -172,20 +232,65 @@ def parse_adversarial_experiment_form(
     )
     if action_count < 2:
         raise ValueError("number of actions must be at least 2")
-    window = parse_non_negative_integer(memory_window, "memory window")
-    if window > max_horizon:
-        raise ValueError(f"memory window must not exceed {max_horizon}")
     return AdversarialExperimentForm(
         environment=environment,
         initialization_mode=initialization_mode,
         feedback_mode=feedback_mode,
         algorithm_name=algorithm_name,
         n_actions=action_count,
-        memory_window=window,
         horizon=parse_positive_integer(horizon, "horizon", max_horizon),
         environment_seed=parse_non_negative_integer(
             environment_seed,
             "environment seed",
         ),
         learner_seed=parse_non_negative_integer(learner_seed, "learner seed"),
+        replicates=parse_positive_integer(
+            values.get("replicates", ""),
+            "replicates",
+            max_replicates,
+        ),
+        regret_evaluation=regret_evaluation,
+    )
+
+
+def parse_adversarial_scaling_form(
+    values: Mapping[str, str],
+    algorithms_by_feedback_mode: Mapping[str, list[str]],
+    environments: set[str],
+    initialization_modes: set[str],
+    max_actions: int,
+    max_horizon: int,
+    max_replicates: int,
+) -> AdversarialScalingForm:
+    action_counts = parse_action_counts(
+        values.get("scaling_action_counts", ""),
+        max_actions,
+    )
+    common_values = dict(values)
+    common_values["n_actions"] = str(action_counts[0])
+    common_values["replicates"] = "1"
+    common = parse_adversarial_experiment_form(
+        common_values,
+        algorithms_by_feedback_mode,
+        environments,
+        initialization_modes,
+        max_actions,
+        max_horizon,
+        max_replicates,
+    )
+    return AdversarialScalingForm(
+        environment=common.environment,
+        initialization_mode=common.initialization_mode,
+        feedback_mode=common.feedback_mode,
+        algorithm_name=common.algorithm_name,
+        action_counts=action_counts,
+        replicates=parse_positive_integer(
+            values.get("scaling_replicates", ""),
+            "scaling replicates",
+            max_replicates,
+        ),
+        horizon=common.horizon,
+        environment_seed=common.environment_seed,
+        learner_seed=common.learner_seed,
+        regret_evaluation=common.regret_evaluation,
     )

@@ -3,24 +3,19 @@
 const dashboardDataElement = document.getElementById("dashboard-data");
 const dashboardData = dashboardDataElement
     ? JSON.parse(dashboardDataElement.textContent)
-    : {figures: [], figuresUrl: "", equilibriumFigures: {}, gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
-const formStorageKey = "swap-regret-experiment-form";
+    : {mode: "fixed", figures: [], equilibriumFigures: {}, gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
+const onePlayerMode = dashboardData.mode === "adversarial";
+const formStorageKey = onePlayerMode ? "swap-regret-adversarial-form" : "swap-regret-experiment-form";
 const filterStorageKey = "swap-regret-result-filters";
-const formFieldIds = ["game", "feedback-mode", "regret-evaluation", "horizon", "seed", "replicates"];
-const filterFieldIds = [
-    "filter-game",
-    "filter-source",
-    "filter-regret",
-    "filter-player",
-    "filter-view",
-    "filter-summary-source",
-    "filter-feedback",
-    "filter-regret-evaluation",
-    "filter-player-algorithm",
-    "filter-co-player-algorithm",
-    "filter-horizon",
-    "filter-seed",
-];
+
+function formFields() {
+    const form = element("experiment-form");
+    return form ? [...form.elements].filter((field) => field.name && field.type !== "hidden" && field.name !== "algorithm_names") : [];
+}
+
+function resultFilterControls() {
+    return [...document.querySelectorAll('[id^="filter-"]')];
+}
 
 function gamePresentation(game) {
     return dashboardData.gamePresentations[game] || {
@@ -30,7 +25,7 @@ function gamePresentation(game) {
 }
 
 function saveFormState() {
-    const state = Object.fromEntries(formFieldIds.map((id) => [id, element(id)?.value ?? ""]));
+    const state = Object.fromEntries(formFields().map((field) => [field.name, field.value]));
     state.algorithmNames = playerAlgorithmSelects().map((select) => select.value);
     saveLocalJson(formStorageKey, state, "experiment parameters");
 }
@@ -41,45 +36,36 @@ function restoreFormState() {
         return;
     }
 
-    for (const id of ["game", "feedback-mode", "regret-evaluation"]) {
-        const select = element(id);
-        if (select && [...select.options].some((option) => option.value === state[id])) {
-            select.value = state[id];
+    for (const control of formFields()) {
+        const key = control.name in state ? control.name : control.id;
+        let value = state[key];
+        if (value === undefined && control.name === "seed") value = state.learner_seed;
+        if (value === undefined) {
+            continue;
+        }
+        if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === value)) {
+            continue;
+        }
+        const fallback = control.value;
+        control.value = value;
+        if (!control.checkValidity()) {
+            control.value = fallback;
         }
     }
     updatePlayerControls(state.algorithmNames || []);
-    for (const id of ["horizon", "seed", "replicates"]) {
-        const input = element(id);
-        if (input && state[id] !== undefined) {
-            input.value = state[id];
-        }
-    }
-    updateReplicateVisibility();
 }
 
 function installFormPersistence() {
     const form = element("experiment-form");
-    form?.addEventListener("input", saveFormState);
-    form?.addEventListener("change", saveFormState);
-    form?.addEventListener("submit", saveFormState);
+    if (form) {
+        form.addEventListener("input", saveFormState);
+        form.addEventListener("change", saveFormState);
+        form.addEventListener("submit", saveFormState);
+    }
 }
 
 function updateAlgorithmSelect(select, algorithms) {
-    if (!select) {
-        return;
-    }
-
-    const previousValue = select.value;
-    select.replaceChildren(...algorithms.map((algorithm) => {
-        const option = document.createElement("option");
-        option.value = algorithm;
-        option.textContent = dashboardData.algorithmLabels[algorithm] || algorithm;
-        return option;
-    }));
-
-    select.value = algorithms.includes(previousValue)
-        ? previousValue
-        : algorithms[0] || "";
+    replaceSelectOptions(select, algorithms, dashboardData.algorithmLabels);
 }
 
 function playerAlgorithmSelects() {
@@ -87,14 +73,16 @@ function playerAlgorithmSelects() {
 }
 
 function updatePlayerControls(preferredValues = null) {
-    const game = element("game")?.value;
-    const definition = dashboardData.gameDefinitions[game];
+    const feedback = element("feedback-mode");
+    const algorithms = dashboardData.algorithms[feedback ? feedback.value : ""] || [];
+    const existingValues = preferredValues || playerAlgorithmSelects().map((select) => select.value);
+    const gameSelect = element("game");
+    const game = gameSelect ? gameSelect.value : "";
+    const definition = (dashboardData.gameDefinitions || {})[game] || {n_players: 1};
     const container = element("players");
-    if (!definition || !container) {
+    if (!container) {
         return;
     }
-    const existingValues = preferredValues || playerAlgorithmSelects().map((select) => select.value);
-    const algorithms = dashboardData.algorithms[element("feedback-mode")?.value] || [];
     const fields = [];
     for (let player = 0; player < definition.n_players; player += 1) {
         const fieldset = document.createElement("fieldset");
@@ -112,8 +100,12 @@ function updatePlayerControls(preferredValues = null) {
         select.className = "player-algorithm";
         select.required = true;
         field.append(label, select);
-        fieldset.append(legend, field);
-        fields.push(fieldset);
+        if (definition.n_players > 1) {
+            fieldset.append(legend, field);
+            fields.push(fieldset);
+        } else {
+            fields.push(field);
+        }
         updateAlgorithmSelect(select, algorithms);
         if (algorithms.includes(existingValues[player])) {
             select.value = existingValues[player];
@@ -132,44 +124,39 @@ function updateAlgorithmsForFeedbackMode() {
     playerAlgorithmSelects().forEach((select) => updateAlgorithmSelect(select, algorithms));
 }
 
-function updateReplicateVisibility() {
-    const fields = element("replicate-fields");
-    if (fields) {
-        const hidden = element("feedback-mode")?.value !== "bandit";
-        fields.hidden = hidden;
-        fields.querySelectorAll("input").forEach((input) => {
-            input.disabled = hidden;
-        });
-    }
-}
-
 function alignedRegretEvaluation(feedbackMode) {
     return feedbackMode === "bandit" ? "realized" : "expected";
 }
 
 function updateRegretEvaluationForFeedback(previousFeedbackMode) {
-    const feedback = element("feedback-mode")?.value;
+    const feedbackSelect = element("feedback-mode");
+    const feedback = feedbackSelect ? feedbackSelect.value : "";
     const evaluation = element("regret-evaluation");
     if (evaluation && evaluation.value === alignedRegretEvaluation(previousFeedbackMode)) {
         evaluation.value = alignedRegretEvaluation(feedback);
     }
 }
 
+function selectedResultScope() {
+    const scope = element("filter-scope");
+    return scope && scope.value !== "all" ? scope.value : "";
+}
+
 function updateEquilibriumFigures() {
-    const game = element("game")?.value;
-    const urls = dashboardData.equilibriumFigures[game];
+    const game = selectedResultScope();
+    const panel = element("equilibrium-panel");
+    if (panel) {
+        panel.hidden = !game;
+    }
     if (!game) {
         return;
     }
+    const urls = (dashboardData.equilibriumFigures || {})[game];
 
     const presentation = gamePresentation(game);
     const gameLabel = element("equilibrium-game");
     if (gameLabel) {
         gameLabel.textContent = presentation.label;
-    }
-    const gameDescription = element("game-description");
-    if (gameDescription) {
-        gameDescription.textContent = presentation.description;
     }
     const grid = element("equilibrium-grid");
     const explanation = element("equilibrium-explanation");
@@ -183,7 +170,7 @@ function updateEquilibriumFigures() {
     if (unavailable) {
         unavailable.hidden = Boolean(urls);
     }
-    if (!urls || !element("equilibrium-panel")?.open) {
+    if (!urls || !panel || !panel.open) {
         return;
     }
     for (const equilibrium of ["ce", "cce"]) {
@@ -209,7 +196,58 @@ function updateEquilibriumFigures() {
 
 function updateDashboardForGame(preferredAlgorithms = null) {
     updatePlayerControls(preferredAlgorithms);
-    updateEquilibriumFigures();
+    const game = element("game");
+    const description = element("game-description");
+    if (game && description) {
+        description.textContent = gamePresentation(game.value).description;
+    }
+}
+
+function updateOnePlayerEnvironment() {
+    const environmentSelect = element("adversarial-environment");
+    const environment = environmentSelect ? environmentSelect.value : "";
+    if (!environment) {
+        return;
+    }
+    const randomWalk = environment === dashboardData.randomWalkEnvironment;
+    for (const [fieldId, enabled] of [
+        ["adversarial-initialization-field", randomWalk],
+        ["adversarial-environment-seed-field", randomWalk],
+    ]) {
+        const field = element(fieldId);
+        if (!field) {
+            continue;
+        }
+        field.hidden = !enabled;
+        field.querySelectorAll("input, select").forEach((input) => {
+            input.disabled = !enabled;
+        });
+    }
+}
+
+function updateEnvironmentAnalysis() {
+    const environment = selectedResultScope();
+    const panel = element("environment-panel");
+    const historicalRule = element("historical-frequency-rule");
+    const randomWalkRule = element("random-walk-rule");
+    const randomWalk = environment === dashboardData.randomWalkEnvironment;
+    if (panel) {
+        panel.hidden = !environment;
+    }
+    if (historicalRule) {
+        historicalRule.hidden = !environment || randomWalk;
+    }
+    if (randomWalkRule) {
+        randomWalkRule.hidden = !environment || !randomWalk;
+    }
+}
+
+function updateFilteredAnalysis() {
+    if (onePlayerMode) {
+        updateEnvironmentAnalysis();
+    } else {
+        updateEquilibriumFigures();
+    }
 }
 
 function synchronizePlayerValues() {
@@ -221,12 +259,17 @@ function synchronizePlayerValues() {
     }
 }
 
-function selectedFilter(id) {
-    return element(id)?.value || "all";
+function matchesFilters(record, selector, key) {
+    return [...document.querySelectorAll(selector)].every((control) => {
+        const value = control.value;
+        if (!value || value === "all") return true;
+        const actual = record.dataset[control.dataset[key]] || "";
+        return control.hasAttribute("data-token-filter") ? actual.split(" ").includes(value) : actual === value;
+    });
 }
 
 function saveFilterState() {
-    const state = Object.fromEntries(filterFieldIds.map((id) => [id, element(id)?.value ?? ""]));
+    const state = Object.fromEntries(resultFilterControls().map((control) => [control.id, control.value]));
     saveLocalJson(filterStorageKey, state, "result filters");
 }
 
@@ -236,10 +279,9 @@ function restoreFilterState() {
         return;
     }
 
-    filterFieldIds.forEach((id) => {
-        const control = element(id);
-        const value = state[id];
-        if (!control || value === undefined) {
+    resultFilterControls().forEach((control) => {
+        const value = state[control.id];
+        if (value === undefined) {
             return;
         }
         if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === value)) {
@@ -250,39 +292,21 @@ function restoreFilterState() {
 }
 
 function installFilterPersistence() {
-    filterFieldIds.forEach((id) => {
-        const control = element(id);
-        if (!control) {
-            return;
-        }
-        const eventName = control instanceof HTMLSelectElement ? "change" : "input";
-        control.addEventListener(eventName, () => {
+    resultFilterControls().forEach((control) => {
+        const update = () => {
             saveFilterState();
             applyFilters();
-        });
+            if (control.dataset.resultFilter === "scope") {
+                updateFilteredAnalysis();
+            }
+        };
+        control.addEventListener(control.matches("input") ? "input" : "change", update);
     });
 }
 
 function updateSummaryRows() {
-    const game = selectedFilter("filter-game");
-    const player = selectedFilter("filter-player");
-    const feedback = selectedFilter("filter-feedback");
-    const regretEvaluation = selectedFilter("filter-regret-evaluation");
-    const playerAlgorithm = selectedFilter("filter-player-algorithm");
-    const coPlayerAlgorithm = selectedFilter("filter-co-player-algorithm");
-    const horizon = element("filter-horizon")?.value || "";
-    const seed = element("filter-seed")?.value || "";
-
     document.querySelectorAll(".summary-row").forEach((row) => {
-        const gameMatches = game === "all" || row.dataset.game === game;
-        const playerMatches = player === "all" || row.dataset.player === player;
-        const feedbackMatches = feedback === "all" || row.dataset.feedback === feedback;
-        const evaluationMatches = regretEvaluation === "all" || row.dataset.regretEvaluation === regretEvaluation;
-        const playerAlgorithmMatches = playerAlgorithm === "all" || row.dataset.playerAlgorithm === playerAlgorithm;
-        const coPlayerAlgorithmMatches = coPlayerAlgorithm === "all" || row.dataset.coPlayerAlgorithms.split(" ").includes(coPlayerAlgorithm);
-        const horizonMatches = !horizon || row.dataset.horizon === horizon;
-        const seedMatches = !seed || row.dataset.seed === seed;
-        row.hidden = !(gameMatches && playerMatches && feedbackMatches && evaluationMatches && playerAlgorithmMatches && coPlayerAlgorithmMatches && horizonMatches && seedMatches);
+        row.hidden = !matchesFilters(row, "[data-result-filter]", "resultFilter") || !matchesFilters(row, "[data-summary-filter]", "summaryFilter");
     });
     highlightBestValues();
 }
@@ -299,8 +323,8 @@ function highlightBestValues() {
             return;
         }
         const keyParts = [
-            cell.dataset.metric, row.dataset.game, row.dataset.feedback, row.dataset.player, row.dataset.horizon,
-            row.dataset.seed, row.dataset.stationaryMethod, row.dataset.regretEvaluation,
+            cell.dataset.metric, row.dataset.scope, row.dataset.secondary, row.dataset.feedback, row.dataset.horizon,
+            row.dataset.seed, row.dataset.stationaryMethod, row.dataset.regretEvaluation, row.dataset.target, row.dataset.configuration,
         ];
         const key = keyParts.join("|");
         groups.set(key, [...(groups.get(key) || []), cell]);
@@ -313,7 +337,10 @@ function highlightBestValues() {
 
 function installTableSorting() {
     const table = element("summary-table");
-    table?.querySelectorAll("th").forEach((header, column) => {
+    if (!table) {
+        return;
+    }
+    table.querySelectorAll("th").forEach((header, column) => {
         header.tabIndex = 0;
         header.title = "Sort column";
         const sort = () => {
@@ -321,11 +348,12 @@ function installTableSorting() {
             const ascending = header.dataset.direction !== "ascending";
             table.querySelectorAll("th").forEach((cell) => delete cell.dataset.direction);
             header.dataset.direction = ascending ? "ascending" : "descending";
-            const values = rows.map((row) => row.cells[column].dataset.value ?? row.cells[column].textContent.trim());
+            const value = (row) => row.cells[column].dataset.value === undefined ? row.cells[column].textContent.trim() : row.cells[column].dataset.value;
+            const values = rows.map(value);
             const numeric = values.every((value) => value !== "" && Number.isFinite(Number(value)));
             rows.sort((left, right) => {
-                const leftValue = left.cells[column].dataset.value ?? left.cells[column].textContent.trim();
-                const rightValue = right.cells[column].dataset.value ?? right.cells[column].textContent.trim();
+                const leftValue = value(left);
+                const rightValue = value(right);
                 const comparison = numeric ? Number(leftValue) - Number(rightValue) : leftValue.localeCompare(rightValue);
                 return ascending ? comparison : -comparison;
             });
@@ -342,16 +370,9 @@ function installTableSorting() {
 }
 
 function applyFilters() {
-    const filters = {
-        game: selectedFilter("filter-game"),
-        source: selectedFilter("filter-source"),
-        regret: selectedFilter("filter-regret"),
-        player: selectedFilter("filter-player"),
-        view: selectedFilter("filter-view"),
-    };
     let visible = 0;
-    document.querySelectorAll(".figure-card").forEach((card) => {
-        const matches = Object.entries(filters).every(([name, value]) => value === "all" || card.dataset[name] === value);
+    document.querySelectorAll("#figure-grid .figure-card").forEach((card) => {
+        const matches = matchesFilters(card, "[data-result-filter]", "resultFilter") && matchesFilters(card, "[data-figure-filter]", "figureFilter");
         card.hidden = !matches;
         visible += Number(matches);
     });
@@ -360,6 +381,15 @@ function applyFilters() {
     if (counter) {
         counter.textContent = `${visible} figure${visible === 1 ? "" : "s"}`;
     }
+    if (element("figure-empty")) {
+        element("figure-empty").hidden = visible > 0;
+    }
+    document.querySelectorAll("[data-result-card]").forEach((card) => {
+        card.hidden = !matchesFilters(card, "[data-result-filter]", "resultFilter");
+    });
+    document.querySelectorAll("[data-result-section]").forEach((section) => {
+        section.hidden = ![...section.querySelectorAll("[data-result-card]")].some((card) => !card.hidden);
+    });
     updateSummarySourceColumns();
     updateSummaryRows();
 }
@@ -386,45 +416,58 @@ function selectAvailableSummarySource() {
     }
     const availableSources = new Set();
     dashboardData.summaries.forEach((summary) => {
-        for (const candidate of ["expected", "realized"]) {
-            if (Object.keys(summary).some((name) => name.startsWith(`average_${candidate}_`) && name.endsWith("_regret"))) {
-                availableSources.add(candidate);
-            }
-        }
+        summary.regret_sources.forEach((source) => availableSources.add(source));
     });
     [...source.options].forEach((option) => {
         option.disabled = !availableSources.has(option.value);
     });
     if (!availableSources.has(source.value)) {
-        source.value = [...source.options].find((option) => !option.disabled)?.value || "expected";
+        const available = [...source.options].find((option) => !option.disabled);
+        source.value = available ? available.value : "expected";
     }
 }
 
 function updateSummarySourceColumns() {
-    const source = element("filter-summary-source")?.value || "expected";
+    const sourceSelect = element("filter-summary-source");
+    const source = sourceSelect ? sourceSelect.value : "expected";
     document.querySelectorAll("[data-regret-source]").forEach((cell) => {
         cell.hidden = cell.dataset.regretSource !== source;
     });
 }
 
-function openFigure(index) {
-    const figure = dashboardData.figures[index];
+function openFigure(card) {
     const dialog = element("figure-dialog");
-    if (!figure || !dialog) {
+    if (!card || !dialog) {
         return;
     }
 
     const image = element("dialog-figure-image");
     const title = element("dialog-figure-title");
     const download = element("dialog-figure-download");
-    image.src = figure.url;
-    const gameLabel = gamePresentation(figure.game).label;
-    image.alt = `${gameLabel}, ${figure.source} ${figure.regret} regret, player ${figure.player}`;
-    title.textContent = `${gameLabel} · ${figure.source} ${figure.regret} · player ${figure.player}`;
-    download.href = figure.pdf_url || figure.url;
-    download.download = figure.pdf_filename || figure.filename;
-    download.textContent = figure.pdf_url ? "Download PDF" : "Download PNG";
+    const preview = card.querySelector("img");
+    const sourceDownload = card.querySelector("a[download]");
+    image.src = preview.src;
+    image.alt = preview.alt;
+    title.textContent = card.querySelector(".figure-open span").textContent;
+    download.href = sourceDownload.href;
+    download.download = sourceDownload.download;
+    download.textContent = sourceDownload.textContent;
     dialog.showModal();
+}
+
+function toggleFigureConfidence(button) {
+    const card = button.closest(".figure-card");
+    const show = button.getAttribute("aria-pressed") !== "true";
+    const prefix = show ? "withConfidence" : "withoutConfidence";
+    card.querySelectorAll("[data-with-confidence-src]").forEach((image) => {
+        image.src = image.dataset[`${prefix}Src`];
+    });
+    card.querySelectorAll("[data-with-confidence-href]").forEach((link) => {
+        link.href = link.dataset[`${prefix}Href`];
+        link.download = link.dataset[`${prefix}Download`] || link.download;
+    });
+    button.setAttribute("aria-pressed", show);
+    button.textContent = show ? "Hide 95% CI" : "Show 95% CI";
 }
 
 function addDetail(metadata, label, value) {
@@ -457,6 +500,7 @@ function showExperimentDetail(index) {
     addDetail(metadata, "Seed", summary.seed);
     addDetail(metadata, "Replicates", `${summary.replicate_label} (n=${summary.replicate_count})`);
     addDetail(metadata, "Stationary solver", summary.stationary_method);
+    addDetail(metadata, "Implementation", summary.implementation_version || "legacy");
 
     const regrets = element("detail-regrets");
     regrets.replaceChildren();
@@ -464,7 +508,7 @@ function showExperimentDetail(index) {
         const metric = document.createElement("div");
         const label = document.createElement("span");
         const number = document.createElement("strong");
-        label.textContent = name.replaceAll("_", " ");
+        label.textContent = name.replace(/_/g, " ");
         const confidence = summary.confidence_intervals[name] || 0;
         number.textContent = summary.replicate_count > 1
             ? `${Number(value).toFixed(6)} ± ${Number(confidence).toFixed(6)}`
@@ -515,67 +559,11 @@ function reuseSelectedExperiment() {
     element("feedback-mode").dataset.previousValue = selectedSummary.feedback_mode;
     element("regret-evaluation").value = selectedSummary.regret_evaluation;
     updateDashboardForGame(selectedSummary.algorithm_profile);
-    updateReplicateVisibility();
     element("horizon").value = selectedSummary.horizon;
     element("seed").value = selectedSummary.seed;
     element("replicates").value = selectedSummary.replicate_count;
     saveFormState();
     element("experiment-form").scrollIntoView({behavior: "smooth"});
-}
-
-function createFigureCard(figure, index) {
-    const card = document.createElement("article");
-    card.className = "figure-card";
-    Object.assign(card.dataset, {
-        figureIndex: index,
-        game: figure.game,
-        source: figure.source,
-        regret: figure.regret,
-        player: figure.player,
-        view: figure.view,
-    });
-
-    const button = document.createElement("button");
-    button.className = "figure-open";
-    button.type = "button";
-    const label = document.createElement("span");
-    const gameLabel = gamePresentation(figure.game).label;
-    label.textContent = `${gameLabel} · ${figure.source} · Player ${figure.player} · ${figure.regret}`;
-    const image = document.createElement("img");
-    image.src = figure.url;
-    image.alt = `${gameLabel}, ${figure.source} ${figure.regret} regret for player ${figure.player}`;
-    image.loading = "lazy";
-    button.append(label, image);
-
-    const download = document.createElement("a");
-    download.href = figure.pdf_url || figure.url;
-    download.download = figure.pdf_filename || figure.filename;
-    download.textContent = figure.pdf_url ? "Download PDF" : "Download PNG";
-    card.append(button, download);
-    return card;
-}
-
-function renderFigures(figures) {
-    dashboardData.figures = figures;
-    element("figure-grid")?.replaceChildren(...figures.map(createFigureCard));
-    if (element("figure-filters")) {
-        element("figure-filters").hidden = figures.length === 0;
-    }
-    if (element("figure-empty")) {
-        element("figure-empty").hidden = figures.length > 0;
-    }
-    selectAvailableFigureSource(figures);
-    applyFilters();
-}
-
-async function refreshFigures() {
-    const response = await fetch(dashboardData.figuresUrl, {headers: {"Accept": "application/json"}});
-    if (!response.ok) {
-        throw new Error("figure inventory request failed");
-    }
-    const figures = await response.json();
-    const version = Date.now();
-    renderFigures(figures.map((figure) => ({...figure, url: `${figure.url.split("?")[0]}?v=${version}`})));
 }
 
 function setBusy(busy) {
@@ -585,73 +573,6 @@ function setBusy(busy) {
     document.querySelectorAll("[data-busy-control]").forEach((control) => {
         control.disabled = busy;
     });
-}
-
-function showNotice(message, category) {
-    const notice = document.createElement("div");
-    notice.className = `notice notice-${category}`;
-    notice.textContent = message;
-    element("notice-stack")?.append(notice);
-    window.setTimeout(() => notice.remove(), 6000);
-}
-
-function addJob(job) {
-    dashboardData.jobs.unshift(job);
-    const panel = document.querySelector(".jobs-panel");
-    if (panel) {
-        panel.hidden = false;
-    }
-    let list = panel?.querySelector(".job-list");
-    if (!list && panel) {
-        panel.querySelector(".empty")?.remove();
-        list = document.createElement("ol");
-        list.className = "job-list";
-        panel.append(list);
-    }
-    if (!list) {
-        return;
-    }
-
-    const item = document.createElement("li");
-    item.className = `job job-${job.status}`;
-    item.dataset.jobId = job.id;
-    const description = document.createElement("div");
-    const title = document.createElement("strong");
-    const message = document.createElement("p");
-    title.textContent = job.description;
-    message.textContent = job.message;
-    description.append(title, message);
-    const actions = document.createElement("div");
-    actions.className = "job-actions";
-    const status = document.createElement("span");
-    status.className = "status";
-    status.textContent = job.status;
-    actions.append(status);
-    item.append(description, actions);
-    list.prepend(item);
-    while (list.children.length > 5) {
-        list.lastElementChild.remove();
-    }
-}
-
-async function submitPlotRebuild(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    setBusy(true);
-
-    try {
-        const response = await fetch(form.action, {method: "POST", body: new FormData(form), headers: {"Accept": "application/json"}});
-        const payload = await response.json();
-        if (!response.ok) {
-            throw new Error(payload.error || "Could not queue figure rebuild");
-        }
-        addJob(payload);
-        showNotice(`Queued plot job ${payload.id.slice(0, 8)}.`, "success");
-        pollActiveJobs();
-    } catch (error) {
-        setBusy(false);
-        showNotice(error.message, "error");
-    }
 }
 
 async function pollActiveJobs() {
@@ -672,25 +593,13 @@ async function pollActiveJobs() {
         jobs.forEach(updateJob);
 
         const terminalJobs = jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status));
-        if (terminalJobs.some((job) => job.reload_page)) {
+        if (terminalJobs.length > 0) {
             saveFormState();
             window.location.reload();
             return;
         }
-        if (terminalJobs.length === jobs.length) {
-            if (terminalJobs.some((job) => job.status === "succeeded")) {
-                await refreshFigures();
-            }
-            setBusy(false);
-            return;
-        }
     } catch (error) {
         console.warn("Could not refresh job status", error);
-        if (!dashboardData.jobs.some((job) => job.status === "queued" || job.status === "running")) {
-            setBusy(false);
-            showNotice(error.message, "error");
-            return;
-        }
     }
     window.setTimeout(pollActiveJobs, 1200);
 }
@@ -705,48 +614,44 @@ function updateJob(job) {
         return;
     }
 
-    item.classList.remove("job-queued", "job-running", "job-succeeded", "job-failed", "job-cancelled");
-    item.classList.add(`job-${job.status}`);
-    const message = item.querySelector("p");
-    const status = item.querySelector(".status");
-    if (message) {
-        message.textContent = job.message;
-    }
-    if (status) {
-        status.textContent = job.status;
-    }
-    if (["succeeded", "failed", "cancelled"].includes(job.status)) {
-        item.querySelector(".job-actions form")?.remove();
-    }
+    updateJobElement(item, job);
 }
 
-element("feedback-mode")?.addEventListener("change", (event) => {
+listen("feedback-mode", "change", (event) => {
     updateRegretEvaluationForFeedback(event.currentTarget.dataset.previousValue || event.currentTarget.value);
     event.currentTarget.dataset.previousValue = event.currentTarget.value;
     updateAlgorithmsForFeedbackMode();
-    updateReplicateVisibility();
 });
-element("game")?.addEventListener("change", () => {
+listen("game", "change", () => {
     updateDashboardForGame();
-    saveFormState();
 });
-element("equilibrium-panel")?.addEventListener("toggle", (event) => {
+listen("adversarial-environment", "change", () => {
+    updateOnePlayerEnvironment();
+});
+listen("equilibrium-panel", "toggle", (event) => {
     if (event.currentTarget.open) {
         updateEquilibriumFigures();
     }
 });
-element("synchronize-players")?.addEventListener("click", () => {
+listen("synchronize-players", "click", () => {
     synchronizePlayerValues();
     saveFormState();
 });
-element("figure-grid")?.addEventListener("click", (event) => {
-    const button = event.target.closest(".figure-open");
-    if (button) {
-        openFigure(Number(button.closest(".figure-card").dataset.figureIndex));
+document.addEventListener("click", (event) => {
+    const figureButton = event.target.closest(".figure-open");
+    if (figureButton) {
+        openFigure(figureButton.closest(".figure-card"));
+    }
+    const confidenceToggle = event.target.closest(".confidence-toggle");
+    if (confidenceToggle) {
+        toggleFigureConfidence(confidenceToggle);
     }
 });
-element("close-figure-dialog")?.addEventListener("click", () => element("figure-dialog").close());
+listen("close-figure-dialog", "click", () => element("figure-dialog").close());
 document.querySelectorAll(".summary-row").forEach((row) => {
+    if (row.dataset.summaryIndex === undefined) {
+        return;
+    }
     const showDetail = () => showExperimentDetail(Number(row.dataset.summaryIndex));
     row.addEventListener("click", showDetail);
     row.addEventListener("keydown", (event) => {
@@ -756,18 +661,21 @@ document.querySelectorAll(".summary-row").forEach((row) => {
         }
     });
 });
-element("reuse-experiment")?.addEventListener("click", reuseSelectedExperiment);
-element("rebuild-plots-form")?.addEventListener("submit", submitPlotRebuild);
+listen("reuse-experiment", "click", reuseSelectedExperiment);
 restoreFormState();
 if (element("feedback-mode")) {
     element("feedback-mode").dataset.previousValue = element("feedback-mode").value;
 }
-updateDashboardForGame(playerAlgorithmSelects().map((select) => select.value));
 installFormPersistence();
+updateDashboardForGame(playerAlgorithmSelects().map((select) => select.value));
+if (onePlayerMode) {
+    updateOnePlayerEnvironment();
+}
 installTableSorting();
 restoreFilterState();
 selectAvailableFigureSource(dashboardData.figures);
 selectAvailableSummarySource();
 installFilterPersistence();
 applyFilters();
+updateFilteredAnalysis();
 pollActiveJobs();

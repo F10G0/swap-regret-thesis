@@ -9,6 +9,7 @@ from experiments.results import (
     load_final_result_rows,
     result_algorithm_profile,
     result_game_payoff_digest,
+    result_implementation_version,
     result_player_algorithm,
     result_regret_evaluation,
 )
@@ -93,6 +94,7 @@ class ResultIndex:
             "replicate": int(row["replicate"]),
             "stationary_method": row["stationary_method"],
             "game_payoff_digest": result_game_payoff_digest(row),
+            "implementation_version": result_implementation_version(row),
             "player": player,
             "n_players": len(algorithm_profile),
             "algorithm_profile": list(algorithm_profile),

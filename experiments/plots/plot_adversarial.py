@@ -12,15 +12,15 @@ import numpy as np
 
 from config import ADVERSARIAL_FIGURE_DIR, ADVERSARIAL_RAW_DIR
 from experiments.algorithm_labels import algorithm_label
-from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
+from experiments.plots import confidence_free_figure_path, remove_stale_figure_pairs, save_figure_pair
+from experiments.result_schema import regret_sources
 from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
     FEEDBACK_MODE_LABELS,
-    HISTORICAL_FREQUENCY_ENVIRONMENT,
     TARGET_REGRET_BY_ALGORITHM,
-    adversarial_environment_detail,
     load_adversarial_rows,
 )
+from metrics.confidence import mean_confidence_interval_half_width
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,55 @@ ALGORITHM_COLORS = {
     "stationary_regret_matching": "#E69F00",
 }
 LINE_STYLES = ("-", "--", "-.", ":")
+
+
+def _group_key(rows: list[dict[str, str]]) -> tuple:
+    first = rows[0]
+    replicate = int(first["replicate"])
+    environment_seed = first["environment_seed"]
+    return (
+        first["environment"],
+        first["initialization_mode"],
+        first["reward_step"],
+        first["feedback_mode"],
+        first["regret_evaluation"],
+        first["implementation_version"],
+        first["n_actions"],
+        first["algorithm"],
+        first["horizon"],
+        int(environment_seed) - replicate if environment_seed else None,
+        int(first["learner_seed"]) - replicate,
+    )
+
+
+def group_adversarial_results(
+    results: list[tuple[Path, list[dict[str, str]]]],
+) -> list[list[list[dict[str, str]]]]:
+    groups = defaultdict(list)
+    for _, rows in results:
+        groups[_group_key(rows)].append(rows)
+    return [
+        sorted(group, key=lambda rows: int(rows[0]["replicate"]))
+        for _, group in sorted(groups.items())
+    ]
+
+
+def aggregate_adversarial_regret(
+    trajectories: list[list[dict[str, str]]],
+    column: str,
+    scale_by_sqrt_time: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    times = np.asarray([int(row["t"]) for row in trajectories[0]])
+    values = np.asarray(
+        [[float(row[column]) for row in trajectory] for trajectory in trajectories]
+    )
+    if scale_by_sqrt_time:
+        values = values / np.sqrt(times)
+    return (
+        times,
+        np.mean(values, axis=0),
+        mean_confidence_interval_half_width(values, axis=0),
+    )
 
 
 def collect_adversarial_results(
@@ -57,6 +106,8 @@ def collect_adversarial_results(
 
 def _plot_regret(
     results: list[tuple[Path, list[dict[str, str]]]],
+    environment: str,
+    feedback_mode: str,
     n_actions: int,
     source: str,
     regret_name: str,
@@ -65,44 +116,50 @@ def _plot_regret(
 ) -> None:
     figure, axes = plt.subplots(figsize=(10, 5.2))
     algorithm_occurrences = defaultdict(int)
-    selected = [rows for _, rows in results if int(rows[0]["n_actions"]) == n_actions]
+    confidence_bands = []
+    selected = [
+        group
+        for group in group_adversarial_results(results)
+        if group[0][0]["environment"] == environment
+        and group[0][0]["feedback_mode"] == feedback_mode
+        and int(group[0][0]["n_actions"]) == n_actions
+        and source in regret_sources(group[0][0]["regret_evaluation"])
+    ]
     sort_fields = (
-        "environment",
-        "feedback_mode",
         "algorithm",
         "horizon",
         "learner_seed",
     )
-    for rows in sorted(selected, key=lambda item: tuple(item[0][field] for field in sort_fields)):
-        first = rows[0]
+    for trajectories in sorted(
+        selected,
+        key=lambda group: tuple(group[0][0][field] for field in sort_fields),
+    ):
+        first = trajectories[0][0]
         algorithm = first["algorithm"]
-        environment_detail = adversarial_environment_detail(first, include_environment_seed=True)
-        times = np.asarray([int(row["t"]) for row in rows])
         if average:
             column = f"average_{source}_{regret_name}_regret"
-            values = np.asarray([float(row[column]) for row in rows])
         else:
             column = f"{source}_{regret_name}_regret"
-            values = np.asarray([float(row[column]) for row in rows]) / np.sqrt(times)
+        times, values, confidence = aggregate_adversarial_regret(
+            trajectories,
+            column,
+            scale_by_sqrt_time=not average,
+        )
         color = ALGORITHM_COLORS[algorithm]
         occurrence = algorithm_occurrences[algorithm]
         algorithm_occurrences[algorithm] += 1
         target = TARGET_REGRET_BY_ALGORITHM.get(algorithm) == regret_name
-        label = (
-            f"{algorithm_label(algorithm)} · "
-            f"{FEEDBACK_MODE_LABELS[first['feedback_mode']]} · "
-            f"{ENVIRONMENT_LABELS[first['environment']]} · "
-            f"{environment_detail} · "
-            f"T={int(first['horizon']):,} · learner seed {first['learner_seed']}"
-        )
+        replicate_count = len(trajectories)
         axes.plot(
             times,
             values,
             color=color,
             linestyle=LINE_STYLES[occurrence % len(LINE_STYLES)],
             linewidth=2.4 if target else 1.5,
-            label=label,
+            label=algorithm_label(algorithm) if occurrence == 0 else "_nolegend_",
         )
+        if replicate_count > 1:
+            confidence_bands.append((times, values, confidence, color))
 
     axes.set_xscale("log")
     axes.axhline(0.0, color="#7b8580", linewidth=0.8, linestyle="--")
@@ -115,92 +172,17 @@ def _plot_regret(
     )
     axes.set_ylabel(ylabel)
     axes.set_title(
-        f"Adversarial experiments · {n_actions} actions · "
+        f"{ENVIRONMENT_LABELS[environment]} · {FEEDBACK_MODE_LABELS[feedback_mode]} · "
+        f"{n_actions} actions · "
         f"{view_label.lower()} {source} {regret_name} regret"
     )
     axes.grid(True)
     axes.legend(loc="best", fontsize="small", frameon=False)
     figure.tight_layout()
-    save_figure_pair(figure, output_path, png_dpi=150, bbox_inches="tight")
-    plt.close(figure)
-
-
-def _frequency_curves(
-    input_path: Path,
-    metadata: dict[str, str],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    n_actions = int(metadata["n_actions"])
-    horizon = int(metadata["horizon"])
-    action_counts = np.zeros(n_actions, dtype=np.int64)
-    reference_counts = np.zeros(n_actions, dtype=np.int64)
-    times = []
-    action_frequencies = []
-    reference_frequencies = []
-    reference_field = (
-        "punished_action"
-        if metadata["environment"] == HISTORICAL_FREQUENCY_ENVIRONMENT
-        else "current_best_action"
-    )
-    stride = max(1, (horizon + MAX_PLOT_POINTS - 1) // MAX_PLOT_POINTS)
-
-    with input_path.open("r", encoding="utf-8", newline="") as file:
-        for row in csv.DictReader(file):
-            time = int(row["t"])
-            action = int(row["action"])
-            reference_action = int(row[reference_field])
-            action_counts[action] += 1
-            reference_counts[reference_action] += 1
-            if time == 1 or time == horizon or time % stride == 0:
-                times.append(time)
-                action_frequencies.append(action_counts / time)
-                reference_frequencies.append(reference_counts / time)
-
-    return (
-        np.asarray(times, dtype=int),
-        np.asarray(action_frequencies, dtype=float),
-        np.asarray(reference_frequencies, dtype=float),
-    )
-
-
-def _plot_frequencies(
-    metadata: dict[str, str],
-    times: np.ndarray,
-    frequencies: np.ndarray,
-    kind: str,
-    output_path: Path,
-) -> None:
-    n_actions = frequencies.shape[1]
-    figure, axes = plt.subplots(figsize=(10, 5.2))
-    colors = plt.colormaps["tab20"].resampled(n_actions)
-    for action in range(n_actions):
-        axes.plot(
-            times,
-            frequencies[:, action],
-            color=colors(action),
-            linewidth=1.8,
-            label=f"Action {action}",
-        )
-
-    environment_detail = adversarial_environment_detail(metadata, include_environment_seed=True)
-    kind_label = {
-        "action": "Learner action",
-        "punished_action": "Punished-action",
-        "best_action": "Best-action",
-    }[kind]
-    axes.set_xscale("log")
-    axes.set_ylim(-0.02, 1.02)
-    axes.set_xlabel("Round")
-    axes.set_ylabel("Cumulative frequency")
-    axes.set_title(
-        f"{kind_label} frequency · "
-        f"{algorithm_label(metadata['algorithm'])} · "
-        f"{FEEDBACK_MODE_LABELS[metadata['feedback_mode']]} · "
-        f"{environment_detail}"
-    )
-    axes.grid(True)
-    if n_actions <= 12:
-        axes.legend(loc="best", fontsize="small", frameon=False, ncol=2)
-    figure.tight_layout()
+    if confidence_bands:
+        save_figure_pair(figure, confidence_free_figure_path(output_path), png_dpi=150, bbox_inches="tight")
+        for times, values, confidence, color in confidence_bands:
+            axes.fill_between(times, values - confidence, values + confidence, color=color, alpha=0.14)
     save_figure_pair(figure, output_path, png_dpi=150, bbox_inches="tight")
     plt.close(figure)
 
@@ -214,23 +196,43 @@ def plot_adversarial_results(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     generated = []
-    for n_actions in sorted({int(rows[0]["n_actions"]) for _, rows in results}):
-        for source in ("expected", "realized"):
+    environment_feedback_action_counts = {
+        (
+            rows[0]["environment"],
+            rows[0]["feedback_mode"],
+            int(rows[0]["n_actions"]),
+        )
+        for _, rows in results
+    }
+    for environment, feedback_mode, n_actions in sorted(environment_feedback_action_counts):
+        sources = {
+            source
+            for _, rows in results
+            if rows[0]["environment"] == environment
+            and rows[0]["feedback_mode"] == feedback_mode
+            and int(rows[0]["n_actions"]) == n_actions
+            for source in regret_sources(rows[0]["regret_evaluation"])
+        }
+        for source in (
+            source for source in ("expected", "realized") if source in sources
+        ):
             for regret_name in ("external", "internal", "swap"):
                 for average in (True, False):
                     if average:
                         filename = (
-                            f"adversarial_{n_actions}_actions_average_"
+                            f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_average_"
                             f"{source}_{regret_name}_regret.png"
                         )
                     else:
                         filename = (
-                            f"adversarial_{n_actions}_actions_{source}_"
+                            f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_{source}_"
                             f"{regret_name}_regret_over_sqrt_t.png"
                         )
                     output_path = output_dir / filename
                     _plot_regret(
                         results,
+                        environment,
+                        feedback_mode,
                         n_actions,
                         source,
                         regret_name,
@@ -239,39 +241,12 @@ def plot_adversarial_results(
                     )
                     generated.append(output_path)
 
-    for input_path, rows in results:
-        metadata = rows[0]
-        times, action_frequencies, reference_frequencies = _frequency_curves(
-            input_path, metadata
-        )
-        reference_kind = (
-            "punished_action"
-            if metadata["environment"] == HISTORICAL_FREQUENCY_ENVIRONMENT
-            else "best_action"
-        )
-        for kind, frequencies in (
-            ("action", action_frequencies),
-            (reference_kind, reference_frequencies),
-        ):
-            output_path = output_dir / f"{input_path.stem}_{kind}_frequency.png"
-            _plot_frequencies(
-                metadata,
-                times,
-                frequencies,
-                kind,
-                output_path,
-            )
-            generated.append(output_path)
-
-    generated_names = {
-        path.with_suffix(suffix).name
+    generated_paths = generated + [
+        confidence_free_figure_path(path)
         for path in generated
-        for suffix in FIGURE_SUFFIXES
-    }
-    for suffix in FIGURE_SUFFIXES:
-        for old_path in output_dir.glob(f"*{suffix}"):
-            if old_path.name not in generated_names:
-                old_path.unlink()
+        if confidence_free_figure_path(path).is_file()
+    ]
+    remove_stale_figure_pairs(output_dir, generated_paths)
     return generated
 
 

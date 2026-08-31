@@ -1,15 +1,15 @@
 import json
 from pathlib import Path
-from threading import Event
 import time
 
 import numpy as np
 import pytest
 
+from experiments.plots import confidence_free_figure_path
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
 from web.presentations import GAME_PRESENTATIONS
-from tests.web.support import create_test_app, csrf_token, wait_for_http_response, wait_for_job
+from tests.web.support import block_job_queue, create_test_app, csrf_token, wait_for_http_response, wait_for_job
 from web.validation import (
     parse_experiment_form,
     parse_positive_integer,
@@ -110,29 +110,43 @@ def test_bandit_form_accepts_replicate_batch() -> None:
     assert form.replicates == 20
 
 
-def test_full_information_form_uses_one_replicate() -> None:
-    values = {
-        key: value
-        for key, value in VALID_FORM.items()
-        if key != "replicates"
-    }
+def test_full_information_form_accepts_replicate_batch() -> None:
     form = parse_experiment_form(
-        values,
+        VALID_FORM | {"replicates": "20"},
         games={"rps"},
         algorithms_by_feedback_mode={"full_information": ["hedge"]},
         max_horizon=100,
     )
 
-    assert form.replicates == 1
+    assert form.replicates == 20
 
-    stale_values = VALID_FORM | {"replicate": "9", "replicates": "20"}
-    stale_form = parse_experiment_form(
-        stale_values,
-        games={"rps"},
-        algorithms_by_feedback_mode={"full_information": ["hedge"]},
-        max_horizon=100,
-    )
-    assert stale_form.replicates == 1
+    with pytest.raises(ValueError, match="replicates must not exceed 10"):
+        parse_experiment_form(
+            VALID_FORM | {"replicates": "11"},
+            games={"rps"},
+            algorithms_by_feedback_mode={"full_information": ["hedge"]},
+            max_horizon=100,
+            max_replicates=10,
+        )
+
+
+def test_all_feedback_modes_require_replicates() -> None:
+    values = {key: value for key, value in VALID_FORM.items() if key != "replicates"}
+    with pytest.raises(ValueError, match="replicates must be an integer"):
+        parse_experiment_form(
+            values,
+            games={"rps"},
+            algorithms_by_feedback_mode={"full_information": ["hedge"]},
+            max_horizon=100,
+        )
+
+    with pytest.raises(ValueError, match="replicates must be positive"):
+        parse_experiment_form(
+            VALID_FORM | {"replicates": "0"},
+            games={"rps"},
+            algorithms_by_feedback_mode={"full_information": ["hedge"]},
+            max_horizon=100,
+        )
 
 
 @pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
@@ -205,7 +219,6 @@ def test_dashboard_queues_valid_experiment_and_exposes_job_status(
     assert response.status_code == 302
 
     job = service.jobs.recent()[0]
-    assert job.reload_page is True
     assert wait_for_job(service, job.id) == "succeeded"
     status_response = client.get(f"/jobs/{job.id}")
     assert status_response.status_code == 200
@@ -230,15 +243,7 @@ def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
 ) -> None:
     app, service = create_test_app(tmp_path)
     client = app.test_client()
-    blocker_started = Event()
-    release_blocker = Event()
-
-    def block_queue(job) -> None:
-        blocker_started.set()
-        assert release_blocker.wait(timeout=2)
-
-    blocker = service.jobs.submit("blocker", block_queue)
-    assert blocker_started.wait(timeout=1)
+    blocker, release_blocker = block_job_queue(service.jobs)
     token = csrf_token(client)
     first_response = client.post("/", data=VALID_FORM | {"_csrf_token": token})
     second_response = client.post(
@@ -263,39 +268,14 @@ def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 2
 
 
-def test_plot_rebuild_returns_json_without_navigation(tmp_path: Path) -> None:
+def test_plot_rebuild_uses_standard_redirect(tmp_path: Path) -> None:
     app, service = create_test_app(tmp_path)
     client = app.test_client()
-    response = client.post("/plots/rebuild", data={"_csrf_token": csrf_token(client)}, headers={"Accept": "application/json"})
+    response = client.post("/plots/rebuild", data={"_csrf_token": csrf_token(client)})
 
-    assert response.status_code == 202
-    assert response.json["reload_page"] is False
-    assert response.json["url"].endswith(f"/jobs/{response.json['id']}")
-    assert wait_for_job(service, response.json["id"]) == "succeeded"
-
-
-def test_figure_inventory_endpoint_returns_json(tmp_path: Path) -> None:
-    app, service = create_test_app(tmp_path)
-    service.figure_dir.mkdir(parents=True)
-    filename = "rps_average_expected_external_regret_player_0.png"
-    (service.figure_dir / filename).write_bytes(b"png")
-    pdf_filename = Path(filename).with_suffix(".pdf").name
-    (service.figure_dir / pdf_filename).write_bytes(b"pdf")
-
-    response = app.test_client().get("/figures")
-
-    assert response.status_code == 200
-    assert response.json == [{
-        "filename": filename,
-        "pdf_filename": pdf_filename,
-        "game": "rps",
-        "player": 0,
-        "regret": "external",
-        "source": "expected",
-        "url": f"/figures/{filename}",
-        "pdf_url": f"/figures/{pdf_filename}",
-        "view": "average",
-    }]
+    assert response.status_code == 302
+    job = service.jobs.recent()[0]
+    assert wait_for_job(service, job.id) == "succeeded"
 
 
 def test_figure_source_filter_has_only_separate_sources(tmp_path: Path) -> None:
@@ -305,7 +285,7 @@ def test_figure_source_filter_has_only_separate_sources(tmp_path: Path) -> None:
         (service.figure_dir / f"rps_average_{source}_external_regret_player_0.png").write_bytes(b"png")
 
     page = app.test_client().get("/").get_data(as_text=True)
-    source_filter = page.split('<select id="filter-source">', 1)[1].split("</select>", 1)[0]
+    source_filter = page.split('<select id="filter-source"', 1)[1].split("</select>", 1)[0]
 
     assert '<option value="expected">Expected</option>' in source_filter
     assert '<option value="realized">Realized</option>' in source_filter
@@ -337,8 +317,7 @@ def test_comparison_view_change_only_marks_pending_state() -> None:
         encoding="utf-8"
     )
     handler = script.split(
-        'element("trajectory-comparison-view")?.addEventListener("change",',
-        1,
+        'listen("trajectory-comparison-view", "change",', 1
     )[1].split("});", 1)[0]
 
     assert "saveTrajectoryComparisonView" in handler
@@ -395,7 +374,7 @@ def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_pa
     assert b'id="detail-downloads"' in dashboard_response.data
     assert b"Equilibrium Convergence" in dashboard_response.data
     assert b">Trajectories</a>" in dashboard_response.data
-    assert b'class="panel results-controls"' in dashboard_response.data
+    assert b'class="results-toolbar"' in dashboard_response.data
     assert b'id="filter-summary-source"' in dashboard_response.data
     assert b'data-regret-source="expected"' in dashboard_response.data
     assert b'data-regret-source="realized"' in dashboard_response.data
@@ -525,14 +504,15 @@ def test_dashboard_renders_balanced_top_controls_and_theme_selector(
     assert 'aria-describedby="feedback-description"' in page
     assert 'aria-describedby="regret-evaluation-description"' in page
     assert 'class="field-grid field-grid-two horizon-seed-grid"' in page
-    assert 'id="replicate-fields" class="field" hidden' in page
+    assert 'id="replicate-fields" class="field"' in page
     horizon_seed = page.split('class="field-grid field-grid-two horizon-seed-grid"', 1)[1].split("</div>", 3)
     assert any('id="horizon"' in fragment for fragment in horizon_seed)
     assert any('id="seed"' in fragment for fragment in horizon_seed)
     assert 'id="replicate"' not in page
     assert 'id="replicates"' in page
     assert "Number of rounds run by each experiment; the dashboard maximum is 100." in page
-    assert "Base seed used to derive reproducible random streams for every player and bandit replicate." in page
+    assert "Base seed used to derive reproducible random streams for every player and replicate." in page
+    assert "aggregate them with Student-t 95% confidence intervals" in page
     assert 'class="theme-control" for="primary-theme"' in page
     assert 'id="primary-theme" aria-label="Primary color theme"' in page
     assert page.index('id="primary-theme"') < page.index('id="experiment-form"')
@@ -542,6 +522,23 @@ def test_dashboard_renders_balanced_top_controls_and_theme_selector(
     for theme in ("green", "blue", "purple", "orange", "red"):
         assert f'<option value="{theme}">' in page
     assert 'swap-regret-primary-theme' in page
+
+
+def test_fixed_dashboard_can_hide_confidence_intervals(tmp_path: Path) -> None:
+    app, service = create_test_app(tmp_path)
+    service.figure_dir.mkdir(parents=True)
+    figure = service.figure_dir / "rps_average_expected_external_regret_player_0.png"
+    for path in (figure, figure.with_suffix(".pdf"), confidence_free_figure_path(figure), confidence_free_figure_path(figure).with_suffix(".pdf")):
+        path.write_bytes(b"figure")
+
+    page = app.test_client().get("/").get_data(as_text=True)
+
+    assert page.count('class="confidence-toggle"') == 1
+    assert 'id="confidence-intervals"' not in page
+    assert "Hide 95% CI" in page
+    assert "data-without-confidence-src" in page
+    assert "data-without-confidence-href" in page
+    assert "data-without-confidence-download" in page
 
 
 def test_dashboard_renders_readable_bertrand_names_and_parameters(

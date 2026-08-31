@@ -32,8 +32,8 @@ def test_exp3_ix_uses_implicit_exploration_loss_estimate() -> None:
 
     learner.update(0.25)
 
-    eta_1 = np.sqrt(np.log(2))
-    eta_2 = np.sqrt(np.log(2) / 2)
+    eta_1 = np.sqrt(np.log(2) / 2)
+    eta_2 = np.sqrt(np.log(2) / 4)
     expected_loss = 0.75 / (0.5 + eta_1 / 2.0)
     assert learner.t == 1
     assert learner.learning_rate == pytest.approx(eta_2)
@@ -42,15 +42,16 @@ def test_exp3_ix_uses_implicit_exploration_loss_estimate() -> None:
     assert np.count_nonzero(learner.cumulative_score) == 1
 
 
-def test_exp3_uses_importance_weighted_reward() -> None:
+def test_exp3_uses_importance_weighted_loss() -> None:
     learner = Exp3(2, horizon=10, seed=0)
     action = learner.sample_action()
 
     learner.update(0.25)
 
+    expected_score = np.zeros(2)
+    expected_score[action] = -1.5
     assert learner.current_action == action
-    assert learner.cumulative_score[action] == pytest.approx(0.25 / 0.5)
-    assert np.count_nonzero(learner.cumulative_score) == 1
+    assert np.array_equal(learner.cumulative_score, expected_score)
 
 
 def test_hedge_rejects_non_finite_reward_vectors() -> None:
@@ -95,16 +96,31 @@ def test_bandit_blum_mansour_survives_large_inner_scores() -> None:
     assert np.all(np.isfinite(learner.strategy()))
 
 
-def test_bandit_blum_mansour_updates_reward_based_learners() -> None:
+def test_bandit_blum_mansour_loss_estimator_matches_outer_importance_weighting() -> None:
     learner = BanditBM(2, horizon=10, seed=0)
-    action = learner.sample_action()
+    transition_matrix = np.array([[0.8, 0.2], [0.3, 0.7]])
+    for inner_learner, strategy in zip(learner.learners, transition_matrix):
+        inner_learner.current_strategy = strategy
+    outer_strategy = learner._compute_strategy()
+    assert np.allclose(outer_strategy, [0.6, 0.4])
+    learner.current_strategy = outer_strategy
+    action = 1
+    reward = 0.25
+    learner.current_action = action
 
-    learner.update(0.5)
+    learner.update(reward)
 
-    for inner_learner in learner.learners:
+    probability = outer_strategy[action]
+    for i, inner_learner in enumerate(learner.learners):
+        observed_loss = outer_strategy[i] * (1.0 - reward) * transition_matrix[i, action] / probability
+        combined_loss_estimate = observed_loss / transition_matrix[i, action]
+        expected_loss_estimate = outer_strategy[i] * (1.0 - reward) / probability
+        assert combined_loss_estimate == pytest.approx(expected_loss_estimate)
         assert inner_learner.current_action == action
-        assert inner_learner.cumulative_score[action] == pytest.approx(0.5)
-        assert np.count_nonzero(inner_learner.cumulative_score) == 1
+    assert np.allclose(
+        [inner_learner.cumulative_score for inner_learner in learner.learners],
+        [[0.0, -1.125], [0.0, -0.75]],
+    )
 
 
 def test_lce_ix_uses_theoretical_learning_rate_schedule() -> None:
@@ -113,8 +129,8 @@ def test_lce_ix_uses_theoretical_learning_rate_schedule() -> None:
 
     learner.update(0.25)
 
-    eta_1 = np.sqrt(np.log(2))
-    eta_2 = np.sqrt(np.log(2) / 2)
+    eta_1 = np.sqrt(np.log(2) / 2)
+    eta_2 = np.sqrt(np.log(2) / 4)
     expected_observed_loss = 0.5 * 0.5 * 0.75 / 0.5
     expected_estimated_loss = expected_observed_loss / (0.5 + eta_1 / 2.0)
 
@@ -154,7 +170,7 @@ def test_known_horizon_learning_rates_are_fixed() -> None:
 
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3) / 100))
     assert exp3.learning_rate == pytest.approx(np.sqrt(np.log(3) / 300))
-    assert exp3_ix.learning_rate == pytest.approx(np.sqrt(np.log(3) / 100))
+    assert exp3_ix.learning_rate == pytest.approx(np.sqrt(2.0 * np.log(3) / 300))
 
     hedge.update(np.array([0.2, 0.5, 0.8]))
     exp3.sample_action()
@@ -164,22 +180,27 @@ def test_known_horizon_learning_rates_are_fixed() -> None:
 
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3) / 100))
     assert exp3.learning_rate == pytest.approx(np.sqrt(np.log(3) / 300))
-    assert exp3_ix.learning_rate == pytest.approx(np.sqrt(np.log(3) / 100))
+    assert exp3_ix.learning_rate == pytest.approx(np.sqrt(2.0 * np.log(3) / 300))
 
 
 def test_unknown_horizon_learning_rates_follow_local_updates() -> None:
     hedge = Hedge(3, horizon=0, seed=0)
     exp3 = Exp3(3, horizon=0, seed=0)
+    exp3_ix = Exp3IX(3, horizon=0, seed=0)
 
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3)))
     assert exp3.learning_rate == pytest.approx(np.sqrt(np.log(3) / 3))
+    assert exp3_ix.learning_rate == pytest.approx(np.sqrt(np.log(3) / 3))
 
     hedge.update(np.array([0.2, 0.5, 0.8]))
     exp3.sample_action()
     exp3.update(0.5)
+    exp3_ix.sample_action()
+    exp3_ix.update(0.5)
 
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3) / 2))
     assert exp3.learning_rate == pytest.approx(np.sqrt(np.log(3) / 6))
+    assert exp3_ix.learning_rate == pytest.approx(np.sqrt(np.log(3) / 6))
 
 
 def test_learning_rate_schedule_continues_beyond_known_horizon() -> None:

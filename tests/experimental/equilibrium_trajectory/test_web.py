@@ -58,8 +58,7 @@ def test_view_change_only_marks_pending_experimental_state() -> None:
         encoding="utf-8"
     )
     handler = script.split(
-        'element("trajectory-comparison-view")?.addEventListener("change",',
-        1,
+        'listen("trajectory-comparison-view", "change",', 1
     )[1].split("});", 1)[0]
 
     assert "saveTrajectoryComparisonView" in handler

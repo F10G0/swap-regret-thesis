@@ -1,0 +1,234 @@
+{% macro select_input(id, name, label, options, selected, hint=none, description_id=none) %}
+    {% set description_id = description_id or id ~ "-description" %}
+    <label for="{{ id }}">{{ label }}</label>
+    <select id="{{ id }}" name="{{ name }}" {% if hint %}aria-describedby="{{ description_id }}"{% endif %} required>
+        {% for value, option in options.items() %}
+            <option value="{{ value }}" {% if value == selected %}selected{% endif %}>{{ option.label if option.label is defined else option }}</option>
+        {% endfor %}
+    </select>
+    {% if hint %}<span id="{{ description_id }}" class="hint">{{ hint }}</span>{% endif %}
+{% endmacro %}
+
+{% macro number_input(id, name, label, value, minimum, maximum=none, hint=none) %}
+    <label for="{{ id }}">{{ label }}</label>
+    <input id="{{ id }}" name="{{ name }}" type="number" value="{{ value }}" min="{{ minimum }}" {% if maximum is not none %}max="{{ maximum }}"{% endif %} required>
+    {% if hint %}<span class="hint">{{ hint }}</span>{% endif %}
+{% endmacro %}
+
+{% macro regret_figure_filters(has_figures) %}
+    <div id="figure-filters" class="filter-grid" {% if not has_figures %}hidden{% endif %}>
+        <div class="field">
+            <label for="filter-source">Source</label>
+            <select id="filter-source" data-figure-filter="source">
+                <option value="expected">Expected</option>
+                <option value="realized">Realized</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="filter-regret">Regret</label>
+            <select id="filter-regret" data-figure-filter="regret">
+                <option value="all">All types</option>
+                <option value="external">External</option>
+                <option value="internal">Internal</option>
+                <option value="swap">Swap</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="filter-view">View</label>
+            <select id="filter-view" data-figure-filter="view">
+                <option value="all">Both views</option>
+                <option value="average" selected>Average regret</option>
+                <option value="sqrt_scaling">Regret / sqrt(t)</option>
+            </select>
+        </div>
+    </div>
+{% endmacro %}
+
+{% macro result_controls(filters) %}
+    <section class="results-toolbar" aria-labelledby="results-controls-heading">
+        <div class="results-toolbar-heading">
+            <h2 id="results-controls-heading">Filter results</h2>
+            <p class="hint">Applies to figures and the summary table.</p>
+        </div>
+        <div class="shared-result-filters">
+            {% for filter in filters %}
+                <div class="field">
+                    <label for="filter-{{ filter.key }}">{{ filter.label }}</label>
+                    <select id="filter-{{ filter.key }}" data-result-filter="{{ filter.key }}">
+                        <option value="all">{{ filter.all_label }}</option>
+                        {% for value, label in filter.options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                    </select>
+                </div>
+            {% endfor %}
+        </div>
+    </section>
+{% endmacro %}
+
+{% macro confidence_toggle(figure) %}
+    {% if figure.confidence_free_url is defined %}<button class="confidence-toggle" type="button" aria-pressed="true">Hide 95% CI</button>{% endif %}
+{% endmacro %}
+
+{% macro figure_preview(figure, title, alt) %}
+    <button class="figure-open" type="button">
+        <span>{{ title }}</span>
+        <img src="{{ figure.url }}" alt="{{ alt }}" loading="lazy" {% if figure.confidence_free_url is defined %}data-with-confidence-src="{{ figure.url }}" data-without-confidence-src="{{ figure.confidence_free_url }}"{% endif %}>
+    </button>
+{% endmacro %}
+
+{% macro regret_figure_panel(figures, empty_message) %}
+    <section class="panel figures-panel" aria-labelledby="figures-heading">
+        <div class="section-heading">
+            <div><p class="eyebrow">Visual analysis</p><h2 id="figures-heading">Regret figures</h2></div>
+            <span id="figure-counter" class="counter"></span>
+        </div>
+        {{ regret_figure_filters(figures) }}
+        <div id="figure-grid" class="figure-grid">
+            {% for figure in figures %}
+                <article class="figure-card" data-scope="{{ figure.scope }}" data-secondary="{{ figure.secondary }}" data-source="{{ figure.source }}" data-regret="{{ figure.regret }}" data-view="{{ figure.view }}">
+                    {{ figure_preview(figure, figure.title, figure.alt) }}
+                    <div class="figure-actions">
+                        {{ confidence_toggle(figure) }}
+                        <a href="{{ figure.pdf_url or figure.url }}" download="{{ figure.pdf_filename or figure.filename }}" {% if figure.confidence_free_url is defined %}data-with-confidence-href="{{ figure.pdf_url or figure.url }}" data-without-confidence-href="{{ figure.confidence_free_pdf_url or figure.confidence_free_url }}" data-with-confidence-download="{{ figure.pdf_filename or figure.filename }}" data-without-confidence-download="{{ figure.confidence_free_pdf_filename or figure.confidence_free_filename }}"{% endif %}>Download {{ "PDF" if figure.pdf_url else "PNG" }}</a>
+                    </div>
+                </article>
+            {% endfor %}
+        </div>
+        <p id="figure-empty" class="empty" {% if figures %}hidden{% endif %}>{{ empty_message }}</p>
+    </section>
+{% endmacro %}
+
+{% macro summary_filters(include_feedback=false, include_co_player=false) %}
+    <div class="summary-filters">
+        <div class="field"><label for="filter-summary-source">Regret source</label><select id="filter-summary-source"><option value="expected">Expected</option><option value="realized">Realized</option></select></div>
+        {% if include_feedback %}<div class="field"><label for="filter-feedback">Feedback</label><select id="filter-feedback" data-summary-filter="feedback"><option value="all">All feedback</option><option value="full_information">Full information</option><option value="bandit">Bandit</option></select></div>{% endif %}
+        <div class="field"><label for="filter-regret-evaluation">Regret evaluation</label><select id="filter-regret-evaluation" data-summary-filter="regretEvaluation"><option value="all">All evaluations</option>{% for evaluation, label in regret_evaluations.items() %}<option value="{{ evaluation }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="filter-player-algorithm">{{ "Player algorithm" if include_co_player else "Algorithm" }}</label><select id="filter-player-algorithm" data-summary-filter="playerAlgorithm"><option value="all">All algorithms</option>{% for algorithm, label in algorithm_labels.items() %}<option value="{{ algorithm }}">{{ label }}</option>{% endfor %}</select></div>
+        {% if include_co_player %}<div class="field"><label for="filter-co-player-algorithm">Co-player algorithm</label><select id="filter-co-player-algorithm" data-summary-filter="coPlayerAlgorithms" data-token-filter><option value="all">All co-players</option>{% for algorithm, label in algorithm_labels.items() %}<option value="{{ algorithm }}">{{ label }}</option>{% endfor %}</select></div>{% endif %}
+        <div class="field"><label for="filter-horizon">Horizon</label><input id="filter-horizon" type="number" min="1" placeholder="Any" data-summary-filter="horizon"></div>
+        <div class="field"><label for="filter-seed">Seed</label><input id="filter-seed" type="number" min="0" placeholder="Any" data-summary-filter="seed"></div>
+    </div>
+{% endmacro %}
+
+{% macro figure_dialog() %}
+    <dialog id="figure-dialog" class="figure-dialog">
+        <div class="dialog-heading">
+            <h2 id="dialog-figure-title">Figure</h2>
+            <button id="close-figure-dialog" type="button">Close</button>
+        </div>
+        <img id="dialog-figure-image" src="" alt="">
+        <a id="dialog-figure-download" href="" download>Download PDF</a>
+    </dialog>
+{% endmacro %}
+
+{% macro learning_configuration(form_state, feedback_modes, regret_evaluations, current_algorithms, algorithm_labels, selected_algorithms, algorithm_count, max_horizon, max_replicates, seed_hint) %}
+    <div class="top-control-grid">
+        <div class="control-card">
+            {{ select_input("feedback-mode", "feedback_mode", "Feedback", feedback_modes, form_state.feedback_mode, "Choose whether learners observe every action payoff or only their realized payoff.", "feedback-description") }}
+        </div>
+        <div class="control-card">
+            {{ select_input("regret-evaluation", "regret_evaluation", "Regret evaluation", regret_evaluations, form_state.regret_evaluation, "Choose whether to record expected regret, realized regret, or both without changing learner feedback.") }}
+        </div>
+    </div>
+
+    <div class="field-grid field-grid-two horizon-seed-grid">
+        <div class="field">
+            {{ number_input("horizon", "horizon", "Horizon", form_state.horizon, 1, max_horizon, "Number of rounds run by each experiment; the dashboard maximum is " ~ max_horizon ~ ".") }}
+        </div>
+        <div class="field">
+            {{ number_input("seed", "seed", "Seed", form_state.seed, 0, none, seed_hint) }}
+        </div>
+    </div>
+
+    {% if algorithm_count > 1 %}
+        <div class="player-heading">
+            <h2>Players</h2>
+            <div class="player-heading-actions">
+                <button id="synchronize-players" class="button-link" type="button">Player 0 → all</button>
+            </div>
+        </div>
+    {% endif %}
+    <div id="players" class="players">
+        {% for player_id in range(algorithm_count) %}
+            {% set algorithm_field = "algorithm_player_" ~ player_id %}
+            {% if algorithm_count > 1 %}<fieldset><legend>Player {{ player_id }}</legend>{% endif %}
+            <div class="field">
+                <label for="{{ algorithm_field }}">Algorithm</label>
+                <select id="{{ algorithm_field }}" name="algorithm_names" class="player-algorithm" required>
+                    {% for algorithm in current_algorithms %}
+                        <option value="{{ algorithm }}" {% if algorithm == selected_algorithms[player_id] | default(current_algorithms[0]) %}selected{% endif %}>{{ algorithm_labels[algorithm] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if algorithm_count > 1 %}</fieldset>{% endif %}
+        {% endfor %}
+    </div>
+
+    <div id="replicate-fields" class="field">
+        {{ number_input("replicates", "replicates", "Replicates", form_state.replicates, 1, max_replicates, "Run replicates 0 through n−1 and aggregate them with Student-t 95% confidence intervals.") }}
+    </div>
+{% endmacro %}
+
+{% macro file_list(rows, heading_id, title, delete_endpoint, delete_detail, busy, empty=none) %}
+    {% if rows or empty %}
+        <section class="experiment-list" aria-labelledby="{{ heading_id }}">
+            <h2 id="{{ heading_id }}">{{ title }}</h2>
+            {% if rows %}
+                <ul>
+                    {% for row in rows %}
+                        <li>
+                            <a href="{{ row.download_url }}" title="Download {{ row.filename }}">{{ row.filename }}</a>
+                            <form method="post" action="{{ url_for(delete_endpoint) }}" data-confirm="Delete {{ row.filename }} {{ delete_detail }}?">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="filename" value="{{ row.filename }}">
+                                <button class="icon-button" type="submit" aria-label="Delete {{ row.filename }}" data-busy-control {% if busy %}disabled{% endif %}>Delete</button>
+                            </form>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="empty">{{ empty }}</p>
+            {% endif %}
+        </section>
+    {% endif %}
+{% endmacro %}
+
+{% macro warning_panel(warnings, heading_id) %}
+    {% if warnings %}
+        <section class="warning-panel" aria-labelledby="{{ heading_id }}">
+            <h2 id="{{ heading_id }}">Result warnings</h2>
+            <ul>{% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+        </section>
+    {% endif %}
+{% endmacro %}
+
+{% macro jobs_panel(jobs, busy, heading_id, return_to=none, busy_id=none) %}
+    <section class="panel jobs-panel" aria-labelledby="{{ heading_id }}" aria-live="polite" {% if not jobs %}hidden{% endif %}>
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">Execution</p>
+                <h2 id="{{ heading_id }}">Job status</h2>
+            </div>
+            <span {% if busy_id %}id="{{ busy_id }}" {% endif %}class="busy-indicator" {% if not busy %}hidden{% endif %}>Queue active</span>
+        </div>
+        <ol class="job-list">
+            {% for job in jobs %}
+                <li class="job job-{{ job.status }}" data-job-id="{{ job.id }}" data-status-url="{{ job.url }}" data-status="{{ job.status }}">
+                    <div>
+                        <strong>{{ job.description }}</strong>
+                        <p data-job-message>{{ job.message }}</p>
+                    </div>
+                    <div class="job-actions">
+                        <span class="status" data-job-status>{{ job.status }}</span>
+                        {% if job.status in ["queued", "running"] %}
+                            <form method="post" action="{{ url_for('dashboard.cancel_job', job_id=job.id) }}">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+                                <button class="button-link" type="submit">Cancel</button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </li>
+            {% endfor %}
+        </ol>
+    </section>
+{% endmacro %}

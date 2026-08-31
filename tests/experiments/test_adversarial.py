@@ -1,13 +1,18 @@
+import csv
+
 import pytest
 
-from experiments.plots.plot_adversarial import plot_adversarial_results
+from experiments.plots import confidence_free_figure_path
+from experiments.plots.plot_adversarial import (
+    aggregate_adversarial_regret,
+    plot_adversarial_results,
+)
 from experiments.runner import ExperimentCancelled
 from experiments.scenarios.adversarial import (
     AdversarialExperimentSpec,
     HISTORICAL_FREQUENCY_ENVIRONMENT,
     RANDOM_WALK_ENVIRONMENT,
-    adversarial_memory_label,
-    adversarial_memory_window,
+    load_final_adversarial_row,
     load_adversarial_rows,
     run_adversarial_experiment,
 )
@@ -29,11 +34,10 @@ def test_adversarial_experiment_records_both_regret_sources(tmp_path) -> None:
     assert {row["environment"] for row in rows} == {
         HISTORICAL_FREQUENCY_ENVIRONMENT
     }
-    assert {row["memory"] for row in rows} == {"full_history"}
     assert {row["feedback_mode"] for row in rows} == {"full_information"}
     assert {row["learner_seed"] for row in rows} == {"7"}
-    assert "replicate" not in rows[0]
-    assert rows[0]["punished_action"] == "0"
+    assert {row["replicate"] for row in rows} == {"0"}
+    assert rows[0]["punished_actions"] == "0 1"
     assert rows[-1]["t"] == "5"
     assert "average_expected_swap_regret" in rows[0]
     assert "average_realized_swap_regret" in rows[0]
@@ -61,6 +65,60 @@ def test_bandit_adversarial_experiment_uses_scalar_learner_feedback(
     assert "average_realized_external_regret" in rows[-1]
 
 
+@pytest.mark.parametrize(
+    ("regret_evaluation", "present", "absent"),
+    [
+        ("expected", "expected", "realized"),
+        ("realized", "realized", "expected"),
+        ("both", "expected", None),
+    ],
+)
+def test_adversarial_regret_evaluation_controls_recorded_sources(
+    tmp_path,
+    regret_evaluation: str,
+    present: str,
+    absent: str | None,
+) -> None:
+    output_path = run_adversarial_experiment(
+        "exp3",
+        feedback_mode="bandit",
+        horizon=5,
+        seed=7,
+        regret_evaluation=regret_evaluation,
+        output_dir=tmp_path,
+    )
+
+    rows = _rows(output_path)
+
+    assert {row["regret_evaluation"] for row in rows} == {regret_evaluation}
+    assert f"average_{present}_external_regret" in rows[0]
+    if regret_evaluation == "both":
+        assert "average_realized_external_regret" in rows[0]
+    else:
+        assert f"average_{absent}_external_regret" not in rows[0]
+
+
+def test_adversarial_regret_evaluation_does_not_change_play(tmp_path) -> None:
+    paths = [
+        run_adversarial_experiment(
+            "exp3",
+            feedback_mode="bandit",
+            horizon=20,
+            seed=7,
+            regret_evaluation=evaluation,
+            output_dir=tmp_path,
+        )
+        for evaluation in ("expected", "both")
+    ]
+    trajectories = [
+        [(row["action"], row["payoff"]) for row in _rows(path)]
+        for path in paths
+    ]
+
+    assert paths[0] != paths[1]
+    assert trajectories[0] == trajectories[1]
+
+
 def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
     output_path = run_adversarial_experiment(
         "exp3",
@@ -80,7 +138,7 @@ def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
     assert {row["reward_step"] for row in rows} == {"0.1"}
     assert {row["environment_seed"] for row in rows} == {"11"}
     assert {row["learner_seed"] for row in rows} == {"7"}
-    assert all(row["punished_action"] == "" for row in rows)
+    assert all(row["punished_actions"] == "" for row in rows)
     assert all(0 <= int(row["current_best_action"]) < 3 for row in rows)
     assert all(0.0 <= float(row["current_best_reward"]) <= 1.0 for row in rows)
     assert load_adversarial_rows(output_path)[-1] == rows[-1]
@@ -136,6 +194,93 @@ def test_adversarial_seeds_have_distinct_identity_and_streams(tmp_path) -> None:
     ]
 
 
+def test_adversarial_replicate_offsets_both_random_seeds(tmp_path) -> None:
+    output_path = run_adversarial_experiment(
+        "exp3",
+        feedback_mode="bandit",
+        environment=RANDOM_WALK_ENVIRONMENT,
+        environment_seed=11,
+        n_actions=3,
+        horizon=5,
+        seed=7,
+        replicate=2,
+        output_dir=tmp_path,
+    )
+
+    rows = _rows(output_path)
+
+    assert {row["replicate"] for row in rows} == {"2"}
+    assert {row["environment_seed"] for row in rows} == {"13"}
+    assert {row["learner_seed"] for row in rows} == {"9"}
+
+
+def test_adversarial_replicate_is_part_of_run_identity() -> None:
+    common = {
+        "algorithm_name": "hedge",
+        "n_actions": 3,
+        "horizon": 10,
+        "seed": 7,
+    }
+
+    assert AdversarialExperimentSpec(**common).run_id != (
+        AdversarialExperimentSpec(**common, replicate=1).run_id
+    )
+
+
+def test_adversarial_loader_accepts_legacy_csv_without_replicate(tmp_path) -> None:
+    generated = run_adversarial_experiment(
+        "hedge",
+        horizon=3,
+        output_dir=tmp_path,
+    )
+    rows = _rows(generated)
+    legacy_path = tmp_path / "legacy.csv"
+    legacy_fields = {"replicate", "regret_evaluation", "implementation_version"}
+    fieldnames = [field for field in rows[0] if field not in legacy_fields]
+    with legacy_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(
+            {field: value for field, value in row.items() if field not in legacy_fields}
+            for row in rows
+        )
+
+    loaded = load_adversarial_rows(legacy_path)
+
+    assert {row["replicate"] for row in loaded} == {"0"}
+    assert {row["regret_evaluation"] for row in loaded} == {"both"}
+    assert {row["implementation_version"] for row in loaded} == {"0"}
+    assert load_final_adversarial_row(legacy_path)["replicate"] == "0"
+
+
+def test_adversarial_implementation_version_changes_run_identity() -> None:
+    common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 10, "seed": 7}
+
+    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=2).run_id
+
+
+def test_adversarial_regret_aggregation_uses_student_t_intervals() -> None:
+    trajectories = [
+        [
+            {"t": "1", "average_expected_external_regret": "1"},
+            {"t": "2", "average_expected_external_regret": "2"},
+        ],
+        [
+            {"t": "1", "average_expected_external_regret": "3"},
+            {"t": "2", "average_expected_external_regret": "6"},
+        ],
+    ]
+
+    times, means, confidence = aggregate_adversarial_regret(
+        trajectories,
+        "average_expected_external_regret",
+    )
+
+    assert times.tolist() == [1, 2]
+    assert means.tolist() == [2, 4]
+    assert confidence == pytest.approx([12.706204736, 25.412409472])
+
+
 def test_adversarial_experiment_is_atomic_on_cancellation(tmp_path) -> None:
     with pytest.raises(ExperimentCancelled):
         run_adversarial_experiment(
@@ -174,30 +319,63 @@ def test_adversarial_plotter_creates_average_and_scaled_regret_figures(
     generated = plot_adversarial_results(raw_dir, figure_dir)
 
     expected_regret_figures = {
-        f"adversarial_3_actions_average_{source}_{regret}_regret.png"
+        f"adversarial_{environment}_{feedback}_3_actions_average_{source}_{regret}_regret.png"
+        for environment, feedback in (
+            (HISTORICAL_FREQUENCY_ENVIRONMENT, "full_information"),
+            (RANDOM_WALK_ENVIRONMENT, "bandit"),
+        )
         for source in ("expected", "realized")
         for regret in ("external", "internal", "swap")
     }
     expected_scaling_figures = {
-        f"adversarial_3_actions_{source}_{regret}_regret_over_sqrt_t.png"
+        f"adversarial_{environment}_{feedback}_3_actions_{source}_{regret}_regret_over_sqrt_t.png"
+        for environment, feedback in (
+            (HISTORICAL_FREQUENCY_ENVIRONMENT, "full_information"),
+            (RANDOM_WALK_ENVIRONMENT, "bandit"),
+        )
         for source in ("expected", "realized")
         for regret in ("external", "internal", "swap")
     }
-    historical_path = next(raw_dir.glob("historical_frequency_*.csv"))
-    random_walk_path = next(raw_dir.glob("lazy_random_walk_*.csv"))
-    expected_behavior_figures = {
-        f"{historical_path.stem}_action_frequency.png",
-        f"{historical_path.stem}_punished_action_frequency.png",
-        f"{random_walk_path.stem}_action_frequency.png",
-        f"{random_walk_path.stem}_best_action_frequency.png",
-    }
-    assert len(generated) == 16
-    assert {path.name for path in generated} == (
-        expected_regret_figures
-        | expected_scaling_figures
-        | expected_behavior_figures
-    )
+    assert len(generated) == 24
+    assert {path.name for path in generated} == expected_regret_figures | expected_scaling_figures
     assert all(path.with_suffix(".pdf").is_file() for path in generated)
+
+
+def test_adversarial_plotter_only_generates_selected_regret_source(tmp_path) -> None:
+    raw_dir = tmp_path / "raw"
+    figure_dir = tmp_path / "figures"
+    run_adversarial_experiment(
+        "hedge",
+        n_actions=3,
+        horizon=5,
+        regret_evaluation="expected",
+        output_dir=raw_dir,
+    )
+
+    generated = plot_adversarial_results(raw_dir, figure_dir)
+
+    assert len(generated) == 6
+    assert not any("realized" in path.name for path in generated)
+
+
+def test_adversarial_plotter_caches_mean_only_figures_for_replicates(tmp_path) -> None:
+    raw_dir = tmp_path / "raw"
+    figure_dir = tmp_path / "figures"
+    run_adversarial_experiment("hedge", horizon=5, seed=7, output_dir=raw_dir)
+    run_adversarial_experiment(
+        "hedge",
+        horizon=5,
+        seed=7,
+        replicate=1,
+        output_dir=raw_dir,
+    )
+
+    generated = plot_adversarial_results(raw_dir, figure_dir)
+
+    regret_path = next(path for path in generated if "average_expected_external" in path.name)
+    confidence_free_path = confidence_free_figure_path(regret_path)
+    assert confidence_free_path.is_file()
+    assert confidence_free_path.with_suffix(".pdf").is_file()
 
 
 @pytest.mark.parametrize(
@@ -206,7 +384,8 @@ def test_adversarial_plotter_creates_average_and_scaled_regret_figures(
         ({"n_actions": 1}, "between 2"),
         ({"horizon": 0}, "positive"),
         ({"seed": -1}, "non-negative"),
-        ({"memory_window": -1}, "non-negative"),
+        ({"replicate": -1}, "replicate"),
+        ({"regret_evaluation": "unknown"}, "regret evaluation"),
         ({"environment": RANDOM_WALK_ENVIRONMENT, "environment_seed": -1}, "environment seed"),
         ({"environment": "unknown"}, "unknown adversarial environment"),
         ({"environment": RANDOM_WALK_ENVIRONMENT, "initialization_mode": "unknown"}, "unknown random-walk initialization"),
@@ -218,27 +397,9 @@ def test_adversarial_spec_validation(changes, message) -> None:
         "n_actions": 3,
         "horizon": 10,
         "seed": 7,
-        "memory_window": 0,
     }
     with pytest.raises(ValueError, match=message):
         AdversarialExperimentSpec(**(values | changes))
-
-
-def test_adversarial_memory_is_part_of_run_identity() -> None:
-    common = {
-        "algorithm_name": "hedge",
-        "n_actions": 3,
-        "horizon": 10,
-        "seed": 7,
-    }
-
-    assert AdversarialExperimentSpec(
-        **common,
-        memory_window=10,
-    ).run_id != AdversarialExperimentSpec(
-        **common,
-        memory_window=0,
-    ).run_id
 
 
 def test_adversarial_feedback_mode_is_part_of_run_identity() -> None:
@@ -255,6 +416,23 @@ def test_adversarial_feedback_mode_is_part_of_run_identity() -> None:
     ).run_id != AdversarialExperimentSpec(
         **common,
         feedback_mode="bandit",
+    ).run_id
+
+
+def test_adversarial_regret_evaluation_is_part_of_run_identity() -> None:
+    common = {
+        "algorithm_name": "hedge",
+        "n_actions": 3,
+        "horizon": 10,
+        "seed": 7,
+    }
+
+    assert AdversarialExperimentSpec(
+        **common,
+        regret_evaluation="expected",
+    ).run_id != AdversarialExperimentSpec(
+        **common,
+        regret_evaluation="realized",
     ).run_id
 
 
@@ -288,14 +466,3 @@ def test_adversarial_algorithm_must_match_feedback_mode() -> None:
             horizon=10,
             seed=7,
         )
-
-
-def test_arbitrary_adversarial_memory_window() -> None:
-    assert adversarial_memory_window("full_history") == 0
-    assert adversarial_memory_window("last_37") == 37
-    assert adversarial_memory_label(37) == "Last 37 rounds"
-
-
-def test_unknown_adversarial_memory_is_rejected() -> None:
-    with pytest.raises(ValueError, match="unknown adversarial memory"):
-        adversarial_memory_window("unknown")

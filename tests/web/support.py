@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 import time
 
 from web import create_app
@@ -35,6 +36,19 @@ def create_test_app(
     if experimental:
         config["TEST_ENABLE_EXPERIMENTAL_TRAJECTORIES"] = True
     return create_app(config, service=service), service
+
+
+def block_job_queue(manager):
+    started = Event()
+    release = Event()
+
+    def block(_job) -> None:
+        started.set()
+        assert release.wait(timeout=2)
+
+    blocker = manager.submit("blocker", block)
+    assert started.wait(timeout=1)
+    return blocker, release
 
 
 def csrf_token(client) -> str:

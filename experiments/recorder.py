@@ -4,6 +4,12 @@ from pathlib import Path
 import tempfile
 
 
+def require_csv_columns(input_path: str | Path, fieldnames, required) -> None:
+    missing = set(required) - set(fieldnames)
+    if missing:
+        raise ValueError(f"{input_path} is missing required columns: {', '.join(sorted(missing))}")
+
+
 def read_final_csv_rows(input_path: str | Path, group_column: str | None = None) -> tuple[set[str], list[dict[str, str]]]:
     input_path = Path(input_path)
     with input_path.open("rb") as file:

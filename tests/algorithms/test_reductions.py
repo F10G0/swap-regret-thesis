@@ -38,7 +38,9 @@ def test_bandit_ito_updates_only_selected_learner() -> None:
     assert selected_learner is learner.learners[0]
     assert learner.current_action is None
     assert selected_learner.current_action == action
-    assert np.sum(selected_learner.cumulative_score) > 0.0
+    expected_score = np.zeros(2)
+    expected_score[action] = -1.0
+    assert np.array_equal(selected_learner.cumulative_score, expected_score)
     assert np.allclose(learner.learners[1].cumulative_score, 0.0)
     assert learner.selected_learner is None
 
@@ -64,7 +66,7 @@ def test_lce_ix_uses_exact_schedule_over_multiple_rounds() -> None:
     learner.sample_action()
     learner.update(0.75)
 
-    eta_3 = np.sqrt(np.log(3) / 3)
+    eta_3 = np.sqrt(np.log(3) / 9)
     for inner_learner in learner.learners:
         assert inner_learner.t == 2
         assert inner_learner.learning_rate == pytest.approx(eta_3)

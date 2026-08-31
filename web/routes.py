@@ -23,15 +23,15 @@ from web.services import DashboardService, PlotUpdateError
 from web.validation import (
     ExperimentForm,
     parse_adversarial_experiment_form,
+    parse_adversarial_scaling_form,
     parse_experiment_form,
     parse_non_negative_integer,
     parse_positive_integer,
 )
 from web.view_models import (
-    adversarial_context,
     custom_games_context,
     dashboard_context,
-    figure_data as build_figure_data,
+    one_player_context,
 )
 
 
@@ -42,8 +42,9 @@ def get_service() -> DashboardService:
     return current_app.extensions["dashboard_service"]
 
 
-def _dashboard_context(form_state: dict | None = None, inline_error: str | None = None) -> dict:
-    return dashboard_context(get_service(), form_state, inline_error)
+def _experiment_context(mode: str, form_state: dict | None = None, inline_error: str | None = None) -> dict:
+    builder = one_player_context if mode == "adversarial" else dashboard_context
+    return builder(get_service(), form_state, inline_error)
 
 
 def _parse_form() -> ExperimentForm:
@@ -57,9 +58,20 @@ def _parse_form() -> ExperimentForm:
     )
 
 
-def _submitted_form_state() -> dict:
-    service = get_service()
-    state = service.default_form_state() | dict(request.form)
+def _parse_one_player_form(parser, service: DashboardService):
+    return parser(
+        request.form,
+        algorithms_by_feedback_mode=service.adversarial_algorithms_by_feedback_mode,
+        environments=set(ENVIRONMENT_LABELS),
+        initialization_modes=set(INITIALIZATION_LABELS),
+        max_actions=MAX_ADVERSARIAL_ACTIONS,
+        max_horizon=current_app.config["MAX_HORIZON"],
+        max_replicates=current_app.config["MAX_REPLICATES"],
+    )
+
+
+def _submitted_form_state(default_state: dict) -> dict:
+    state = default_state | dict(request.form)
     algorithm_names = request.form.getlist("algorithm_names")
     if algorithm_names:
         state["algorithm_names"] = algorithm_names
@@ -70,109 +82,114 @@ def _custom_games_context(form_state: dict | None = None, inline_error: str | No
     return custom_games_context(get_service(), form_state, inline_error, inspection)
 
 
-def _adversarial_context(
-    form_state: dict | None = None,
-    inline_error: str | None = None,
-) -> dict:
-    return adversarial_context(get_service(), form_state, inline_error)
+def _form_error(mode: str, default_state: dict, error: Exception):
+    context = _experiment_context(mode, _submitted_form_state(default_state), str(error))
+    return render_template("index.html", **context), 400
+
+
+def _send_result(filename: str, validator, directory, as_attachment: bool = False):
+    try:
+        filename = validator(filename)
+    except (FileNotFoundError, ValueError):
+        abort(404)
+    return send_from_directory(directory.resolve(), filename, as_attachment=as_attachment)
+
+
+def _delete_one_player_result(delete_result, message: str):
+    try:
+        filename = request.form["filename"]
+        delete_result(filename)
+    except (KeyError, FileNotFoundError, PlotUpdateError, ServiceBusyError, ValueError) as error:
+        flash(str(error), "error")
+    else:
+        flash(message.format(filename=filename), "success")
+    return redirect(url_for("dashboard.index", mode="adversarial"))
 
 
 @dashboard.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "GET":
-        return render_template("index.html", **_dashboard_context())
+        mode = request.args.get("mode", "fixed")
+        if mode not in {"fixed", "adversarial"}:
+            abort(404)
+        return render_template("index.html", **_experiment_context(mode))
+
+    if request.form.get("experiment_type") == "adversarial":
+        return _submit_one_player()
 
     try:
         form = _parse_form()
         job = get_service().submit_experiment(form)
     except (FileExistsError, ServiceBusyError, ValueError) as error:
-        return (
-            render_template(
-                "index.html",
-                **_dashboard_context(_submitted_form_state(), str(error)),
-            ),
-            400,
-        )
+        return _form_error("fixed", get_service().default_form_state(), error)
 
     flash(f"Queued experiment job {job.id[:8]}.", "success")
     return redirect(url_for("dashboard.index"))
 
 
-@dashboard.route("/adversarial", methods=["GET", "POST"])
-def adversarial():
+def _submit_one_player():
     service = get_service()
-    if request.method == "GET":
-        return render_template("adversarial.html", **_adversarial_context())
-
-    submitted_state = service.default_adversarial_form_state() | dict(
-        request.form
-    )
     try:
-        form = parse_adversarial_experiment_form(
-            request.form,
-            algorithms_by_feedback_mode=(
-                service.adversarial_algorithms_by_feedback_mode
-            ),
-            environments=set(ENVIRONMENT_LABELS),
-            initialization_modes=set(INITIALIZATION_LABELS),
-            max_actions=MAX_ADVERSARIAL_ACTIONS,
-            max_horizon=current_app.config["MAX_HORIZON"],
-        )
+        form = _parse_one_player_form(parse_adversarial_experiment_form, service)
         job = service.submit_adversarial_experiment(form)
     except (FileExistsError, ServiceBusyError, ValueError) as error:
-        return (
-            render_template(
-                "adversarial.html",
-                **_adversarial_context(submitted_state, str(error)),
-            ),
-            400,
-        )
+        return _form_error("adversarial", service.default_adversarial_form_state(), error)
 
     flash(f"Queued adversarial job {job.id[:8]}.", "success")
-    return redirect(url_for("dashboard.adversarial"))
+    return redirect(url_for("dashboard.index", mode="adversarial"))
+
+
+@dashboard.post("/adversarial/action-scaling")
+def adversarial_action_scaling():
+    service = get_service()
+    try:
+        form = _parse_one_player_form(parse_adversarial_scaling_form, service)
+        job = service.submit_adversarial_scaling_experiment(form)
+    except (FileExistsError, ServiceBusyError, ValueError) as error:
+        return _form_error("adversarial", service.default_adversarial_form_state(), error)
+
+    flash(f"Queued action-space scaling job {job.id[:8]}.", "success")
+    return redirect(url_for("dashboard.index", mode="adversarial"))
 
 
 @dashboard.get("/adversarial/experiments/<filename>")
 def download_adversarial_experiment(filename: str):
-    try:
-        filename = get_service().validate_adversarial_csv_filename(filename)
-    except (FileNotFoundError, ValueError):
-        abort(404)
-    return send_from_directory(
-        get_service().adversarial_raw_dir.resolve(),
-        filename,
-        as_attachment=True,
-    )
+    service = get_service()
+    return _send_result(filename, service.validate_adversarial_csv_filename, service.adversarial_raw_dir, True)
+
+
+@dashboard.get("/adversarial/action-scaling/experiments/<filename>")
+def download_adversarial_scaling_experiment(filename: str):
+    service = get_service()
+    return _send_result(filename, service.validate_adversarial_scaling_csv_filename, service.adversarial_scaling_raw_dir, True)
 
 
 @dashboard.get("/adversarial/figures/<filename>")
 def adversarial_figure(filename: str):
-    try:
-        filename = get_service().validate_adversarial_figure_filename(filename)
-    except (FileNotFoundError, ValueError):
-        abort(404)
-    return send_from_directory(
-        get_service().adversarial_figure_dir.resolve(),
-        filename,
-    )
+    service = get_service()
+    return _send_result(filename, service.validate_adversarial_figure_filename, service.adversarial_figure_dir)
+
+
+@dashboard.get("/adversarial/action-scaling/figures/<filename>")
+def adversarial_scaling_figure(filename: str):
+    service = get_service()
+    return _send_result(filename, service.validate_adversarial_scaling_figure_filename, service.adversarial_scaling_figure_dir)
 
 
 @dashboard.post("/adversarial/delete-experiment")
 def delete_adversarial_experiment():
-    try:
-        filename = request.form["filename"]
-        get_service().delete_adversarial_experiment(filename)
-    except (
-        KeyError,
-        FileNotFoundError,
-        PlotUpdateError,
-        ServiceBusyError,
-        ValueError,
-    ) as error:
-        flash(str(error), "error")
-    else:
-        flash(f"Deleted {filename} and rebuilt adversarial figures.", "success")
-    return redirect(url_for("dashboard.adversarial"))
+    return _delete_one_player_result(
+        get_service().delete_adversarial_experiment,
+        "Deleted {filename} and rebuilt adversarial figures.",
+    )
+
+
+@dashboard.post("/adversarial/action-scaling/delete-experiment")
+def delete_adversarial_scaling_experiment():
+    return _delete_one_player_result(
+        get_service().delete_adversarial_scaling_experiment,
+        "Deleted {filename} and rebuilt action-space scaling figures.",
+    )
 
 
 @dashboard.post("/adversarial/results/clear")
@@ -187,7 +204,7 @@ def clear_adversarial_results():
             f"{figure_count} figure(s).",
             "success",
         )
-    return redirect(url_for("dashboard.adversarial"))
+    return redirect(url_for("dashboard.index", mode="adversarial"))
 
 
 @dashboard.route("/custom-games", methods=["GET", "POST"])
@@ -270,16 +287,11 @@ def delete_custom_game():
 
 @dashboard.post("/plots/rebuild")
 def rebuild_plots():
-    json_response = request.accept_mimetypes.best == "application/json"
     try:
         job = get_service().submit_plot_rebuild()
     except ServiceBusyError as error:
-        if json_response:
-            return jsonify({"error": str(error)}), 409
         flash(str(error), "error")
     else:
-        if json_response:
-            return jsonify({**job.public_data(), "url": url_for("dashboard.job_status", job_id=job.id)}), 202
         flash(f"Queued plot job {job.id[:8]}.", "success")
     return redirect(url_for("dashboard.index"))
 
@@ -290,11 +302,6 @@ def job_status(job_id: str):
     if job is None:
         abort(404)
     return jsonify(job.public_data())
-
-
-@dashboard.get("/figures")
-def figure_data():
-    return jsonify(build_figure_data(get_service()))
 
 
 @dashboard.post("/jobs/<job_id>/cancel")
@@ -308,24 +315,18 @@ def cancel_job(job_id: str):
     else:
         flash("Cancellation requested.", "success")
     return_to = request.form.get("return_to")
-    endpoint = (
-        "dashboard.adversarial"
-        if return_to == "adversarial"
-        else "dashboard.index"
+    return redirect(
+        url_for(
+            "dashboard.index",
+            mode="adversarial" if return_to == "adversarial" else "fixed",
+        )
     )
-    return redirect(url_for(endpoint))
 
 
 @dashboard.get("/figures/<filename>")
 def serve_figure(filename: str):
-    try:
-        filename = get_service().validate_figure_filename(filename)
-    except ValueError:
-        abort(404)
-    return send_from_directory(
-        get_service().figure_dir.resolve(),
-        filename,
-    )
+    service = get_service()
+    return _send_result(filename, service.validate_figure_filename, service.figure_dir)
 
 
 @dashboard.get("/games/<game_name>/equilibria/<equilibrium>.<figure_format>")
@@ -341,15 +342,8 @@ def equilibrium_figure(game_name: str, equilibrium: str, figure_format: str):
 
 @dashboard.get("/experiments/<filename>")
 def download_experiment(filename: str):
-    try:
-        filename = get_service().validate_csv_filename(filename)
-    except ValueError:
-        abort(404)
-    return send_from_directory(
-        get_service().raw_dir.resolve(),
-        filename,
-        as_attachment=True,
-    )
+    service = get_service()
+    return _send_result(filename, service.validate_csv_filename, service.raw_dir, True)
 
 
 @dashboard.get("/experiments/<filename>/joint-actions.<figure_format>")

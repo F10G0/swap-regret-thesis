@@ -134,14 +134,14 @@ def test_historical_frequency_adversary_uses_only_past_actions() -> None:
 
     environment.step((2,))
 
-    np.testing.assert_array_equal(environment.feedback(), [0.0, 1.0, 1.0])
-    assert environment.punished_action == 0
+    np.testing.assert_array_equal(environment.feedback(), [0.0, 0.0, 1.0])
+    assert environment.punished_actions == (0, 1)
     np.testing.assert_array_equal(environment.action_counts, [0, 0, 1])
 
     environment.step((1,))
 
-    np.testing.assert_array_equal(environment.feedback(), [1.0, 1.0, 0.0])
-    assert environment.punished_action == 2
+    np.testing.assert_array_equal(environment.feedback(), [0.0, 1.0, 0.0])
+    assert environment.punished_actions == (2, 0)
     np.testing.assert_array_equal(environment.action_counts, [0, 1, 1])
 
 
@@ -159,7 +159,7 @@ def test_historical_frequency_payoff_does_not_depend_on_current_action() -> None
         first.deviation_payoffs(),
         second.deviation_payoffs(),
     )
-    assert first.punished_action == second.punished_action == 1
+    assert first.punished_actions == second.punished_actions == (1, 2)
 
 
 def test_historical_frequency_adversary_rotates_ties() -> None:
@@ -168,21 +168,18 @@ def test_historical_frequency_adversary_rotates_ties() -> None:
     punished_actions = []
     for action in (0, 1, 2, 0):
         environment.step((action,))
-        punished_actions.append(environment.punished_action)
+        punished_actions.append(environment.punished_actions)
 
-    assert punished_actions == [0, 0, 1, 2]
+    assert punished_actions == [(0, 1), (0, 2), (1, 0), (0, 1)]
 
 
-def test_historical_frequency_adversary_can_use_a_finite_window() -> None:
-    environment = HistoricalFrequencyAdversary(3, memory_window=1)
+@pytest.mark.parametrize(("n_actions", "punished_count"), [(2, 1), (3, 2), (4, 2), (5, 3)])
+def test_historical_frequency_adversary_punishes_half_rounded_up(n_actions: int, punished_count: int) -> None:
+    environment = HistoricalFrequencyAdversary(n_actions)
+    environment.step((0,))
 
-    punished_actions = []
-    for action in (2, 1, 0):
-        environment.step((action,))
-        punished_actions.append(environment.punished_action)
-
-    assert punished_actions == [0, 2, 1]
-    np.testing.assert_array_equal(environment.action_counts, [1, 1, 1])
+    assert len(environment.punished_actions) == punished_count
+    assert np.count_nonzero(environment.feedback() == 0.0) == punished_count
 
 
 def test_random_walk_rewards_stay_on_the_fixed_grid() -> None:

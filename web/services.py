@@ -1,5 +1,6 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 from collections.abc import Callable
+import csv
 from hashlib import sha256
 import logging
 import os
@@ -11,11 +12,11 @@ from threading import Lock
 import numpy as np
 
 from config import (
+    ACTION_SCALING_ACTION_COUNTS,
     ADVERSARIAL_ACTIONS,
-    ADVERSARIAL_MEMORY_WINDOW,
-    BANDIT_REPLICATES,
     CUSTOM_GAME_DIR,
     HORIZON,
+    REPLICATES,
     SEED,
 )
 from experiments.algorithm_labels import algorithm_label, algorithm_profile_label
@@ -28,6 +29,7 @@ from experiments.game_catalog import (
 from experiments.games import PAYOFF_FACTORIES
 from experiments.plots import (
     FIGURE_SUFFIXES,
+    confidence_free_figure_path,
     figure_pair_is_current,
     figure_path,
     figure_paths,
@@ -46,8 +48,15 @@ from experiments.scenarios.adversarial import (
     load_final_adversarial_row,
     run_adversarial_experiment,
 )
+from experiments.result_schema import regret_sources
+from experiments.scenarios.adversarial_scaling import (
+    AdversarialScalingSpec,
+    adversarial_scaling_environment_detail,
+    load_adversarial_scaling_rows,
+    run_adversarial_scaling_experiment,
+)
 from web.equilibrium_figures import PRECOMPUTED_EQUILIBRIUM_DIR, equilibrium_figure_filename
-from web.experiment_modes import FEEDBACK_MODES, FeedbackMode
+from web.experiment_modes import FEEDBACK_MODES
 from web.jobs import Job, JobContext, JobManager
 from web.presentations import GAME_PRESENTATIONS
 from web.result_groups import (
@@ -56,6 +65,7 @@ from web.result_groups import (
 from web.result_index import ResultIndex, ResultSnapshot
 from web.validation import (
     AdversarialExperimentForm,
+    AdversarialScalingForm,
     ExperimentForm,
     validate_leaf_filename,
 )
@@ -72,6 +82,70 @@ def _publish_figure_files(source_paths: list[Path], output_dir: Path, filename_p
         matches_prefix = filename_prefix is None or path.name.startswith(filename_prefix)
         if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES and matches_prefix and path.name not in generated_names:
             path.unlink()
+
+
+def _figure_file_record(path: Path, confidence_intervals: bool = False) -> dict:
+    pdf_path = path.with_suffix(".pdf")
+    record = {
+        "filename": path.name,
+        "pdf_filename": pdf_path.name if pdf_path.is_file() else None,
+    }
+    if confidence_intervals:
+        confidence_free_path = confidence_free_figure_path(path)
+        if confidence_free_path.is_file():
+            confidence_free_pdf_path = confidence_free_path.with_suffix(".pdf")
+            record.update(
+                confidence_free_filename=confidence_free_path.name,
+                confidence_free_pdf_filename=(confidence_free_pdf_path.name if confidence_free_pdf_path.is_file() else record["pdf_filename"]),
+            )
+    return record
+
+
+def _validate_result_file(directory: Path, filename: str, suffix: str) -> str:
+    filename = validate_leaf_filename(filename, suffix)
+    if not (directory / filename).is_file():
+        raise FileNotFoundError(filename)
+    return filename
+
+
+def _validate_result_figure(directory: Path, filename: str, records: list[dict]) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in FIGURE_SUFFIXES:
+        raise ValueError("invalid figure filename")
+    filename = validate_leaf_filename(filename, suffix)
+    preview_name = Path(filename).with_suffix(".png").name
+    known = any(
+        preview_name in {record["filename"], record.get("confidence_free_filename")}
+        for record in records
+    )
+    if not known or not (directory / filename).is_file():
+        raise FileNotFoundError(filename)
+    return filename
+
+
+def _clear_result_files(raw_dirs: tuple[Path, ...], figure_dirs: tuple[Path, ...]) -> tuple[int, int]:
+    csv_paths = [path for directory in raw_dirs if directory.exists() for path in directory.glob("*.csv")]
+    figure_paths = [
+        path
+        for directory in figure_dirs
+        if directory.exists()
+        for path in directory.iterdir()
+        if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES
+    ]
+    for path in csv_paths + figure_paths:
+        path.unlink()
+    return len(csv_paths), sum(path.suffix.lower() == ".png" for path in figure_paths)
+
+
+def _load_summaries(directory: Path, summarize: Callable[[Path], dict]) -> tuple[list[dict], list[str]]:
+    summaries = []
+    warnings = []
+    for path in sorted(directory.glob("*.csv")):
+        try:
+            summaries.append(summarize(path))
+        except (OSError, KeyError, TypeError, ValueError, csv.Error) as error:
+            warnings.append(f"Skipped {path.name}: {error}")
+    return summaries, warnings
 
 
 class PlotUpdateError(RuntimeError):
@@ -93,6 +167,9 @@ class DashboardService:
         self.adversarial_dir = self.results_dir / "adversarial"
         self.adversarial_raw_dir = self.adversarial_dir / "raw"
         self.adversarial_figure_dir = self.adversarial_dir / "figures"
+        self.adversarial_scaling_dir = self.adversarial_dir / "scaling"
+        self.adversarial_scaling_raw_dir = self.adversarial_scaling_dir / "raw"
+        self.adversarial_scaling_figure_dir = self.adversarial_scaling_dir / "figures"
         self.game_catalog = GameCatalog(custom_game_dir)
         self.jobs = job_manager or JobManager()
         self.result_index = ResultIndex(self.raw_dir)
@@ -245,14 +322,8 @@ class DashboardService:
         return self.game_catalog.custom_path(game_id)
 
     @property
-    def feedback_modes(self) -> dict[str, dict]:
-        return {
-            name: {
-                "label": mode.label,
-                "algorithms": list(mode.algorithms),
-            }
-            for name, mode in FEEDBACK_MODES.items()
-        }
+    def feedback_modes(self) -> dict[str, str]:
+        return {name: mode.label for name, mode in FEEDBACK_MODES.items()}
 
     @property
     def algorithms_by_feedback_mode(self) -> dict[str, list[str]]:
@@ -283,52 +354,86 @@ class DashboardService:
             "algorithm_names": [first_algorithm] * self.game_player_counts[game],
             "horizon": HORIZON,
             "seed": SEED,
-            "replicates": BANDIT_REPLICATES,
+            "replicates": REPLICATES,
         }
 
     def default_adversarial_form_state(self) -> dict:
         feedback_mode = "full_information"
+        first_algorithm = self.adversarial_algorithms_by_feedback_mode[feedback_mode][0]
         return {
             "environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
             "initialization_mode": "centered",
             "feedback_mode": feedback_mode,
-            "algorithm_name": self.adversarial_algorithms_by_feedback_mode[
-                feedback_mode
-            ][0],
+            "regret_evaluation": "both",
+            "algorithm_names": [first_algorithm],
             "n_actions": ADVERSARIAL_ACTIONS,
-            "memory_window": ADVERSARIAL_MEMORY_WINDOW,
             "horizon": HORIZON,
             "environment_seed": SEED,
-            "learner_seed": SEED,
+            "seed": SEED,
+            "replicates": REPLICATES,
+            "scaling_action_counts": ", ".join(map(str, ACTION_SCALING_ACTION_COUNTS)),
+            "scaling_replicates": REPLICATES,
         }
+
+    def _submit_replicates(
+        self,
+        specs: list,
+        raw_dir: Path,
+        resource_key: Callable,
+        description: str,
+        run: Callable,
+        rebuild: Callable[[], None],
+        duplicate_message: str,
+        rebuild_error: str,
+    ) -> Job:
+        reserved = self.jobs.reserved_resources()
+        missing = [
+            spec
+            for spec in specs
+            if resource_key(spec) not in reserved and not (raw_dir / f"{spec.run_id}.csv").exists()
+        ]
+        if not missing:
+            raise FileExistsError(duplicate_message)
+
+        def operation(job: JobContext) -> str:
+            for spec in missing:
+                job.check_cancelled()
+                run(spec, job)
+                job.advance()
+            job.check_cancelled()
+            try:
+                rebuild()
+            except Exception as error:
+                raise PlotUpdateError(f"{rebuild_error}: {error}") from error
+            return f"Completed {len(missing)} run(s); skipped {len(specs) - len(missing)} existing or queued"
+
+        return self.jobs.submit(
+            description,
+            operation,
+            total=len(missing),
+            resource_keys={resource_key(spec) for spec in missing},
+        )
 
     def submit_adversarial_experiment(
         self,
         form: AdversarialExperimentForm,
     ) -> Job:
-        spec = AdversarialExperimentSpec(
-            environment=form.environment,
-            initialization_mode=form.initialization_mode,
-            environment_seed=form.environment_seed,
-            feedback_mode=form.feedback_mode,
-            algorithm_name=form.algorithm_name,
-            n_actions=form.n_actions,
-            memory_window=form.memory_window,
-            horizon=form.horizon,
-            seed=form.learner_seed,
-        )
-        resource_key = f"adversarial:{spec.run_id}"
-        reserved = self.jobs.reserved_resources()
-        if (
-            resource_key in reserved
-            or (self.adversarial_raw_dir / f"{spec.run_id}.csv").exists()
-        ):
-            raise FileExistsError(
-                "the requested adversarial run already exists or is queued"
+        specs = [
+            AdversarialExperimentSpec(
+                environment=form.environment,
+                initialization_mode=form.initialization_mode,
+                environment_seed=form.environment_seed,
+                feedback_mode=form.feedback_mode,
+                algorithm_name=form.algorithm_name,
+                n_actions=form.n_actions,
+                horizon=form.horizon,
+                seed=form.learner_seed,
+                replicate=replicate,
+                regret_evaluation=form.regret_evaluation,
             )
-
-        def operation(job: JobContext) -> str:
-            job.check_cancelled()
+            for replicate in range(form.replicates)
+        ]
+        def run(spec, job):
             run_adversarial_experiment(
                 environment=spec.environment,
                 initialization_mode=spec.initialization_mode,
@@ -336,305 +441,350 @@ class DashboardService:
                 feedback_mode=spec.feedback_mode,
                 algorithm_name=spec.algorithm_name,
                 n_actions=spec.n_actions,
-                memory_window=spec.memory_window,
                 horizon=spec.horizon,
                 seed=spec.seed,
+                replicate=spec.replicate,
+                regret_evaluation=spec.regret_evaluation,
                 output_dir=self.adversarial_raw_dir,
                 should_cancel=lambda: job.cancelled,
             )
-            job.advance()
-            job.check_cancelled()
-            try:
-                self._publish_adversarial_plots()
-            except Exception as error:
-                raise PlotUpdateError(
-                    "adversarial runs were saved, but their figures could not "
-                    f"be rebuilt: {error}"
-                ) from error
-            return "Completed adversarial run"
 
-        return self.jobs.submit(
+        return self._submit_replicates(
+            specs,
+            self.adversarial_raw_dir,
+            lambda spec: f"adversarial:{spec.run_id}",
             (
                 f"Adversarial: {algorithm_label(form.algorithm_name)} · "
                 f"{ENVIRONMENT_LABELS[form.environment]} · "
                 f"{FEEDBACK_MODE_LABELS[form.feedback_mode]} · "
+                f"{form.regret_evaluation} regret · "
                 f"{form.n_actions} actions · "
-                f"learner seed {form.learner_seed}"
+                f"{form.replicates} replicates · base learner seed {form.learner_seed}"
             ),
+            run,
+            self._publish_adversarial_plots,
+            "all requested adversarial replicates already exist or are queued",
+            "adversarial runs were saved, but their figures could not be rebuilt",
+        )
+
+    def submit_adversarial_scaling_experiment(
+        self,
+        form: AdversarialScalingForm,
+    ) -> Job:
+        spec = AdversarialScalingSpec(
+            environment=form.environment,
+            initialization_mode=form.initialization_mode,
+            feedback_mode=form.feedback_mode,
+            algorithm_name=form.algorithm_name,
+            action_counts=form.action_counts,
+            replicates=form.replicates,
+            horizon=form.horizon,
+            environment_seed=form.environment_seed,
+            learner_seed=form.learner_seed,
+            regret_evaluation=form.regret_evaluation,
+        )
+        resource_key = f"adversarial-scaling:{spec.run_id}"
+        if resource_key in self.jobs.reserved_resources() or (
+            self.adversarial_scaling_raw_dir / f"{spec.run_id}.csv"
+        ).exists():
+            raise FileExistsError(
+                "the requested action-space scaling experiment already exists or is queued"
+            )
+
+        def operation(job: JobContext) -> str:
+            run_adversarial_scaling_experiment(
+                spec,
+                self.adversarial_scaling_raw_dir,
+                should_cancel=lambda: job.cancelled,
+                completed=job.advance,
+            )
+            job.check_cancelled()
+            try:
+                self._publish_adversarial_scaling_plots()
+            except Exception as error:
+                raise PlotUpdateError(
+                    "action-space scaling results were saved, but their figures "
+                    f"could not be rebuilt: {error}"
+                ) from error
+            return (
+                f"Completed {len(spec.action_counts)} action counts × "
+                f"{spec.replicates} replicates"
+            )
+
+        return self.jobs.submit(
+            f"Action scaling: {algorithm_label(form.algorithm_name)} · "
+            f"{ENVIRONMENT_LABELS[form.environment]}",
             operation,
+            total=len(spec.action_counts) * spec.replicates,
             resource_keys={resource_key},
         )
 
     def _publish_adversarial_plots(self) -> None:
         from experiments.plots.plot_adversarial import plot_adversarial_results
 
-        self.adversarial_dir.mkdir(parents=True, exist_ok=True)
-        self.adversarial_figure_dir.mkdir(parents=True, exist_ok=True)
+        self._publish_generated_plots(
+            self.adversarial_raw_dir,
+            self.adversarial_figure_dir,
+            ".adversarial-figures-",
+            plot_adversarial_results,
+        )
+
+    def _publish_adversarial_scaling_plots(self) -> None:
+        from experiments.plots.plot_adversarial_scaling import (
+            plot_adversarial_scaling_results,
+        )
+
+        self._publish_generated_plots(
+            self.adversarial_scaling_raw_dir,
+            self.adversarial_scaling_figure_dir,
+            ".action-scaling-figures-",
+            plot_adversarial_scaling_results,
+        )
+
+    @staticmethod
+    def _publish_generated_plots(
+        raw_dir: Path,
+        figure_dir: Path,
+        prefix: str,
+        plotter: Callable[..., object],
+        filename_prefix: str | None = None,
+    ) -> None:
+        parent_dir = figure_dir.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        figure_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
-            prefix=".adversarial-figures-",
-            dir=self.adversarial_dir,
+            prefix=prefix,
+            dir=parent_dir,
         ) as temporary_directory:
             temporary_path = Path(temporary_directory)
-            generated = plot_adversarial_results(
-                self.adversarial_raw_dir,
-                temporary_path,
-                skip_invalid=True,
-            )
+            plotter(raw_dir, temporary_path, skip_invalid=True)
             generated_paths = [
-                companion
-                for path in generated
-                for companion in figure_paths(path)
+                path
+                for path in temporary_path.iterdir()
+                if path.suffix.lower() in FIGURE_SUFFIXES
             ]
-            _publish_figure_files(generated_paths, self.adversarial_figure_dir)
+            _publish_figure_files(generated_paths, figure_dir, filename_prefix)
 
-    def adversarial_result_summaries(self) -> tuple[list[dict], list[str]]:
-        summaries = []
-        warnings = []
-        for path in sorted(self.adversarial_raw_dir.glob("*.csv")):
-            try:
-                row = load_final_adversarial_row(path)
-                algorithm = row["algorithm"]
-                target_regret = TARGET_REGRET_BY_ALGORITHM.get(
-                    algorithm,
-                    "external",
+    def _delete_result(self, directory: Path, filename: str, rebuild: Callable[[], None]) -> None:
+        filename = validate_leaf_filename(filename, ".csv")
+
+        def operation() -> None:
+            path = directory / filename
+            if not path.is_file():
+                raise FileNotFoundError(filename)
+            path.unlink()
+            rebuild()
+
+        self.jobs.run_maintenance(operation)
+
+    def adversarial_scaling_summaries(self) -> tuple[list[dict], list[str]]:
+        def summarize(path: Path) -> dict:
+            first = load_adversarial_scaling_rows(path)[0]
+            return {
+                "filename": path.name,
+                "run_id": first["run_id"],
+                "environment": first["environment"],
+                "environment_label": ENVIRONMENT_LABELS[first["environment"]],
+                "environment_detail": adversarial_scaling_environment_detail(first),
+                "feedback_label": FEEDBACK_MODE_LABELS[first["feedback_mode"]],
+                "regret_evaluation": first["regret_evaluation"],
+                "implementation_version": int(first.get("implementation_version", 0)),
+                "algorithm_label": algorithm_label(first["algorithm"]),
+                "action_counts": [int(value) for value in first["action_counts"].split(",")],
+                "replicates": int(first["replicates"]),
+                "horizon": int(first["horizon"]),
+                "base_learner_seed": int(first["base_learner_seed"]),
+                "target_regret": first["target_regret"],
+            }
+
+        return _load_summaries(self.adversarial_scaling_raw_dir, summarize)
+
+    def adversarial_scaling_figure_records(self, summaries: list[dict] | None = None) -> list[dict]:
+        if summaries is None:
+            summaries, _ = self.adversarial_scaling_summaries()
+        records = []
+        for summary in summaries:
+            for source in regret_sources(summary["regret_evaluation"]):
+                path = self.adversarial_scaling_figure_dir / (
+                    f"{summary['run_id']}_{source}_regret_by_actions.png"
                 )
-                summaries.append(
+                if not path.is_file():
+                    continue
+                records.append(
                     {
-                        "filename": path.name,
-                        "algorithm": algorithm,
-                        "algorithm_label": algorithm_label(algorithm),
-                        "feedback_mode": row["feedback_mode"],
-                        "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
-                        "environment": row["environment"],
-                        "environment_label": ENVIRONMENT_LABELS[row["environment"]],
-                        "environment_detail": adversarial_environment_detail(row),
-                        "n_actions": int(row["n_actions"]),
-                        "horizon": int(row["horizon"]),
-                        "environment_seed": (
-                            int(row["environment_seed"])
-                            if row["environment_seed"]
-                            else None
-                        ),
-                        "learner_seed": int(row["learner_seed"]),
-                        "target_regret": target_regret,
-                        "expected_regret": float(
-                            row[
-                                f"average_expected_{target_regret}_regret"
-                            ]
-                        ),
-                        "realized_regret": float(
-                            row[
-                                f"average_realized_{target_regret}_regret"
-                            ]
-                        ),
+                        **summary,
+                        **_figure_file_record(path, confidence_intervals=True),
+                        "source": source,
                     }
                 )
-            except (OSError, TypeError, ValueError) as error:
-                warnings.append(f"Skipped {path.name}: {error}")
-        return summaries, warnings
+        return records
+
+    def validate_adversarial_scaling_csv_filename(self, filename: str) -> str:
+        return _validate_result_file(self.adversarial_scaling_raw_dir, filename, ".csv")
+
+    def validate_adversarial_scaling_figure_filename(self, filename: str) -> str:
+        return _validate_result_figure(
+            self.adversarial_scaling_figure_dir,
+            filename,
+            self.adversarial_scaling_figure_records(),
+        )
+
+    def delete_adversarial_scaling_experiment(self, filename: str) -> None:
+        self._delete_result(self.adversarial_scaling_raw_dir, filename, self._publish_adversarial_scaling_plots)
+
+    def adversarial_result_summaries(self) -> tuple[list[dict], list[str]]:
+        def summarize(path: Path) -> dict:
+            row = load_final_adversarial_row(path)
+            algorithm = row["algorithm"]
+            target_regret = TARGET_REGRET_BY_ALGORITHM.get(algorithm, "external")
+            sources = regret_sources(row["regret_evaluation"])
+            return {
+                "filename": path.name,
+                "algorithm": algorithm,
+                "algorithm_label": algorithm_label(algorithm),
+                "feedback_mode": row["feedback_mode"],
+                "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
+                "regret_evaluation": row["regret_evaluation"],
+                "implementation_version": int(row["implementation_version"]),
+                "environment": row["environment"],
+                "environment_label": ENVIRONMENT_LABELS[row["environment"]],
+                "environment_detail": adversarial_environment_detail(row),
+                "n_actions": int(row["n_actions"]),
+                "horizon": int(row["horizon"]),
+                "environment_seed": int(row["environment_seed"]) if row["environment_seed"] else None,
+                "learner_seed": int(row["learner_seed"]),
+                "replicate": int(row["replicate"]),
+                "target_regret": target_regret,
+                "expected_regret": float(row[f"average_expected_{target_regret}_regret"]) if "expected" in sources else None,
+                "realized_regret": float(row[f"average_realized_{target_regret}_regret"]) if "realized" in sources else None,
+            }
+
+        return _load_summaries(self.adversarial_raw_dir, summarize)
 
     def adversarial_figure_records(self) -> list[dict]:
         records = []
         regret_pattern = re.compile(
-            r"adversarial_(\d+)_actions_(average_)?"
+            r"adversarial_(.+?)_(full_information|bandit)_(\d+)_actions_(average_)?"
             r"(expected|realized)_(external|internal|swap)_regret"
             r"(_over_sqrt_t)?\.png"
         )
-        run_metadata = {}
         for path in sorted(self.adversarial_figure_dir.glob("*.png")):
             match = regret_pattern.fullmatch(path.name)
-            if match is not None:
-                average = match.group(2) is not None
-                scaled = match.group(5) is not None
-                if average == scaled:
-                    continue
-                pdf_path = path.with_suffix(".pdf")
-                records.append(
-                    {
-                        "filename": path.name,
-                        "pdf_filename": pdf_path.name if pdf_path.is_file() else None,
-                        "kind": "regret",
-                        "n_actions": int(match.group(1)),
-                        "source": match.group(3),
-                        "regret": match.group(4),
-                        "view": "average" if average else "sqrt_scaling",
-                    }
-                )
+            if match is None:
                 continue
-
-            diagnostic = next(
-                (
-                    name
-                    for name in ("punished_action", "best_action", "action")
-                    if path.name.endswith(f"_{name}_frequency.png")
-                ),
-                None,
-            )
-            if diagnostic is None:
+            environment = match.group(1)
+            if environment not in ENVIRONMENT_LABELS:
                 continue
-            run_stem = path.name.removesuffix(
-                f"_{diagnostic}_frequency.png"
-            )
-            try:
-                if run_stem not in run_metadata:
-                    run_metadata[run_stem] = load_final_adversarial_row(
-                        self.adversarial_raw_dir / f"{run_stem}.csv"
-                    )
-                row = run_metadata[run_stem]
-                pdf_path = path.with_suffix(".pdf")
-                records.append(
-                    {
-                        "filename": path.name,
-                        "pdf_filename": pdf_path.name if pdf_path.is_file() else None,
-                        "kind": "behavior",
-                        "diagnostic": diagnostic,
-                        "diagnostic_label": (
-                            "Learner action frequency"
-                            if diagnostic == "action"
-                            else (
-                                "Punished-action frequency"
-                                if diagnostic == "punished_action"
-                                else "Best-action frequency"
-                            )
-                        ),
-                        "algorithm_label": algorithm_label(row["algorithm"]),
-                        "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
-                        "environment_label": ENVIRONMENT_LABELS[row["environment"]],
-                        "environment_detail": adversarial_environment_detail(row, include_environment_seed=True),
-                        "n_actions": int(row["n_actions"]),
-                    }
-                )
-            except (OSError, TypeError, ValueError, KeyError):
+            average = match.group(4) is not None
+            scaled = match.group(7) is not None
+            if average == scaled:
                 continue
+            records.append({
+                **_figure_file_record(path, confidence_intervals=True),
+                "environment": environment,
+                "environment_label": ENVIRONMENT_LABELS[environment],
+                "feedback_mode": match.group(2),
+                "feedback_label": FEEDBACK_MODE_LABELS[match.group(2)],
+                "n_actions": int(match.group(3)),
+                "source": match.group(5),
+                "regret": match.group(6),
+                "view": "average" if average else "sqrt_scaling",
+            })
         regret_order = {"external": 0, "internal": 1, "swap": 2}
         view_order = {"average": 0, "sqrt_scaling": 1}
+        environment_order = {
+            environment: index
+            for index, environment in enumerate(ENVIRONMENT_LABELS)
+        }
+        feedback_order = {
+            feedback: index
+            for index, feedback in enumerate(FEEDBACK_MODE_LABELS)
+        }
         return sorted(
             records,
             key=lambda record: (
-                0 if record["kind"] == "regret" else 1,
-                record.get("source", ""),
-                view_order.get(record.get("view", ""), 0),
+                environment_order[record["environment"]],
+                feedback_order[record["feedback_mode"]],
+                record["source"],
+                view_order[record["view"]],
                 record["n_actions"],
-                regret_order.get(record.get("regret", ""), 0),
+                regret_order[record["regret"]],
                 record["filename"],
             ),
         )
 
     def validate_adversarial_csv_filename(self, filename: str) -> str:
-        filename = validate_leaf_filename(filename, ".csv")
-        if not (self.adversarial_raw_dir / filename).is_file():
-            raise FileNotFoundError(filename)
-        return filename
+        return _validate_result_file(self.adversarial_raw_dir, filename, ".csv")
 
     def validate_adversarial_figure_filename(self, filename: str) -> str:
-        suffix = Path(filename).suffix.lower()
-        if suffix not in FIGURE_SUFFIXES:
-            raise ValueError("invalid figure filename")
-        filename = validate_leaf_filename(filename, suffix)
-        preview_name = Path(filename).with_suffix(".png").name
-        if not any(
-            record["filename"] == preview_name
-            for record in self.adversarial_figure_records()
-        ) or not (self.adversarial_figure_dir / filename).is_file():
-            raise FileNotFoundError(filename)
-        return filename
+        return _validate_result_figure(
+            self.adversarial_figure_dir,
+            filename,
+            self.adversarial_figure_records(),
+        )
 
     def delete_adversarial_experiment(self, filename: str) -> None:
-        filename = validate_leaf_filename(filename, ".csv")
-
-        def operation() -> None:
-            path = self.adversarial_raw_dir / filename
-            if not path.is_file():
-                raise FileNotFoundError(filename)
-            path.unlink()
-            self._publish_adversarial_plots()
-
-        self.jobs.run_maintenance(operation)
+        self._delete_result(self.adversarial_raw_dir, filename, self._publish_adversarial_plots)
 
     def clear_adversarial_results(self) -> tuple[int, int]:
-        def operation() -> tuple[int, int]:
-            csv_paths = list(self.adversarial_raw_dir.glob("*.csv"))
-            figures = [path for path in self.adversarial_figure_dir.glob("*") if path.suffix.lower() in FIGURE_SUFFIXES]
-            figure_count = sum(path.suffix.lower() == ".png" for path in figures)
-            paths = csv_paths + figures
-            for path in paths:
-                path.unlink()
-            return len(csv_paths), figure_count
+        return self.jobs.run_maintenance(
+            lambda: _clear_result_files(
+                (self.adversarial_raw_dir, self.adversarial_scaling_raw_dir),
+                (self.adversarial_figure_dir, self.adversarial_scaling_figure_dir),
+            )
+        )
 
-        return self.jobs.run_maintenance(operation)
-
-    def _spec(self, form: ExperimentForm, algorithm_names: list[str] | None = None, replicate: int | None = None) -> ExperimentSpec:
-        names = algorithm_names or form.algorithm_names
+    def _spec(self, form: ExperimentForm, replicate: int) -> ExperimentSpec:
         return ExperimentSpec(
             game_name=form.game,
             feedback_mode=form.feedback_mode,
-            algorithm_names=tuple(names),
+            algorithm_names=form.algorithm_names,
             horizon=form.horizon,
             seed=form.seed,
-            replicate=0 if replicate is None else replicate,
+            replicate=replicate,
             regret_evaluation=form.regret_evaluation,
             game_payoff_digest=payoff_tensor_digest(self.game_catalog.load(form.game)),
         )
 
-    def _replicates(self, form: ExperimentForm) -> range:
-        if form.feedback_mode != "bandit":
-            return range(1)
-        return range(form.replicates)
-
-    def _missing_runs(self, form: ExperimentForm) -> tuple[list[tuple[list[str], int]], int]:
-        profile = list(form.algorithm_names)
-        requested = [(profile, replicate) for replicate in self._replicates(form)]
-        reserved = self.jobs.reserved_resources()
-        missing = []
-        for profile, replicate in requested:
-            run_id = self._spec(form, profile, replicate).run_id
-            if run_id not in reserved and not (self.raw_dir / f"{run_id}.csv").exists():
-                missing.append((profile, replicate))
-        return missing, len(requested) - len(missing)
-
-    def _run_experiments(self, form: ExperimentForm, mode: FeedbackMode, missing_runs: list[tuple[list[str], int]], skipped_count: int, job: JobContext) -> str:
-        for algorithm_names, replicate in missing_runs:
-            job.check_cancelled()
-            mode.runner(
-                game_name=form.game, algorithm_names=algorithm_names, horizon=form.horizon, seed=form.seed, replicate=replicate,
-                output_dir=self.raw_dir, should_cancel=lambda: job.cancelled, custom_game_dir=self.game_catalog.custom_game_dir,
-                regret_evaluation=form.regret_evaluation,
-            )
-            job.advance()
-        job.check_cancelled()
-        try:
-            self._publish_plots(form.game)
-        except Exception as error:
-            raise PlotUpdateError(f"experiments were saved, but their figures could not be rebuilt: {error}") from error
-        return f"Completed {len(missing_runs)} run(s); skipped {skipped_count} existing or queued"
-
     def submit_experiment(self, form: ExperimentForm) -> Job:
         mode = FEEDBACK_MODES[form.feedback_mode]
-        missing_runs, skipped_count = self._missing_runs(form)
-        if not missing_runs:
-            raise FileExistsError("all requested replicates already exist or are queued")
+        specs = [self._spec(form, replicate=replicate) for replicate in range(form.replicates)]
 
-        def operation(job: JobContext) -> str:
-            return self._run_experiments(form, mode, missing_runs, skipped_count, job)
+        def run(spec, job):
+            mode.runner(
+                game_name=spec.game_name,
+                algorithm_names=list(spec.algorithm_names),
+                horizon=spec.horizon,
+                seed=spec.seed,
+                replicate=spec.replicate,
+                output_dir=self.raw_dir,
+                should_cancel=lambda: job.cancelled,
+                custom_game_dir=self.game_catalog.custom_game_dir,
+                regret_evaluation=spec.regret_evaluation,
+            )
 
-        return self.jobs.submit(
+        return self._submit_replicates(
+            specs,
+            self.raw_dir,
+            lambda spec: spec.run_id,
             f"{form.game}: {algorithm_profile_label(form.algorithm_names)}",
-            operation,
-            total=len(missing_runs),
-            resource_keys={self._spec(form, names, replicate).run_id for names, replicate in missing_runs},
+            run,
+            lambda: self._publish_plots(form.game),
+            "all requested replicates already exist or are queued",
+            "experiments were saved, but their figures could not be rebuilt",
         )
 
     def submit_plot_rebuild(self) -> Job:
         return self.jobs.submit(
             "Rebuild all figures",
             lambda job: self._rebuild_all_plots(job),
-            reload_page=False,
         )
 
     def _rebuild_all_plots(self, job: JobContext) -> str:
         job.check_cancelled()
         self._publish_plots()
         self._publish_adversarial_plots()
+        self._publish_adversarial_scaling_plots()
         job.advance()
         return "Rebuilt all figures"
 
@@ -644,29 +794,14 @@ class DashboardService:
             plot_selected_results,
         )
 
-        self.figure_dir.parent.mkdir(parents=True, exist_ok=True)
-        self.figure_dir.mkdir(parents=True, exist_ok=True)
-
-        with tempfile.TemporaryDirectory(
-            prefix=".figures-",
-            dir=self.figure_dir.parent,
-        ) as temporary_directory:
-            temporary_path = Path(temporary_directory)
-            if game_name is None:
-                plot_all_results(self.raw_dir, temporary_path, skip_invalid=True)
-            else:
-                plot_selected_results(game_name, self.raw_dir, temporary_path, skip_invalid=True)
-
-            generated_paths = [
-                path
-                for path in temporary_path.iterdir()
-                if path.suffix.lower() in FIGURE_SUFFIXES
-            ]
-            _publish_figure_files(
-                generated_paths,
-                self.figure_dir,
-                None if game_name is None else f"{game_name}_",
-            )
+        plotter = plot_all_results if game_name is None else lambda input_dir, output_dir, skip_invalid: plot_selected_results(game_name, input_dir, output_dir, skip_invalid)
+        self._publish_generated_plots(
+            self.raw_dir,
+            self.figure_dir,
+            ".figures-",
+            plotter,
+            None if game_name is None else f"{game_name}_",
+        )
 
     def _clear_figure_files(self, game_name: str | None = None) -> None:
         if not self.figure_dir.exists():
@@ -983,20 +1118,10 @@ class DashboardService:
     def clear_results(self) -> None:
         def operation() -> None:
             self._invalidate_detail_figures()
-            if self.raw_dir.exists():
-                for path in self.raw_dir.glob("*.csv"):
-                    path.unlink()
-            if self.figure_dir.exists():
-                for path in self.figure_dir.iterdir():
-                    if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES:
-                        path.unlink()
-            if self.adversarial_raw_dir.exists():
-                for path in self.adversarial_raw_dir.glob("*.csv"):
-                    path.unlink()
-            if self.adversarial_figure_dir.exists():
-                for path in self.adversarial_figure_dir.iterdir():
-                    if path.suffix.lower() in FIGURE_SUFFIXES:
-                        path.unlink()
+            _clear_result_files(
+                (self.raw_dir, self.adversarial_raw_dir, self.adversarial_scaling_raw_dir),
+                (self.figure_dir, self.adversarial_figure_dir, self.adversarial_scaling_figure_dir),
+            )
 
         self.jobs.run_maintenance(operation)
 
@@ -1011,8 +1136,7 @@ class DashboardService:
         for path in sorted(self.figure_dir.glob("*.png")):
             metadata = self._parse_figure_filename(path.name)
             if metadata is not None:
-                pdf_path = path.with_suffix(".pdf")
-                records.append({"filename": path.name, "pdf_filename": pdf_path.name if pdf_path.is_file() else None, **metadata})
+                records.append({**_figure_file_record(path, confidence_intervals=True), **metadata})
         regret_order = {"external": 0, "internal": 1, "swap": 2}
         return sorted(records, key=lambda record: (record["source"], record["view"], record["player"], regret_order[record["regret"]]))
 
@@ -1049,10 +1173,4 @@ class DashboardService:
         return validate_leaf_filename(filename, ".csv")
 
     def validate_figure_filename(self, filename: str) -> str:
-        suffix = Path(filename).suffix.lower()
-        if suffix not in FIGURE_SUFFIXES:
-            raise ValueError("invalid figure filename")
-        filename = validate_leaf_filename(filename, suffix)
-        if self._parse_figure_filename(filename) is None or not (self.figure_dir / filename).is_file():
-            raise ValueError("unknown figure filename")
-        return filename
+        return _validate_result_figure(self.figure_dir, filename, self.figure_records())

@@ -42,6 +42,7 @@ web: ## Start the local experiment dashboard
 plot: ## Regenerate plots from existing raw results
 	$(PYTHON) -m experiments.plots.plot_regret
 	$(PYTHON) -m experiments.plots.plot_adversarial
+	$(PYTHON) -m experiments.plots.plot_adversarial_scaling
 
 precompute-equilibria: ## Regenerate static CE/CCE profile-weight heatmaps
 	$(PYTHON) -m web.precompute_equilibrium_figures --force --workers 4
@@ -59,6 +60,9 @@ clean: ## Remove Python and pytest caches
 	find "$(RESULTS_DIR)" web/static/equilibria data/custom_games -type d \( -name ".figures-*" -o -name ".equilibrium-*" -o -name ".equilibrium-convergence-*" -o -name ".precompute-equilibrium-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 reset: clean ## Remove caches and generated results
+	@if [ -d "$(RESULTS_DIR)/cache/plot_rows" ]; then \
+		find "$(RESULTS_DIR)/cache/plot_rows" -type f -name "*.json" -delete; \
+	fi
 	@if [ -d "$(RAW_DIR)" ]; then \
 		find "$(RAW_DIR)" -mindepth 1 -maxdepth 1 -type f ! -name ".gitkeep" -delete; \
 	fi

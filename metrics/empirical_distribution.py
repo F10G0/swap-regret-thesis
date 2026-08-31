@@ -42,18 +42,6 @@ def default_checkpoints(horizon: int) -> np.ndarray:
     return np.array(sorted(set(checkpoints)), dtype=int)
 
 
-def uniform_checkpoints(horizon: int, count: int) -> np.ndarray:
-    try:
-        horizon = index(horizon)
-        count = index(count)
-    except TypeError as error:
-        raise ValueError("horizon and count must be positive integers") from error
-    if horizon <= 0 or count <= 0:
-        raise ValueError("horizon and count must be positive integers")
-    count = min(horizon, count)
-    return np.rint(np.linspace(1, horizon, count)).astype(int)
-
-
 def final_logarithmic_interval_start(horizon: int) -> int:
     """Return the largest power of ten strictly smaller than ``horizon``."""
     try:

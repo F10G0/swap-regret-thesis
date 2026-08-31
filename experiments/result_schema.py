@@ -1,5 +1,8 @@
+RESULT_IMPLEMENTATION_VERSION = 1
+
 BASE_FIELDNAMES = [
     "run_id",
+    "implementation_version",
     "feedback_mode",
     "regret_evaluation",
     "seed",
@@ -26,6 +29,10 @@ def _regret_fieldnames(regret_type: str) -> list[str]:
 
 EXPECTED_REGRET_FIELDNAMES = _regret_fieldnames("expected")
 REALIZED_REGRET_FIELDNAMES = _regret_fieldnames("realized")
+REGRET_FIELDNAMES = {
+    "expected": EXPECTED_REGRET_FIELDNAMES,
+    "realized": REALIZED_REGRET_FIELDNAMES,
+}
 
 
 def default_regret_evaluation(feedback_mode: str) -> str:
@@ -53,12 +60,8 @@ def regret_sources(regret_evaluation: str) -> tuple[str, ...]:
 
 
 def regret_fieldnames(regret_evaluation: str) -> list[str]:
-    source_fields = {
-        "expected": EXPECTED_REGRET_FIELDNAMES,
-        "realized": REALIZED_REGRET_FIELDNAMES,
-    }
     return BASE_FIELDNAMES + [
         field
         for source in regret_sources(regret_evaluation)
-        for field in source_fields[source]
+        for field in REGRET_FIELDNAMES[source]
     ]

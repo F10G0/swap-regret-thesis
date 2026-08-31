@@ -5,6 +5,7 @@ from config import EQUILIBRIUM_LP_TOLERANCE
 from experiments.games import create_rock_paper_scissors_payoffs
 import metrics.equilibrium as equilibrium_module
 from metrics.equilibrium import equilibrium_profile_weights, max_equilibrium_profile_weight, optimize_equilibrium
+from tests.support import coordination_game_payoffs
 
 
 def asymmetric_game() -> np.ndarray:
@@ -14,11 +15,6 @@ def asymmetric_game() -> np.ndarray:
             [[1.0, 4.0], [3.0, 0.0]],
         ]
     )
-
-
-def coordination_game() -> np.ndarray:
-    payoffs = np.array([[1.0, 0.0], [0.0, 1.0]])
-    return np.stack((payoffs, payoffs))
 
 
 def maximum_incentive_gain(
@@ -68,7 +64,7 @@ def test_adapter_only_maps_concept_and_returns_upstream_distribution(
     equilibrium: str,
     expected_coarse: bool,
 ) -> None:
-    payoffs = coordination_game()
+    payoffs = coordination_game_payoffs()
     objective = np.array([[3.0, -1.0], [0.5, 2.0]])
     upstream_distribution = np.array(
         [[1.0, 0.0], [0.0, 0.0]]
@@ -113,7 +109,7 @@ def test_adapter_omits_upstream_objective_when_none(monkeypatch) -> None:
         fake_get_correlated_equilibrium,
     )
 
-    result = optimize_equilibrium(coordination_game(), "ce")
+    result = optimize_equilibrium(coordination_game_payoffs(), "ce")
 
     assert len(calls) == 1
     assert calls[0][1] is False
@@ -127,7 +123,7 @@ def test_upstream_optimizer_maximizes_arbitrary_linear_objective(
     objective = np.array([[3.0, -1.0], [0.5, 2.0]])
 
     distribution = optimize_equilibrium(
-        coordination_game(),
+        coordination_game_payoffs(),
         equilibrium,
         objective,
     )
@@ -141,7 +137,7 @@ def test_pure_nash_equilibrium_can_receive_probability_one(
     equilibrium: str,
 ) -> None:
     weight = max_equilibrium_profile_weight(
-        coordination_game(),
+        coordination_game_payoffs(),
         (0, 0),
         equilibrium,
     )
@@ -168,7 +164,7 @@ def test_profile_weights_use_one_hot_upstream_objectives(
         fake_get_correlated_equilibrium,
     )
 
-    weights = equilibrium_profile_weights(coordination_game(), "cce")
+    weights = equilibrium_profile_weights(coordination_game_payoffs(), "cce")
 
     assert np.array_equal(weights, np.ones((2, 2)))
     assert len(objectives) == 4
@@ -177,7 +173,7 @@ def test_profile_weights_use_one_hot_upstream_objectives(
 
 
 def test_profile_weight_matrix_is_not_an_equilibrium_distribution() -> None:
-    weights = equilibrium_profile_weights(coordination_game(), "ce")
+    weights = equilibrium_profile_weights(coordination_game_payoffs(), "ce")
 
     assert weights[0, 0] == pytest.approx(1.0)
     assert weights[1, 1] == pytest.approx(1.0)
@@ -244,7 +240,7 @@ def test_rps_diagonal_distribution_is_cce_but_not_ce() -> None:
 
 def test_unknown_equilibrium_concept_is_rejected_locally() -> None:
     with pytest.raises(ValueError, match="unknown equilibrium concept"):
-        optimize_equilibrium(coordination_game(), "nash")
+        optimize_equilibrium(coordination_game_payoffs(), "nash")
 
 
 def test_upstream_failures_propagate_unchanged(monkeypatch) -> None:
@@ -260,6 +256,6 @@ def test_upstream_failures_propagate_unchanged(monkeypatch) -> None:
     )
 
     with pytest.raises(RuntimeError) as captured:
-        optimize_equilibrium(coordination_game(), "cce")
+        optimize_equilibrium(coordination_game_payoffs(), "cce")
 
     assert captured.value is error

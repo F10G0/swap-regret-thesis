@@ -24,7 +24,6 @@ class Job:
     status: str
     message: str
     created_at: str
-    reload_page: bool = True
     completed: int = 0
     total: int = 1
     cancel_requested: bool = False
@@ -73,7 +72,6 @@ class JobManager:
         self,
         description: str,
         operation: Callable[[JobContext], str | None],
-        reload_page: bool = True,
         total: int = 1,
         resource_keys: set[str] | None = None,
     ) -> Job:
@@ -91,7 +89,6 @@ class JobManager:
                 status="queued",
                 message="Waiting to start",
                 created_at=self._now(),
-                reload_page=reload_page,
                 total=total,
             )
             self._jobs[job.id] = job

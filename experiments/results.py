@@ -5,13 +5,12 @@ from pathlib import Path
 import re
 
 from experiments.result_schema import (
-    EXPECTED_REGRET_FIELDNAMES,
-    REALIZED_REGRET_FIELDNAMES,
+    REGRET_FIELDNAMES,
     REGRET_NAMES,
     default_regret_evaluation,
     regret_sources,
 )
-from experiments.recorder import read_final_csv_rows
+from experiments.recorder import read_final_csv_rows, require_csv_columns
 
 
 IDENTITY_COLUMNS = (
@@ -56,10 +55,7 @@ def result_regret_evaluation(row: dict[str, str]) -> str:
     default_regret_evaluation(row["feedback_mode"])
     present_sources = {
         source
-        for source, fields in (
-            ("expected", EXPECTED_REGRET_FIELDNAMES),
-            ("realized", REALIZED_REGRET_FIELDNAMES),
-        )
+        for source, fields in REGRET_FIELDNAMES.items()
         if any(field in row for field in fields)
     }
     declared = row.get("regret_evaluation", "").strip()
@@ -115,9 +111,20 @@ def result_game_payoff_digest(row: dict[str, str]) -> str:
     return digest
 
 
+def result_implementation_version(row: dict[str, str]) -> int:
+    serialized = row.get("implementation_version", "").strip()
+    if not serialized:
+        return 0
+    version = int(serialized)
+    if version < 0:
+        raise ValueError("invalid implementation_version")
+    return version
+
+
 def _row_identity(row: dict[str, str]) -> tuple:
     return (
         *(row[column] for column in IDENTITY_COLUMNS),
+        result_implementation_version(row),
         result_game_payoff_digest(row),
         result_regret_evaluation(row),
         *result_algorithm_profile(row),
@@ -145,10 +152,7 @@ def _validated_rows(
     *,
     require_complete_trajectory: bool,
 ) -> Iterator[dict[str, str]]:
-    missing_columns = BASE_RESULT_COLUMNS - fieldnames
-    if missing_columns:
-        missing = ", ".join(sorted(missing_columns))
-        raise ValueError(f"{input_path} is missing required columns: {missing}")
+    require_csv_columns(input_path, fieldnames, BASE_RESULT_COLUMNS)
     if "algorithm_profile" not in fieldnames and not LEGACY_ALGORITHM_COLUMNS <= fieldnames:
         raise ValueError(f"{input_path} is missing required algorithm profile columns")
 
@@ -163,10 +167,7 @@ def _validated_rows(
         row["regret_evaluation"] = regret_evaluation
         identity = _row_identity(row)
         if expected_identity is None:
-            missing_columns = required_columns(row["feedback_mode"], regret_evaluation) - fieldnames
-            if missing_columns:
-                missing = ", ".join(sorted(missing_columns))
-                raise ValueError(f"{input_path} is missing required columns: {missing}")
+            require_csv_columns(input_path, fieldnames, required_columns(row["feedback_mode"], regret_evaluation))
             expected_identity = identity
             expected_horizon = int(row["horizon"])
             n_players = len(result_algorithm_profile(row))

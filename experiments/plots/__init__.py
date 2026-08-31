@@ -5,6 +5,7 @@ from pathlib import Path
 HEATMAP_COLORMAP = "Blues"
 FIGURE_FORMATS = ("png", "pdf")
 FIGURE_SUFFIXES = tuple(f".{figure_format}" for figure_format in FIGURE_FORMATS)
+CONFIDENCE_FREE_SUFFIX = "_without_ci"
 
 
 def figure_path(output_path: str | Path, figure_format: str) -> Path:
@@ -18,6 +19,24 @@ def figure_paths(output_path: str | Path) -> tuple[Path, Path]:
     if preview_path.suffix.lower() != ".png":
         raise ValueError("figure output path must use the .png suffix")
     return preview_path, preview_path.with_suffix(".pdf")
+
+
+def confidence_free_figure_path(output_path: str | Path) -> Path:
+    path = Path(output_path)
+    return path.with_name(f"{path.stem}{CONFIDENCE_FREE_SUFFIX}{path.suffix}")
+
+
+def remove_stale_figure_pairs(output_dir: str | Path, generated_paths) -> None:
+    output_dir = Path(output_dir)
+    generated_names = {
+        Path(path).with_suffix(suffix).name
+        for path in generated_paths
+        for suffix in FIGURE_SUFFIXES
+    }
+    for suffix in FIGURE_SUFFIXES:
+        for path in output_dir.glob(f"*{suffix}"):
+            if path.name not in generated_names:
+                path.unlink()
 
 
 def figure_pair_is_current(

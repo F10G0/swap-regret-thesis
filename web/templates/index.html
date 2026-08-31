@@ -1,13 +1,16 @@
-{% extends "base.html" %}
+{% extends "_experiment_page.html" %}
+{% from "_experiment_ui.html" import file_list, learning_configuration, regret_figure_panel, result_controls, summary_filters with context %}
+{% from "_one_player_experiment.html" import one_player_main, one_player_sidebar with context %}
 
-{% block content %}
-    {% set current_algorithms = algorithms_by_feedback_mode.get(
-        form_state.feedback_mode,
-        algorithms_by_feedback_mode["full_information"]
-    ) %}
+{% set sidebar_label = "Experiment configuration" %}
+{% set warning_heading_id = "warnings-heading" %}
+{% set job_heading_id = "jobs-heading" %}
+{% set job_busy_id = "busy-indicator" %}
+{% set current_algorithms = algorithms_by_feedback_mode.get(form_state.feedback_mode, algorithms_by_feedback_mode["full_information"]) %}
+{% set selected_algorithm_names = form_state.get("algorithm_names", []) %}
+{% if experiment_mode == "fixed" %}
     {% set selected_game = form_state.game if form_state.game in game_definitions else games[0] %}
     {% set selected_definition = game_definitions[selected_game] %}
-    {% set selected_algorithm_names = form_state.get("algorithm_names", []) %}
     {% set equilibrium_presentation = game_presentations[selected_game] %}
     {% set equilibrium_urls = equilibrium_figures.get(selected_game) %}
     {% set regret_summary_columns = [
@@ -18,138 +21,40 @@
         ("realized", "Internal", "average_realized_internal_regret"),
         ("realized", "Swap", "average_realized_swap_regret"),
     ] %}
+{% endif %}
 
-    <div class="app-shell">
-        <aside class="sidebar" aria-label="Experiment configuration">
-            <div class="brand">
-                <p class="eyebrow">Bachelor thesis laboratory</p>
-                <h1>Experiments</h1>
-                <p>Run reproducible cross-play experiments and inspect their final regret.</p>
-            </div>
+{% block title %}Experiments · Swap Regret{% endblock %}
 
-            {% if inline_error %}
-                <div class="notice notice-error" role="alert">{{ inline_error }}</div>
-            {% endif %}
+{% block experiment_description %}Run reproducible fixed-game or one-player experiments and inspect their regret.{% endblock %}
 
+{% block experiment_sidebar %}
+        {% if experiment_mode == "adversarial" %}
+            {{ one_player_sidebar(current_algorithms, selected_algorithm_names) }}
+        {% else %}
             <form id="experiment-form" method="post" action="{{ url_for('dashboard.index') }}">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="experiment_type" value="fixed">
 
-                <div class="top-control-grid">
-                    <div class="control-card control-card-game">
-                        <label for="game">Game</label>
-                        <select id="game" name="game" aria-describedby="game-description" required>
-                            <optgroup label="Built-in games">
-                                {% for game in built_in_games %}
+                <div class="control-card control-card-game">
+                    <label for="game">Game</label>
+                    <select id="game" name="game" aria-describedby="game-description" required>
+                        <optgroup label="Built-in games">
+                            {% for game in built_in_games %}
+                                <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% if custom_games %}
+                            <optgroup label="Other games">
+                                {% for game in custom_games %}
                                     <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
                                 {% endfor %}
                             </optgroup>
-                            {% if custom_games %}
-                                <optgroup label="Other games">
-                                    {% for game in custom_games %}
-                                        <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
-                                    {% endfor %}
-                                </optgroup>
-                            {% endif %}
-                        </select>
-                        <span id="game-description" class="hint">
-                            {{ equilibrium_presentation.description }}
-                        </span>
-                    </div>
-
-                    <div class="control-card">
-                        <label for="feedback-mode">Feedback</label>
-                        <select id="feedback-mode" name="feedback_mode" aria-describedby="feedback-description" required>
-                            {% for mode, config in feedback_modes.items() %}
-                                <option
-                                    value="{{ mode }}"
-                                    {% if mode == form_state.feedback_mode %}selected{% endif %}
-                                >{{ config.label }}</option>
-                            {% endfor %}
-                        </select>
-                        <span id="feedback-description" class="hint">
-                            Choose whether learners observe every action payoff or only their realized payoff.
-                        </span>
-                    </div>
-
-                    <div class="control-card">
-                        <label for="regret-evaluation">Regret evaluation</label>
-                        <select id="regret-evaluation" name="regret_evaluation" aria-describedby="regret-evaluation-description" required>
-                            {% for evaluation, label in regret_evaluations.items() %}
-                                <option value="{{ evaluation }}" {% if evaluation == form_state.regret_evaluation %}selected{% endif %}>{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                        <span id="regret-evaluation-description" class="hint">
-                            Choose whether to record expected regret, realized regret, or both without changing learner feedback.
-                        </span>
-                    </div>
+                        {% endif %}
+                    </select>
+                    <span id="game-description" class="hint">{{ equilibrium_presentation.description }}</span>
                 </div>
 
-                <div class="field-grid field-grid-two horizon-seed-grid">
-                    <div class="field">
-                        <label for="horizon">Horizon</label>
-                        <input
-                            id="horizon"
-                            name="horizon"
-                            type="number"
-                            value="{{ form_state.horizon }}"
-                            min="1"
-                            max="{{ max_horizon }}"
-                            required
-                        >
-                        <span class="hint">Number of rounds run by each experiment; the dashboard maximum is {{ max_horizon }}.</span>
-                    </div>
-                    <div class="field">
-                        <label for="seed">Seed</label>
-                        <input
-                            id="seed"
-                            name="seed"
-                            type="number"
-                            value="{{ form_state.seed }}"
-                            min="0"
-                            required
-                        >
-                        <span class="hint">Base seed used to derive reproducible random streams for every player and bandit replicate.</span>
-                    </div>
-                </div>
-
-                <div class="player-heading">
-                    <h2>Players</h2>
-                    <div class="player-heading-actions">
-                        <button id="synchronize-players" class="button-link" type="button">Player 0 → all</button>
-                    </div>
-                </div>
-
-                <div id="players" class="players">
-                    {% for player_id in range(selected_definition.n_players) %}
-                        {% set algorithm_field = "algorithm_player_" ~ player_id %}
-                        <fieldset>
-                            <legend>Player {{ player_id }}</legend>
-
-                            <div class="field">
-                                <label for="{{ algorithm_field }}">Algorithm</label>
-                                <select
-                                    id="{{ algorithm_field }}"
-                                    name="algorithm_names"
-                                    class="player-algorithm"
-                                    required
-                                >
-                                    {% for algorithm in current_algorithms %}
-                                        <option
-                                            value="{{ algorithm }}"
-                                            {% if algorithm == selected_algorithm_names[player_id] | default(current_algorithms[0]) %}selected{% endif %}
-                                        >{{ algorithm_labels[algorithm] }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                        </fieldset>
-                    {% endfor %}
-                </div>
-
-                <div id="replicate-fields" class="field" {% if form_state.feedback_mode != "bandit" %}hidden{% endif %}>
-                    <label for="replicates">Bandit replicates</label>
-                    <input id="replicates" name="replicates" type="number" value="{{ form_state.replicates }}" min="1" max="{{ max_replicates }}" required {% if form_state.feedback_mode != "bandit" %}disabled{% endif %}>
-                    <span class="hint">Run replicates 0 through n−1 and plot their mean with a 95% confidence band.</span>
-                </div>
+                {{ learning_configuration(form_state, feedback_modes, regret_evaluations, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates, "Base seed used to derive reproducible random streams for every player and replicate.") }}
 
                 <div class="button-stack">
                     <button id="queue-experiment" class="button-primary" type="submit">
@@ -179,112 +84,20 @@
                     </form>
                 </div>
 
-                <section class="experiment-list" aria-labelledby="experiments-heading">
-                    <h2 id="experiments-heading">Raw experiment files</h2>
-                    {% if experiments %}
-                        <ul>
-                            {% for experiment in experiments %}
-                                <li>
-                                    <a
-                                        href="{{ url_for('dashboard.download_experiment', filename=experiment) }}"
-                                        title="Download {{ experiment }}"
-                                    >{{ experiment }}</a>
-                                    <form
-                                        method="post"
-                                        action="{{ url_for('dashboard.delete_experiment') }}"
-                                        data-confirm="Delete {{ experiment }} and rebuild all figures?"
-                                    >
-                                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                                        <input type="hidden" name="filename" value="{{ experiment }}">
-                                        <button
-                                            class="icon-button"
-                                            type="submit"
-                                            aria-label="Delete {{ experiment }}"
-                                            data-busy-control
-                                            {% if busy %}disabled{% endif %}
-                                        >Delete</button>
-                                    </form>
-                                </li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p class="empty">No experiments recorded.</p>
-                    {% endif %}
-                </section>
+                {{ file_list(experiments, "experiments-heading", "Raw experiment files", "dashboard.delete_experiment", "and rebuild all figures", busy, "No experiments recorded.") }}
             </details>
-        </aside>
+        {% endif %}
+{% endblock %}
 
-        <main id="main-content" class="content">
-            {% if warnings %}
-                <section class="warning-panel" aria-labelledby="warnings-heading">
-                    <h2 id="warnings-heading">Result warnings</h2>
-                    <ul>
-                        {% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}
-                    </ul>
-                </section>
-            {% endif %}
-
-            <section class="panel jobs-panel" aria-labelledby="jobs-heading" aria-live="polite" {% if not jobs %}hidden{% endif %}>
-                <div class="section-heading">
-                    <div>
-                        <p class="eyebrow">Execution</p>
-                        <h2 id="jobs-heading">Job status</h2>
-                    </div>
-                    <span id="busy-indicator" class="busy-indicator" {% if not busy %}hidden{% endif %}>Queue active</span>
-                </div>
-
-                {% if jobs %}
-                    <ol class="job-list">
-                        {% for job in jobs %}
-                            <li class="job job-{{ job.status }}" data-job-id="{{ job.id }}">
-                                <div>
-                                    <strong>{{ job.description }}</strong>
-                                    <p>{{ job.message }}</p>
-                                </div>
-                                <div class="job-actions">
-                                    <span class="status">{{ job.status }}</span>
-                                    {% if job.status in ["queued", "running"] %}
-                                        <form method="post" action="{{ url_for('dashboard.cancel_job', job_id=job.id) }}">
-                                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                                            <button class="button-link" type="submit">Cancel</button>
-                                        </form>
-                                    {% endif %}
-                                </div>
-                            </li>
-                        {% endfor %}
-                    </ol>
-                {% else %}
-                    <p class="empty">No recent jobs.</p>
-                {% endif %}
-            </section>
-
+{% block experiment_main %}
+        {% if experiment_mode == "adversarial" %}
+            {{ one_player_main() }}
+        {% else %}
             {% if figures or summaries %}
-                <section class="panel results-controls" aria-labelledby="results-controls-heading">
-                    <div>
-                        <p class="eyebrow">Recorded output</p>
-                        <h2 id="results-controls-heading">Results</h2>
-                        <p class="hint">Game and player apply to both figures and the summary table.</p>
-                    </div>
-                    <div class="shared-result-filters">
-                        <div class="field">
-                            <label for="filter-game">Game</label>
-                            <select id="filter-game">
-                                <option value="all">All games</option>
-                                {% for game in games %}<option value="{{ game }}">{{ game_presentations[game].label }}</option>{% endfor %}
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label for="filter-player">Player</label>
-                            <select id="filter-player">
-                                <option value="all">All players</option>
-                                {% for player in players %}<option value="{{ player }}">Player {{ player }}</option>{% endfor %}
-                            </select>
-                        </div>
-                    </div>
-                </section>
+                {{ result_controls(result_filters) }}
             {% endif %}
 
-            <details id="equilibrium-panel" class="panel disclosure-panel equilibrium-panel">
+            <details id="equilibrium-panel" class="panel disclosure-panel equilibrium-panel" hidden>
                 <summary>
                     <span>
                         <span class="eyebrow">Game analysis</span>
@@ -339,69 +152,7 @@
             </details>
 
             {% if figures or summaries %}
-            <section class="panel figures-panel" aria-labelledby="figures-heading">
-                <div class="section-heading">
-                    <div>
-                        <p class="eyebrow">Visual analysis</p>
-                        <h2 id="figures-heading">Regret figures</h2>
-                    </div>
-                    <span id="figure-counter" class="counter"></span>
-                </div>
-
-                <div id="figure-filters" class="filter-grid" {% if not figures %}hidden{% endif %}>
-                    <div class="field">
-                        <label for="filter-source">Source</label>
-                        <select id="filter-source">
-                            <option value="expected">Expected</option>
-                            <option value="realized">Realized</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="filter-regret">Regret</label>
-                        <select id="filter-regret">
-                            <option value="all">All types</option>
-                            <option value="external">External</option>
-                            <option value="internal">Internal</option>
-                            <option value="swap">Swap</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="filter-view">View</label>
-                        <select id="filter-view">
-                            <option value="all">Both views</option>
-                            <option value="average" selected>Average regret</option>
-                            <option value="sqrt_scaling">Regret / sqrt(t)</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div id="figure-grid" class="figure-grid">
-                    {% for figure in figures %}
-                        <article class="figure-card" data-figure-index="{{ loop.index0 }}" data-game="{{ figure.game }}" data-source="{{ figure.source }}"
-                                 data-regret="{{ figure.regret }}" data-player="{{ figure.player }}" data-view="{{ figure.view }}">
-                            <button class="figure-open" type="button">
-                                <span>{{ game_presentations[figure.game].label }} · {{ figure.source | title }} · Player {{ figure.player }} · {{ figure.regret | title }}</span>
-                                <img src="{{ figure.url }}" alt="{{ game_presentations[figure.game].label }}, {{ figure.source }} {{ figure.regret }} regret for player {{ figure.player }}" loading="lazy">
-                            </button>
-                            {% if figure.pdf_url %}
-                                <a href="{{ figure.pdf_url }}" download="{{ figure.pdf_filename }}">Download PDF</a>
-                            {% else %}
-                                <a href="{{ figure.url }}" download="{{ figure.filename }}">Download PNG</a>
-                            {% endif %}
-                        </article>
-                    {% endfor %}
-                </div>
-                <p id="figure-empty" class="empty" {% if figures %}hidden{% endif %}>No figures available. Run an experiment first.</p>
-            </section>
-
-            <dialog id="figure-dialog" class="figure-dialog">
-                <div class="dialog-heading">
-                    <h2 id="dialog-figure-title">Regret figure</h2>
-                    <button id="close-figure-dialog" type="button">Close</button>
-                </div>
-                <img id="dialog-figure-image" src="" alt="">
-                <a id="dialog-figure-download" href="" download>Download PDF</a>
-            </dialog>
+            {{ regret_figure_panel(figures, "No figures available. Run an experiment first.") }}
 
             <section class="panel summary-panel" aria-labelledby="summary-heading">
                 <div class="section-heading">
@@ -413,52 +164,7 @@
                 </div>
 
                 {% if summaries %}
-                    <div class="summary-filters">
-                        <div class="field">
-                            <label for="filter-summary-source">Regret source</label>
-                            <select id="filter-summary-source">
-                                <option value="expected">Expected</option>
-                                <option value="realized">Realized</option>
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label for="filter-feedback">Feedback</label>
-                            <select id="filter-feedback">
-                                <option value="all">All feedback</option>
-                                <option value="full_information">Full information</option>
-                                <option value="bandit">Bandit</option>
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label for="filter-regret-evaluation">Regret evaluation</label>
-                            <select id="filter-regret-evaluation">
-                                <option value="all">All evaluations</option>
-                                {% for evaluation, label in regret_evaluations.items() %}<option value="{{ evaluation }}">{{ label }}</option>{% endfor %}
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label for="filter-player-algorithm">Player algorithm</label>
-                            <select id="filter-player-algorithm">
-                                <option value="all">All algorithms</option>
-                                {% for algorithm, label in algorithm_labels.items() %}<option value="{{ algorithm }}">{{ label }}</option>{% endfor %}
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label for="filter-co-player-algorithm">Co-player algorithm</label>
-                            <select id="filter-co-player-algorithm">
-                                <option value="all">All co-players</option>
-                                {% for algorithm, label in algorithm_labels.items() %}<option value="{{ algorithm }}">{{ label }}</option>{% endfor %}
-                            </select>
-                        </div>
-                        <div class="field">
-                            <label for="filter-horizon">Horizon</label>
-                            <input id="filter-horizon" type="number" min="1" placeholder="Any">
-                        </div>
-                        <div class="field">
-                            <label for="filter-seed">Seed</label>
-                            <input id="filter-seed" type="number" min="0" placeholder="Any">
-                        </div>
-                    </div>
+                    {{ summary_filters(include_feedback=true, include_co_player=true) }}
                     <div class="table-scroll">
                         <table id="summary-table">
                             <thead>
@@ -479,8 +185,8 @@
                                         class="summary-row"
                                         tabindex="0"
                                         data-summary-index="{{ loop.index0 }}"
-                                        data-game="{{ row.game }}"
-                                        data-player="{{ row.player }}"
+                                        data-scope="{{ row.game }}"
+                                        data-secondary="{{ row.player }}"
                                         data-feedback="{{ row.feedback_mode }}"
                                         data-regret-evaluation="{{ row.regret_evaluation }}"
                                         data-player-algorithm="{{ row.player_algorithm }}"
@@ -565,24 +271,35 @@
                     <p class="empty">Configure and queue an experiment to create regret figures and summaries.</p>
                 </section>
             {% endif %}
+        {% endif %}
 
-        </main>
-    </div>
 {% endblock %}
 
 {% block scripts %}
     <script id="dashboard-data" type="application/json">
-        {{ {
-            "figures": figures,
-            "figuresUrl": url_for("dashboard.figure_data"),
-            "equilibriumFigures": equilibrium_figures,
-            "gameDefinitions": game_definitions,
-            "gamePresentations": game_presentations,
-            "jobs": jobs,
-            "summaries": summaries,
-            "algorithms": algorithms_by_feedback_mode,
-            "algorithmLabels": algorithm_labels,
-        } | tojson }}
+        {% if experiment_mode == "fixed" %}
+            {{ {
+                "mode": experiment_mode,
+                "figures": figures,
+                "equilibriumFigures": equilibrium_figures,
+                "gameDefinitions": game_definitions,
+                "gamePresentations": game_presentations,
+                "jobs": jobs,
+                "summaries": summaries,
+                "algorithms": algorithms_by_feedback_mode,
+                "algorithmLabels": algorithm_labels,
+            } | tojson }}
+        {% else %}
+            {{ {
+                "mode": experiment_mode,
+                "figures": figures,
+                "jobs": jobs,
+                "summaries": summaries,
+                "algorithms": algorithms_by_feedback_mode,
+                "algorithmLabels": algorithm_labels,
+                "randomWalkEnvironment": random_walk_environment,
+            } | tojson }}
+        {% endif %}
     </script>
     <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
 {% endblock %}

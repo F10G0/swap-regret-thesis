@@ -11,13 +11,8 @@ from setuptools import find_namespace_packages
 
 
 EXPERIMENTAL_TRAJECTORIES_VARIABLE = "EXPERIMENTAL_TRAJECTORIES"
-EXPERIMENTAL_TRAJECTORIES_MARKER = (
-    "swap_regret_experimental_trajectories_enabled"
-)
-EXPERIMENTAL_TRAJECTORIES_MARKER_DIR = Path(
-    "build_support/experimental_trajectories_enabled/"
-    "swap_regret_experimental_trajectories_enabled"
-)
+EXPERIMENTAL_TRAJECTORIES_MARKER = "swap_regret_experimental_trajectories_enabled"
+EXPERIMENTAL_TRAJECTORIES_MARKER_DIR = Path("build_support/experimental_trajectories_enabled/swap_regret_experimental_trajectories_enabled")
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})

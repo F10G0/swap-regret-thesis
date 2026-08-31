@@ -3,9 +3,7 @@
 from importlib.util import find_spec
 
 
-EXPERIMENTAL_TRAJECTORIES_MARKER = (
-    "swap_regret_experimental_trajectories_enabled"
-)
+EXPERIMENTAL_TRAJECTORIES_MARKER = "swap_regret_experimental_trajectories_enabled"
 
 
 def experimental_trajectories_built() -> bool:

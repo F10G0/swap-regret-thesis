@@ -58,7 +58,8 @@ function restoreFinalIntervalSegments() {
 }
 
 function focusFinalInterval() {
-    return element("focus-final-interval")?.checked ?? false;
+    const input = element("focus-final-interval");
+    return input ? input.checked : false;
 }
 
 function saveFocusFinalInterval() {
@@ -74,7 +75,8 @@ function restoreFocusFinalInterval() {
 }
 
 function trajectoryComparisonView() {
-    return element("trajectory-comparison-view")?.value || "geometry";
+    const select = element("trajectory-comparison-view");
+    return select ? select.value : "geometry";
 }
 
 function saveTrajectoryComparisonView() {
@@ -205,7 +207,8 @@ function renderPendingTrajectoryComparisonMembers() {
 }
 
 function addTrajectoryComparisonMember() {
-    const groupId = element("trajectory-comparison-candidate")?.value;
+    const select = element("trajectory-comparison-candidate");
+    const groupId = select ? select.value : "";
     if (!groupId || !trajectoryComparisonCandidates.has(groupId)) {
         return;
     }
@@ -316,23 +319,21 @@ async function generateTrajectoryComparison() {
     await poll();
 }
 
-element("final-interval-segments")?.addEventListener("change", () => {
+listen("final-interval-segments", "change", () => {
     saveFinalIntervalSegments();
     updateTrajectoryComparisonDirtyState();
 });
-element("focus-final-interval")?.addEventListener("change", () => {
+listen("focus-final-interval", "change", () => {
     saveFocusFinalInterval();
     updateTrajectoryComparisonDirtyState();
 });
-element("trajectory-comparison-view")?.addEventListener("change", () => {
+listen("trajectory-comparison-view", "change", () => {
     saveTrajectoryComparisonView();
     updateTrajectoryComparisonDirtyState();
 });
-element("trajectory-comparison-add")?.addEventListener(
-    "click",
-    addTrajectoryComparisonMember,
-);
-element("trajectory-comparison-selected")?.addEventListener(
+listen("trajectory-comparison-add", "click", addTrajectoryComparisonMember);
+listen(
+    "trajectory-comparison-selected",
     "click",
     (event) => {
         const button = event.target.closest("button[data-group-id]");
@@ -343,10 +344,7 @@ element("trajectory-comparison-selected")?.addEventListener(
         renderPendingTrajectoryComparisonMembers();
     },
 );
-element("trajectory-comparison-generate")?.addEventListener(
-    "click",
-    generateTrajectoryComparison,
-);
+listen("trajectory-comparison-generate", "click", generateTrajectoryComparison);
 
 restoreFinalIntervalSegments();
 restoreFocusFinalInterval();

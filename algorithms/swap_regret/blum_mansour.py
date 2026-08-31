@@ -2,7 +2,7 @@ from functools import partial
 
 import numpy as np
 
-from algorithms.external_regret import Hedge, Exp3
+from algorithms.external_regret import Exp3, Exp3IX, Hedge
 from algorithms.swap_regret.base import StationaryReduction
 
 
@@ -19,7 +19,7 @@ class FullBM(StationaryReduction):
 
 
 class BanditBM(StationaryReduction):
-    """Bandit-feedback Blum-Mansour reduction with known-horizon inner learners."""
+    """Bandit Blum-Mansour reduction using weighted observed losses."""
 
     def __init__(self, n_actions: int, horizon: int, inner_algorithm_factory=Exp3, seed: int | None = None) -> None:
         super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, horizon), horizon, seed)
@@ -29,7 +29,14 @@ class BanditBM(StationaryReduction):
         probability = self.current_strategy[self.current_action]
 
         for i, learner in enumerate(self.learners):
-            # Importance-weighted reward: r_i = p_i r_k q_i,k / p_k.
-            observed_reward = self.current_strategy[i] * reward * transition_matrix[i, self.current_action] / probability
+            # Pass a complementary reward so inner Exp3 importance-weights observed_loss.
+            observed_loss = self.current_strategy[i] * (1.0 - reward) * transition_matrix[i, self.current_action] / probability
             learner.current_action = self.current_action
-            learner.update(observed_reward)
+            learner.update(1.0 - observed_loss)
+
+
+class LCEIX(BanditBM):
+    """Bandit Blum-Mansour reduction with anytime Exp3-IX inner learners."""
+
+    def __init__(self, n_actions: int, seed: int | None = None) -> None:
+        super().__init__(n_actions, 0, Exp3IX, seed)

@@ -4,7 +4,7 @@ import json
 import re
 
 from config import STATIONARY_METHOD
-from experiments.result_schema import resolve_regret_evaluation
+from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, resolve_regret_evaluation
 
 
 FEEDBACK_MODES = {"full_information", "bandit"}
@@ -27,6 +27,7 @@ class ExperimentSpec:
     stationary_method: str = STATIONARY_METHOD
     regret_evaluation: str = "feedback_aligned"
     game_payoff_digest: str = ""
+    implementation_version: int = RESULT_IMPLEMENTATION_VERSION
 
     def __post_init__(self) -> None:
         if self.feedback_mode not in FEEDBACK_MODES:
@@ -41,6 +42,8 @@ class ExperimentSpec:
             raise ValueError("seed must be non-negative")
         if self.replicate < 0:
             raise ValueError("replicate must be non-negative")
+        if self.implementation_version <= 0:
+            raise ValueError("implementation_version must be positive")
         object.__setattr__(self, "regret_evaluation", resolve_regret_evaluation(self.feedback_mode, self.regret_evaluation))
         if not self.stationary_method:
             raise ValueError("stationary_method must not be empty")
@@ -81,6 +84,7 @@ class ExperimentSpec:
             "regret_evaluation": self.regret_evaluation,
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
+            "implementation_version": self.implementation_version,
         }
 
     def metadata(self) -> dict:
@@ -92,6 +96,7 @@ class ExperimentSpec:
             "replicate": self.replicate,
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
+            "implementation_version": self.implementation_version,
             "algorithm_profile": json.dumps(self.algorithm_names, separators=(",", ":")),
             "horizon": self.horizon,
         }

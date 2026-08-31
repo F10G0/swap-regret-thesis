@@ -1,5 +1,3 @@
-from collections import deque
-
 import numpy as np
 
 
@@ -9,40 +7,30 @@ RANDOM_WALK_INITIALIZATIONS = ("centered", "uniform_grid")
 
 
 class HistoricalFrequencyAdversary:
-    """One-player environment that punishes the most-played past action."""
+    """Punish the most frequent half of the actions over the full history."""
 
-    def __init__(self, n_actions: int, memory_window: int | None = None) -> None:
+    def __init__(self, n_actions: int) -> None:
         self.n_players = 1
         self.n_actions = (n_actions,)
         self.action_counts = np.zeros(n_actions, dtype=int)
-        self._history = None if memory_window is None else deque(maxlen=memory_window)
-        self._counts = self.action_counts if self._history is None else np.zeros(n_actions, dtype=int)
         self._tie_cursor = 0
-        self.punished_action = 0
+        self.punished_actions = tuple(range((n_actions + 1) // 2))
 
     def step(self, actions: tuple[int, ...]) -> None:
         action = actions[0]
         n_actions = self.n_actions[0]
-        maximum_count = self._counts.max()
-        punished_action = self._tie_cursor
-        while self._counts[punished_action] != maximum_count:
-            punished_action = (punished_action + 1) % n_actions
-        self.punished_action = punished_action
-        self._tie_cursor = (punished_action + 1) % n_actions
-
+        tie_order = [(self._tie_cursor + offset) % n_actions for offset in range(n_actions)]
+        punished_count = (n_actions + 1) // 2
+        self.punished_actions = tuple(sorted(tie_order, key=self.action_counts.__getitem__, reverse=True)[:punished_count])
+        self._tie_cursor = (self._tie_cursor + punished_count) % n_actions
         self.action_counts[action] += 1
-        if self._history is not None:
-            if len(self._history) == self._history.maxlen:
-                self._counts[self._history[0]] -= 1
-            self._history.append(action)
-            self._counts[action] += 1
 
     def feedback(self) -> np.ndarray:
         return self.deviation_payoffs()
 
     def deviation_payoffs(self) -> np.ndarray:
         payoffs = np.ones(self.n_actions[0])
-        payoffs[self.punished_action] = 0.0
+        payoffs[list(self.punished_actions)] = 0.0
         return payoffs
 
 

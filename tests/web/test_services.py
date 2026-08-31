@@ -16,7 +16,7 @@ from web.jobs import JobManager, ServiceBusyError
 from web.presentations import GAME_PRESENTATIONS
 from web.result_groups import aggregate_result_summaries
 from web.services import DashboardService
-from tests.web.support import create_service, wait_for_async_result, wait_for_job
+from tests.web.support import block_job_queue, create_service, wait_for_async_result, wait_for_job
 from experimental.equilibrium_trajectory.web_models import (
     comparison_member_colors,
     stable_member_color,
@@ -204,13 +204,12 @@ def test_job_manager_reports_progress_and_cancels() -> None:
     assert job.total == 4
 
 
-def test_plot_rebuild_job_does_not_request_page_reload(tmp_path: Path) -> None:
+def test_plot_rebuild_job_completes(tmp_path: Path) -> None:
     service = create_service(tmp_path)
 
     job = service.submit_plot_rebuild()
 
     assert wait_for_job(service, job.id) == "succeeded"
-    assert service.jobs.get(job.id).reload_page is False
 
 
 def test_clear_results_preserves_unrelated_files(tmp_path: Path) -> None:
@@ -306,7 +305,6 @@ def test_summary_loader_returns_final_rows_for_each_player(tmp_path: Path) -> No
         horizon=2,
         output_dir=service.raw_dir,
     )
-
     snapshot = service.result_snapshot()
 
     assert snapshot.warnings == []
@@ -338,12 +336,23 @@ def test_result_snapshot_reuses_unchanged_file_summary(tmp_path: Path, monkeypat
     assert after_delete.summaries == []
 
 
-def test_bandit_submission_runs_requested_replicates(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("feedback_mode", "algorithms"),
+    [
+        ("full_information", ("hedge", "hedge")),
+        ("bandit", ("exp3", "lce_ix")),
+    ],
+)
+def test_submission_runs_requested_replicates(
+    tmp_path: Path,
+    feedback_mode: str,
+    algorithms: tuple[str, str],
+) -> None:
     service = create_service(tmp_path)
     form = ExperimentForm(
         "rps",
-        "bandit",
-        ("exp3", "lce_ix"),
+        feedback_mode,
+        algorithms,
         horizon=2,
         seed=42,
         replicates=3,
@@ -363,15 +372,7 @@ def test_bandit_submission_runs_requested_replicates(tmp_path: Path) -> None:
 
 def test_experiment_submissions_queue_and_reserve_run_ids(tmp_path: Path) -> None:
     service = create_service(tmp_path)
-    blocker_started = Event()
-    release_blocker = Event()
-
-    def block_queue(job) -> None:
-        blocker_started.set()
-        assert release_blocker.wait(timeout=2)
-
-    blocker = service.jobs.submit("blocker", block_queue)
-    assert blocker_started.wait(timeout=1)
+    blocker, release_blocker = block_job_queue(service.jobs)
     first = service.submit_experiment(experiment_form())
 
     with pytest.raises(FileExistsError, match="queued"):
@@ -408,6 +409,13 @@ def test_plot_publication_creates_structured_figure_metadata(tmp_path: Path) -> 
         horizon=2,
         output_dir=service.raw_dir,
     )
+    run_full_information_cross_play_experiment(
+        game_name="rps",
+        algorithm_names=["hedge", "hedge"],
+        horizon=2,
+        replicate=1,
+        output_dir=service.raw_dir,
+    )
 
     service._publish_plots("rps")
     figures = service.figure_records()
@@ -418,6 +426,10 @@ def test_plot_publication_creates_structured_figure_metadata(tmp_path: Path) -> 
     assert {figure["player"] for figure in figures} == {0, 1}
     assert {figure["view"] for figure in figures} == {"average", "sqrt_scaling"}
     assert all((service.figure_dir / figure["pdf_filename"]).is_file() for figure in figures)
+    assert all(figure["confidence_free_filename"] != figure["filename"] for figure in figures)
+    assert all((service.figure_dir / figure["confidence_free_filename"]).is_file() for figure in figures)
+    assert all((service.figure_dir / figure["confidence_free_pdf_filename"]).is_file() for figure in figures)
+    assert service.validate_figure_filename(figures[0]["confidence_free_filename"])
 
 
 def test_failed_plot_update_preserves_existing_figures(tmp_path: Path) -> None:

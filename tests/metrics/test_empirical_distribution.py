@@ -7,7 +7,6 @@ from metrics.empirical_distribution import (
     final_interval_checkpoints,
     final_logarithmic_interval_start,
     mean_empirical_distribution_trajectory,
-    uniform_checkpoints,
 )
 
 
@@ -48,18 +47,6 @@ def test_three_player_heterogeneous_trajectory_keeps_every_player() -> None:
 )
 def test_default_checkpoints_include_first_round_powers_of_ten_and_final(horizon: int, expected: list[int]) -> None:
     assert np.array_equal(default_checkpoints(horizon), expected)
-
-
-@pytest.mark.parametrize(
-    ("horizon", "count", "expected"),
-    [
-        (100, 10, [1, 12, 23, 34, 45, 56, 67, 78, 89, 100]),
-        (11, 4, [1, 4, 8, 11]),
-        (3, 10, [1, 2, 3]),
-    ],
-)
-def test_uniform_checkpoints_span_first_to_final_round_evenly(horizon: int, count: int, expected: list[int]) -> None:
-    assert np.array_equal(uniform_checkpoints(horizon, count), expected)
 
 
 @pytest.mark.parametrize(

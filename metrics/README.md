@@ -14,6 +14,8 @@ swap regret     = sum_i max_j G[i, j]
 
 Expected regret weights deviations by the played strategy. Realized regret updates only the selected action's row. `RegretBundles` can track both together.
 
+Replicate regret curves and final summaries report the sample mean with pointwise two-sided Student-t 95% confidence intervals.
+
 ## Empirical Play and Equilibria
 
 `empirical_distribution_trajectory(...)` converts joint-action histories into full joint-distribution vectors at deterministic checkpoints. The optional comparison view adds checkpoints within the final logarithmic interval; see the [experimental guide](../experimental/equilibrium_trajectory/README.md).

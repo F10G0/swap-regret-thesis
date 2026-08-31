@@ -17,7 +17,7 @@ function renderActionCounts() {
         console.warn("Could not restore action counts", error);
     }
     const playerCount = Math.max(2, Number(playerCountInput.value) || 2);
-    const symmetricZeroSum = payoffStructureSelect?.value === "zero_sum";
+    const symmetricZeroSum = payoffStructureSelect && payoffStructureSelect.value === "zero_sum";
     const fields = [];
     const fieldCount = symmetricZeroSum ? 1 : playerCount;
     for (let player = 0; player < fieldCount; player += 1) {
@@ -44,7 +44,7 @@ function renderActionCounts() {
 }
 
 function updatePayoffStructure() {
-    const zeroSum = payoffStructureSelect?.value === "zero_sum";
+    const zeroSum = payoffStructureSelect && payoffStructureSelect.value === "zero_sum";
     if (playerCountInput) {
         if (zeroSum) {
             playerCountInput.value = "2";
@@ -59,8 +59,8 @@ function updatePayoffStructure() {
     renderActionCounts();
 }
 
-playerCountInput?.addEventListener("input", renderActionCounts);
-payoffStructureSelect?.addEventListener("change", updatePayoffStructure);
+listen("custom-player-count", "input", renderActionCounts);
+listen("custom-payoff-structure", "change", updatePayoffStructure);
 updatePayoffStructure();
 
 const payoffInspector = document.getElementById("payoff-inspector");
