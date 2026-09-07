@@ -1,4 +1,6 @@
 import csv
+from hashlib import sha256
+import json
 import os
 
 import experiments.plots.plot_regret as plot_regret_module
@@ -11,7 +13,16 @@ from experiments.plots.plot_regret import aggregate_metric_curve, collect_result
 from experiments.scenarios.cross_play import player_seed
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.result_schema import regret_fieldnames
-from experiments.results import iter_result_rows, result_implementation_version
+from experiments.results import (
+    iter_result_rows,
+    result_implementation_version,
+    result_runtime_environment,
+    result_runtime_fingerprint,
+)
+from experiments.runtime_environment import (
+    runtime_environment_fingerprint,
+    runtime_environment_json,
+)
 from experiments.spec import MAX_RUN_ID_BYTES, ExperimentSpec
 
 
@@ -73,7 +84,39 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     )
     assert baseline.run_id != changed_horizon.run_id
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, stationary_method="pinv").run_id
-    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=2).run_id
+    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=3).run_id
+
+
+def test_runtime_environment_changes_identity_and_is_recorded(tmp_path) -> None:
+    baseline = make_spec()
+    changed = ExperimentSpec(
+        "rps",
+        "full_information",
+        ("bm", "bm"),
+        10,
+        7,
+        runtime_environment='{"packages":{"numpy":"different"},"python":"3.10"}',
+    )
+    result_path = tmp_path / f"{changed.run_id}.csv"
+    write_result(result_path, changed)
+    row = next(iter_result_rows(result_path))
+
+    assert baseline.run_id != changed.run_id
+    assert result_runtime_environment(row) == changed.runtime_environment
+    assert result_runtime_fingerprint(row) == runtime_environment_fingerprint(
+        changed.runtime_environment
+    )
+
+
+def test_runtime_environment_records_the_dependency_lock() -> None:
+    environment = json.loads(runtime_environment_json())
+    lock_path = os.path.join(os.getcwd(), "requirements.lock")
+
+    with open(lock_path, "rb") as lock_file:
+        expected = sha256(lock_file.read()).hexdigest()
+
+    assert environment["lock_sha256"] == expected
+    assert environment["packages"]["numpy"]["version"] == np.__version__
 
 
 def test_experiment_spec_preserves_positional_stationary_method_compatibility() -> None:
@@ -185,20 +228,28 @@ def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:
     assert set(results["rps"]) == {full_spec.run_id, bandit_spec.run_id}
 
 
-def test_fixed_game_loader_treats_missing_implementation_version_as_legacy(tmp_path) -> None:
+def test_fixed_game_loader_treats_missing_runtime_identity_as_legacy(tmp_path) -> None:
     spec = make_spec()
     result_path = tmp_path / f"{spec.run_id}.csv"
     write_result(result_path, spec)
     with result_path.open(newline="") as file:
         reader = csv.DictReader(file)
         rows = list(reader)
-    fieldnames = [field for field in reader.fieldnames if field != "implementation_version"]
+    legacy_fields = {
+        "implementation_version",
+        "runtime_environment",
+        "runtime_fingerprint",
+    }
+    fieldnames = [field for field in reader.fieldnames if field not in legacy_fields]
     with result_path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows({field: row[field] for field in fieldnames} for row in rows)
 
-    assert {result_implementation_version(row) for row in iter_result_rows(result_path)} == {0}
+    loaded = list(iter_result_rows(result_path))
+    assert {result_implementation_version(row) for row in loaded} == {0}
+    assert {result_runtime_environment(row) for row in loaded} == {""}
+    assert {result_runtime_fingerprint(row) for row in loaded} == {""}
 
 
 def test_plot_collection_reuses_validated_sample_cache(tmp_path, monkeypatch) -> None:
@@ -236,15 +287,17 @@ def test_plot_legend_uses_algorithm_abbreviations() -> None:
     assert run_label(rows, 1) == "RM vs SRM vs Hedge · seed 7"
 
 
-def test_plot_legend_can_distinguish_feedback_and_evaluation() -> None:
+@pytest.mark.parametrize("algorithm,label", [("exp3_ix", "EXP3-IX"), ("exp3", "EXP3")])
+def test_plot_legend_can_distinguish_feedback_and_evaluation(algorithm, label) -> None:
+    # Retired algorithms must keep their own labels when reading old results.
     rows = [{
-        "algorithm": "exp3_vs_exp3",
+        "algorithm": f"{algorithm}_vs_{algorithm}",
         "seed": "7",
         "feedback_mode": "bandit",
         "regret_evaluation": "expected",
     }]
 
-    assert run_label(rows, 1, include_feedback=True, include_evaluation=True) == "EXP3 vs EXP3 · seed 7 · bandit · evaluation expected"
+    assert run_label(rows, 1, include_feedback=True, include_evaluation=True) == f"{label} vs {label} · seed 7 · bandit · evaluation expected"
 
 
 def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:

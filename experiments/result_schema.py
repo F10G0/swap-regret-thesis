@@ -1,8 +1,10 @@
-RESULT_IMPLEMENTATION_VERSION = 1
+RESULT_IMPLEMENTATION_VERSION = 2
 
 BASE_FIELDNAMES = [
     "run_id",
     "implementation_version",
+    "runtime_environment",
+    "runtime_fingerprint",
     "feedback_mode",
     "regret_evaluation",
     "seed",

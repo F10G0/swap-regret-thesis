@@ -8,6 +8,11 @@ from experiments.plots.plot_adversarial import (
     plot_adversarial_results,
 )
 from experiments.runner import ExperimentCancelled
+from experiments.seeding import (
+    ENVIRONMENT_SEED_DOMAIN,
+    LEARNER_SEED_DOMAIN,
+    domain_separated_seed,
+)
 from experiments.scenarios.adversarial import (
     AdversarialExperimentSpec,
     HISTORICAL_FREQUENCY_ENVIRONMENT,
@@ -17,6 +22,41 @@ from experiments.scenarios.adversarial import (
     run_adversarial_experiment,
 )
 from tests.support import read_csv_rows as _rows
+
+
+def test_removed_exp3_is_rejected_for_new_adversarial_runs(tmp_path) -> None:
+    with pytest.raises(ValueError, match="algorithm exp3 is not available"):
+        run_adversarial_experiment(
+            "exp3", feedback_mode="bandit", horizon=3, output_dir=tmp_path,
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("algorithm,feedback_mode", [
+    ("exp3", "bandit"), ("exp3", "full_information"), ("unknown", "bandit"),
+])
+def test_legacy_adversarial_algorithm_identity(tmp_path, algorithm, feedback_mode) -> None:
+    # Use a valid trajectory as a schema fixture, not as an Exp3 reproduction.
+    path = run_adversarial_experiment(
+        "exp3_ix", feedback_mode="bandit", horizon=3, output_dir=tmp_path,
+    )
+    rows = _rows(path)
+    for row in rows:
+        row["algorithm"] = algorithm
+        row["feedback_mode"] = feedback_mode
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    for loader in (load_adversarial_rows, load_final_adversarial_row):
+        if algorithm == "exp3" and feedback_mode == "bandit":
+            loaded = loader(path)
+            final = loaded[-1] if isinstance(loaded, list) else loaded
+            assert final["algorithm"] == "exp3"
+        else:
+            with pytest.raises(ValueError, match="invalid algorithm"):
+                loader(path)
 
 
 def test_adversarial_experiment_records_both_regret_sources(tmp_path) -> None:
@@ -35,7 +75,10 @@ def test_adversarial_experiment_records_both_regret_sources(tmp_path) -> None:
         HISTORICAL_FREQUENCY_ENVIRONMENT
     }
     assert {row["feedback_mode"] for row in rows} == {"full_information"}
-    assert {row["learner_seed"] for row in rows} == {"7"}
+    assert {row["base_learner_seed"] for row in rows} == {"7"}
+    assert {row["learner_seed"] for row in rows} == {
+        str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))
+    }
     assert {row["replicate"] for row in rows} == {"0"}
     assert rows[0]["punished_actions"] == "0 1"
     assert rows[-1]["t"] == "5"
@@ -45,11 +88,12 @@ def test_adversarial_experiment_records_both_regret_sources(tmp_path) -> None:
     assert load_adversarial_rows(output_path)[-1] == rows[-1]
 
 
+@pytest.mark.parametrize("algorithm", ["auer_exp3", "exp3_ix"])
 def test_bandit_adversarial_experiment_uses_scalar_learner_feedback(
-    tmp_path,
+    tmp_path, algorithm,
 ) -> None:
     output_path = run_adversarial_experiment(
-        "exp3",
+        algorithm,
         feedback_mode="bandit",
         n_actions=3,
         horizon=5,
@@ -60,6 +104,8 @@ def test_bandit_adversarial_experiment_uses_scalar_learner_feedback(
     rows = _rows(output_path)
 
     assert {row["feedback_mode"] for row in rows} == {"bandit"}
+    assert {row["algorithm"] for row in rows} == {algorithm}
+    assert load_adversarial_rows(output_path)[-1] == rows[-1]
     assert len(rows) == 5
     assert "average_expected_external_regret" in rows[-1]
     assert "average_realized_external_regret" in rows[-1]
@@ -80,7 +126,7 @@ def test_adversarial_regret_evaluation_controls_recorded_sources(
     absent: str | None,
 ) -> None:
     output_path = run_adversarial_experiment(
-        "exp3",
+        "exp3_ix",
         feedback_mode="bandit",
         horizon=5,
         seed=7,
@@ -101,7 +147,7 @@ def test_adversarial_regret_evaluation_controls_recorded_sources(
 def test_adversarial_regret_evaluation_does_not_change_play(tmp_path) -> None:
     paths = [
         run_adversarial_experiment(
-            "exp3",
+            "exp3_ix",
             feedback_mode="bandit",
             horizon=20,
             seed=7,
@@ -121,7 +167,7 @@ def test_adversarial_regret_evaluation_does_not_change_play(tmp_path) -> None:
 
 def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
     output_path = run_adversarial_experiment(
-        "exp3",
+        "exp3_ix",
         feedback_mode="bandit",
         environment=RANDOM_WALK_ENVIRONMENT,
         initialization_mode="uniform_grid",
@@ -136,8 +182,14 @@ def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
     assert {row["environment"] for row in rows} == {RANDOM_WALK_ENVIRONMENT}
     assert {row["initialization_mode"] for row in rows} == {"uniform_grid"}
     assert {row["reward_step"] for row in rows} == {"0.1"}
-    assert {row["environment_seed"] for row in rows} == {"11"}
-    assert {row["learner_seed"] for row in rows} == {"7"}
+    assert {row["base_environment_seed"] for row in rows} == {"11"}
+    assert {row["base_learner_seed"] for row in rows} == {"7"}
+    assert {row["environment_seed"] for row in rows} == {
+        str(domain_separated_seed(11, 0, ENVIRONMENT_SEED_DOMAIN))
+    }
+    assert {row["learner_seed"] for row in rows} == {
+        str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))
+    }
     assert all(row["punished_actions"] == "" for row in rows)
     assert all(0 <= int(row["current_best_action"]) < 3 for row in rows)
     assert all(0.0 <= float(row["current_best_reward"]) <= 1.0 for row in rows)
@@ -169,6 +221,21 @@ def test_algorithms_share_random_walk_environment_trajectory(tmp_path) -> None:
     assert trajectories[0] == trajectories[1]
 
 
+def test_equal_base_seeds_still_create_distinct_random_streams() -> None:
+    spec = AdversarialExperimentSpec(
+        algorithm_name="hedge",
+        environment=RANDOM_WALK_ENVIRONMENT,
+        environment_seed=42,
+        n_actions=3,
+        horizon=10,
+        seed=42,
+    )
+
+    assert spec.learner_seed != spec.replicate_environment_seed
+    assert spec.configuration()["base_learner_seed"] == 42
+    assert spec.configuration()["base_environment_seed"] == 42
+
+
 def test_adversarial_seeds_have_distinct_identity_and_streams(tmp_path) -> None:
     first = run_adversarial_experiment(
         "hedge",
@@ -196,7 +263,7 @@ def test_adversarial_seeds_have_distinct_identity_and_streams(tmp_path) -> None:
 
 def test_adversarial_replicate_offsets_both_random_seeds(tmp_path) -> None:
     output_path = run_adversarial_experiment(
-        "exp3",
+        "exp3_ix",
         feedback_mode="bandit",
         environment=RANDOM_WALK_ENVIRONMENT,
         environment_seed=11,
@@ -210,8 +277,14 @@ def test_adversarial_replicate_offsets_both_random_seeds(tmp_path) -> None:
     rows = _rows(output_path)
 
     assert {row["replicate"] for row in rows} == {"2"}
-    assert {row["environment_seed"] for row in rows} == {"13"}
-    assert {row["learner_seed"] for row in rows} == {"9"}
+    assert {row["base_environment_seed"] for row in rows} == {"11"}
+    assert {row["base_learner_seed"] for row in rows} == {"7"}
+    assert {row["environment_seed"] for row in rows} == {
+        str(domain_separated_seed(11, 2, ENVIRONMENT_SEED_DOMAIN))
+    }
+    assert {row["learner_seed"] for row in rows} == {
+        str(domain_separated_seed(7, 2, LEARNER_SEED_DOMAIN))
+    }
 
 
 def test_adversarial_replicate_is_part_of_run_identity() -> None:
@@ -235,7 +308,15 @@ def test_adversarial_loader_accepts_legacy_csv_without_replicate(tmp_path) -> No
     )
     rows = _rows(generated)
     legacy_path = tmp_path / "legacy.csv"
-    legacy_fields = {"replicate", "regret_evaluation", "implementation_version"}
+    legacy_fields = {
+        "base_environment_seed",
+        "base_learner_seed",
+        "replicate",
+        "regret_evaluation",
+        "implementation_version",
+        "runtime_environment",
+        "runtime_fingerprint",
+    }
     fieldnames = [field for field in rows[0] if field not in legacy_fields]
     with legacy_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -256,7 +337,7 @@ def test_adversarial_loader_accepts_legacy_csv_without_replicate(tmp_path) -> No
 def test_adversarial_implementation_version_changes_run_identity() -> None:
     common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 10, "seed": 7}
 
-    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=2).run_id
+    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=3).run_id
 
 
 def test_adversarial_regret_aggregation_uses_student_t_intervals() -> None:
@@ -306,7 +387,7 @@ def test_adversarial_plotter_creates_average_and_scaled_regret_figures(
         output_dir=raw_dir,
     )
     run_adversarial_experiment(
-        "exp3",
+        "exp3_ix",
         feedback_mode="bandit",
         environment=RANDOM_WALK_ENVIRONMENT,
         environment_seed=17,

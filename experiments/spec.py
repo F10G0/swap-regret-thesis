@@ -1,10 +1,15 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 import re
 
 from config import STATIONARY_METHOD
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, resolve_regret_evaluation
+from experiments.runtime_environment import (
+    runtime_environment_fingerprint,
+    runtime_environment_json,
+    validate_runtime_environment,
+)
 
 
 FEEDBACK_MODES = {"full_information", "bandit"}
@@ -28,6 +33,7 @@ class ExperimentSpec:
     regret_evaluation: str = "feedback_aligned"
     game_payoff_digest: str = ""
     implementation_version: int = RESULT_IMPLEMENTATION_VERSION
+    runtime_environment: str = field(default_factory=runtime_environment_json)
 
     def __post_init__(self) -> None:
         if self.feedback_mode not in FEEDBACK_MODES:
@@ -44,6 +50,8 @@ class ExperimentSpec:
             raise ValueError("replicate must be non-negative")
         if self.implementation_version <= 0:
             raise ValueError("implementation_version must be positive")
+        canonical_runtime = validate_runtime_environment(self.runtime_environment)
+        object.__setattr__(self, "runtime_environment", canonical_runtime)
         object.__setattr__(self, "regret_evaluation", resolve_regret_evaluation(self.feedback_mode, self.regret_evaluation))
         if not self.stationary_method:
             raise ValueError("stationary_method must not be empty")
@@ -85,7 +93,12 @@ class ExperimentSpec:
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
             "implementation_version": self.implementation_version,
+            "runtime_fingerprint": self.runtime_fingerprint,
         }
+
+    @property
+    def runtime_fingerprint(self) -> str:
+        return runtime_environment_fingerprint(self.runtime_environment)
 
     def metadata(self) -> dict:
         return {
@@ -97,6 +110,8 @@ class ExperimentSpec:
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
             "implementation_version": self.implementation_version,
+            "runtime_environment": self.runtime_environment,
+            "runtime_fingerprint": self.runtime_fingerprint,
             "algorithm_profile": json.dumps(self.algorithm_names, separators=(",", ":")),
             "horizon": self.horizon,
         }

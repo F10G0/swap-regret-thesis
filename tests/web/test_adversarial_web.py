@@ -1,4 +1,5 @@
 from pathlib import Path
+import csv
 import json
 import shutil
 import subprocess
@@ -14,6 +15,11 @@ from web.validation import (
 from experiments.scenarios.adversarial import (
     HISTORICAL_FREQUENCY_ENVIRONMENT,
     RANDOM_WALK_ENVIRONMENT,
+)
+from experiments.seeding import (
+    ENVIRONMENT_SEED_DOMAIN,
+    LEARNER_SEED_DOMAIN,
+    domain_separated_seed,
 )
 
 
@@ -48,7 +54,7 @@ def test_adversarial_form_validation() -> None:
         VALID_FORM,
         algorithms_by_feedback_mode={
             "full_information": ["hedge"],
-            "bandit": ["exp3"],
+            "bandit": ["exp3_ix"],
         },
         environments=ENVIRONMENTS,
         initialization_modes=INITIALIZATION_MODES,
@@ -106,7 +112,7 @@ def test_adversarial_algorithm_must_match_feedback_mode() -> None:
             VALID_FORM | {"feedback_mode": "bandit"},
             algorithms_by_feedback_mode={
                 "full_information": ["hedge"],
-                "bandit": ["exp3"],
+                "bandit": ["exp3_ix"],
             },
             environments=ENVIRONMENTS,
             initialization_modes=INITIALIZATION_MODES,
@@ -164,7 +170,7 @@ def test_experiments_page_switches_to_one_player_controls(tmp_path) -> None:
     assert 'name="scaling_replicates"' in page
     assert "Queue scaling experiment" in page
     assert "complete history" in page
-    assert "exp3" in page
+    assert "exp3_ix" in page
     assert "Independent lazy random walk" in page
     assert "Independent lazy reward walks" in page
     assert 'name="replicates"' in page
@@ -218,14 +224,15 @@ def test_adversarial_form_controls_match_the_rendered_environment(tmp_path) -> N
     assert "hidden" in _opening_tag(random_walk_page, "random-walk-rule")
 
 
-def test_adversarial_algorithm_options_follow_feedback_mode(tmp_path) -> None:
+@pytest.mark.parametrize("algorithm", ["auer_exp3", "exp3_ix"])
+def test_adversarial_algorithm_options_follow_feedback_mode(tmp_path, algorithm) -> None:
     app, _ = _app(tmp_path)
     client = app.test_client()
     response = client.post(
         "/",
         data=VALID_FORM | {
             "feedback_mode": "bandit",
-            "algorithm_names": ["exp3"],
+            "algorithm_names": [algorithm],
             "replicates": "0",
             "_csrf_token": _csrf_token(client),
         },
@@ -234,8 +241,10 @@ def test_adversarial_algorithm_options_follow_feedback_mode(tmp_path) -> None:
     assert response.status_code == 400
     page = response.get_data(as_text=True)
     options = page.split('<select id="algorithm_player_0"', 1)[1].split("</select>", 1)[0]
-    assert '<option value="exp3" selected' in options
-    assert '<option value="exp3_ix"' in options
+    assert f'<option value="{algorithm}" selected' in options
+    assert '<option value="auer_exp3"' in options
+    assert "AuerExp3" in options
+    assert '<option value="exp3"' not in options
     assert '<option value="lce_ix"' in options
     assert '<option value="hedge"' not in options
 
@@ -328,7 +337,7 @@ def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> N
             "environment": RANDOM_WALK_ENVIRONMENT,
             "feedback_mode": "bandit",
             "regret_evaluation": "realized",
-            "algorithm_names": ["exp3"],
+            "algorithm_names": ["exp3_ix"],
             "horizon": "5",
             "seed": "9",
         },
@@ -397,8 +406,8 @@ if (!filteredTo("#figure-grid .figure-card", "regret", "internal")) process.exit
 select("filter-regret", "all");
 select("filter-view", "sqrt_scaling");
 if (!filteredTo("#figure-grid .figure-card", "view", "sqrt_scaling")) process.exit(10);
-select("filter-player-algorithm", "exp3");
-if (!filteredTo(".summary-row", "playerAlgorithm", "exp3")) process.exit(11);
+select("filter-player-algorithm", "exp3_ix");
+if (!filteredTo(".summary-row", "playerAlgorithm", "exp3_ix")) process.exit(11);
 select("filter-player-algorithm", "all");
 input("filter-horizon", "5");
 if (!filteredTo(".summary-row", "horizon", "5")) process.exit(12);
@@ -468,8 +477,16 @@ def test_adversarial_page_queues_replicates_with_common_seed_schedule(
     summaries, warnings = service.adversarial_result_summaries()
     assert warnings == []
     assert {row["replicate"] for row in summaries} == {0, 1, 2}
-    assert {row["environment_seed"] for row in summaries} == {11, 12, 13}
-    assert {row["learner_seed"] for row in summaries} == {7, 8, 9}
+    assert {row["base_environment_seed"] for row in summaries} == {11}
+    assert {row["base_learner_seed"] for row in summaries} == {7}
+    assert {row["environment_seed"] for row in summaries} == {
+        domain_separated_seed(11, replicate, ENVIRONMENT_SEED_DOMAIN)
+        for replicate in range(3)
+    }
+    assert {row["learner_seed"] for row in summaries} == {
+        domain_separated_seed(7, replicate, LEARNER_SEED_DOMAIN)
+        for replicate in range(3)
+    }
 
 
 def test_adversarial_page_queues_bandit_run(tmp_path) -> None:
@@ -481,7 +498,7 @@ def test_adversarial_page_queues_bandit_run(tmp_path) -> None:
         data=VALID_FORM
         | {
             "feedback_mode": "bandit",
-            "algorithm_names": ["exp3"],
+            "algorithm_names": ["exp3_ix"],
             "_csrf_token": _csrf_token(client),
         },
     )
@@ -514,8 +531,18 @@ def test_adversarial_page_queues_random_walk_run(tmp_path) -> None:
     job = service.jobs.recent()[0]
     assert _wait_for_job(service, job.id) == "succeeded"
     result = next(service.adversarial_raw_dir.glob("*.csv"))
-    row = result.read_text(encoding="utf-8").splitlines()[1]
-    assert ",lazy_random_walk_v1,uniform_grid,0.1,23,29," in row
+    with result.open(encoding="utf-8", newline="") as file:
+        row = next(csv.DictReader(file))
+    assert row["environment"] == RANDOM_WALK_ENVIRONMENT
+    assert row["initialization_mode"] == "uniform_grid"
+    assert row["base_environment_seed"] == "23"
+    assert row["base_learner_seed"] == "29"
+    assert row["environment_seed"] == str(
+        domain_separated_seed(23, 0, ENVIRONMENT_SEED_DOMAIN)
+    )
+    assert row["learner_seed"] == str(
+        domain_separated_seed(29, 0, LEARNER_SEED_DOMAIN)
+    )
     page = client.get("/?mode=adversarial").get_data(as_text=True)
     assert "Uniform over the reward grid" in page
     assert "Independent lazy random walk" in page

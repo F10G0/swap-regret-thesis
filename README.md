@@ -19,7 +19,7 @@ The experimental trajectory comparison is excluded by default. Use `make install
 | Feedback | Learners |
 |---|---|
 | Full information | Hedge, Regret Matching, SRM, Blum–Mansour, Ito |
-| Bandit | Exp3, Exp3-IX, Blum–Mansour, Ito, LCE-IX |
+| Bandit | AuerExp3, Exp3-IX, Blum–Mansour, Ito, LCE-IX |
 
 Built-in games include RPS, RPSLS, Matching Pennies, and five Bertrand variants. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary, an action-independent lazy reward walk, and replicated action-space sweeps over configurable K values.
 
@@ -58,6 +58,8 @@ results/
 ```
 
 Run IDs include the complete experiment identity and an implementation version, so results from changed code do not collide. Older CSVs load as legacy version 0. Defaults such as the horizon, seeds, replicate count, tolerances, and stationary solver live in `config.py`.
+
+The install commands use `requirements.lock`. Each CSV records the canonical Python and numerical-package environment plus its fingerprint, and that fingerprint participates in the run ID. One-player learner and environment randomness use domain-separated, replicate-specific seeds; CSVs retain both the user-supplied base seeds and the effective derived seeds.
 
 CE/CCE constraints use the pinned `TUM-DSS/games_learning` commit `6ca238a9c8716cd34fc3fcbc949bba7a7ea68dc5`.
 

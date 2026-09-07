@@ -41,6 +41,7 @@ REPLICATE_GROUP_COLUMNS = (
     "stationary_method",
     "game_payoff_digest",
     "implementation_version",
+    "runtime_fingerprint",
 )
 
 

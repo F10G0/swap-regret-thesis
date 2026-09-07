@@ -17,6 +17,7 @@ RESULT_GROUP_FIELDS = (
     "seed",
     "stationary_method",
     "implementation_version",
+    "runtime_fingerprint",
 )
 
 

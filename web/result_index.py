@@ -12,6 +12,8 @@ from experiments.results import (
     result_implementation_version,
     result_player_algorithm,
     result_regret_evaluation,
+    result_runtime_environment,
+    result_runtime_fingerprint,
 )
 
 
@@ -95,6 +97,8 @@ class ResultIndex:
             "stationary_method": row["stationary_method"],
             "game_payoff_digest": result_game_payoff_digest(row),
             "implementation_version": result_implementation_version(row),
+            "runtime_environment": result_runtime_environment(row),
+            "runtime_fingerprint": result_runtime_fingerprint(row),
             "player": player,
             "n_players": len(algorithm_profile),
             "algorithm_profile": list(algorithm_profile),

@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import tempfile
 from threading import Lock
 
@@ -565,15 +566,61 @@ class DashboardService:
             ]
             _publish_figure_files(generated_paths, figure_dir, filename_prefix)
 
-    def _delete_result(self, directory: Path, filename: str, rebuild: Callable[[], None]) -> None:
+    def _delete_result(
+        self,
+        directory: Path,
+        figure_directory: Path,
+        filename: str,
+        rebuild: Callable[[], None],
+    ) -> None:
         filename = validate_leaf_filename(filename, ".csv")
 
         def operation() -> None:
             path = directory / filename
             if not path.is_file():
                 raise FileNotFoundError(filename)
-            path.unlink()
-            rebuild()
+
+            directory.parent.mkdir(parents=True, exist_ok=True)
+            backup_directory = Path(
+                tempfile.mkdtemp(prefix=".delete-result-", dir=directory.parent)
+            )
+            backup_csv = backup_directory / path.name
+            backup_figures = backup_directory / "figures"
+            csv_moved = False
+            figures_moved = False
+            rebuild_started = False
+            try:
+                os.replace(path, backup_csv)
+                csv_moved = True
+                if figure_directory.exists():
+                    os.replace(figure_directory, backup_figures)
+                    figures_moved = True
+                rebuild_started = True
+                rebuild()
+            except Exception as error:
+                try:
+                    if rebuild_started:
+                        if figure_directory.is_dir():
+                            shutil.rmtree(figure_directory)
+                        elif figure_directory.exists():
+                            figure_directory.unlink()
+                    if figures_moved and backup_figures.exists():
+                        os.replace(backup_figures, figure_directory)
+                    if csv_moved and backup_csv.exists():
+                        os.replace(backup_csv, path)
+                except Exception as restore_error:
+                    raise PlotUpdateError(
+                        f"could not delete {filename}; rollback also failed and "
+                        f"recoverable files remain in {backup_directory}: "
+                        f"{restore_error}"
+                    ) from error
+                shutil.rmtree(backup_directory, ignore_errors=True)
+                raise PlotUpdateError(
+                    f"could not delete {filename}; the CSV and previous figures "
+                    f"were restored: {error}"
+                ) from error
+            else:
+                shutil.rmtree(backup_directory, ignore_errors=True)
 
         self.jobs.run_maintenance(operation)
 
@@ -630,7 +677,12 @@ class DashboardService:
         )
 
     def delete_adversarial_scaling_experiment(self, filename: str) -> None:
-        self._delete_result(self.adversarial_scaling_raw_dir, filename, self._publish_adversarial_scaling_plots)
+        self._delete_result(
+            self.adversarial_scaling_raw_dir,
+            self.adversarial_scaling_figure_dir,
+            filename,
+            self._publish_adversarial_scaling_plots,
+        )
 
     def adversarial_result_summaries(self) -> tuple[list[dict], list[str]]:
         def summarize(path: Path) -> dict:
@@ -651,8 +703,15 @@ class DashboardService:
                 "environment_detail": adversarial_environment_detail(row),
                 "n_actions": int(row["n_actions"]),
                 "horizon": int(row["horizon"]),
+                "base_environment_seed": (
+                    int(row["base_environment_seed"])
+                    if row["base_environment_seed"]
+                    else None
+                ),
                 "environment_seed": int(row["environment_seed"]) if row["environment_seed"] else None,
+                "base_learner_seed": int(row["base_learner_seed"]),
                 "learner_seed": int(row["learner_seed"]),
+                "runtime_fingerprint": row["runtime_fingerprint"],
                 "replicate": int(row["replicate"]),
                 "target_regret": target_regret,
                 "expected_regret": float(row[f"average_expected_{target_regret}_regret"]) if "expected" in sources else None,
@@ -724,7 +783,12 @@ class DashboardService:
         )
 
     def delete_adversarial_experiment(self, filename: str) -> None:
-        self._delete_result(self.adversarial_raw_dir, filename, self._publish_adversarial_plots)
+        self._delete_result(
+            self.adversarial_raw_dir,
+            self.adversarial_figure_dir,
+            filename,
+            self._publish_adversarial_plots,
+        )
 
     def clear_adversarial_results(self) -> tuple[int, int]:
         return self.jobs.run_maintenance(

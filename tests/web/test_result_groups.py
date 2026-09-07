@@ -16,9 +16,9 @@ def summary(replicate: int, player: int, regret: float) -> dict:
         "stationary_method": "solve",
         "player": player,
         "n_players": 2,
-        "algorithm_profile": ["exp3", "exp3"],
-        "player_algorithm": "exp3",
-        "co_player_algorithms": ["exp3"],
+        "algorithm_profile": ["exp3_ix", "exp3_ix"],
+        "player_algorithm": "exp3_ix",
+        "co_player_algorithms": ["exp3_ix"],
         "horizon": 100,
         "average_realized_external_regret": regret,
     }

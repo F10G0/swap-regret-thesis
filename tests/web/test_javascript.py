@@ -26,11 +26,11 @@ const start = source.indexOf("function matchesFilters");
 const end = source.indexOf("\n}\n", start) + 3;
 const controls = {
     result: [{value: "rps", dataset: {resultFilter: "scope"}, hasAttribute: () => false}],
-    tokens: [{value: "exp3", dataset: {summaryFilter: "algorithms"}, hasAttribute: () => true}],
+    tokens: [{value: "exp3_ix", dataset: {summaryFilter: "algorithms"}, hasAttribute: () => true}],
 };
 global.document = {querySelectorAll: (selector) => controls[selector]};
 eval(source.slice(start, end));
-const record = {dataset: {scope: "rps", algorithms: "hedge exp3"}};
+const record = {dataset: {scope: "rps", algorithms: "hedge exp3_ix"}};
 if (!matchesFilters(record, "result", "resultFilter")) process.exit(1);
 controls.result[0].value = "matching_pennies";
 if (matchesFilters(record, "result", "resultFilter")) process.exit(2);

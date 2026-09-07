@@ -10,8 +10,8 @@ from experiments.scenarios.cross_play import AlgorithmFactory, run_cross_play_ex
 
 
 ALGORITHMS = {
-    "hedge": AlgorithmFactory(Hedge),
-    "bm": AlgorithmFactory(FullBM),
+    "hedge": AlgorithmFactory(Hedge, uses_horizon=True),
+    "bm": AlgorithmFactory(FullBM, uses_horizon=True),
     "ito": AlgorithmFactory(FullIto, uses_horizon=False),
     "regret_matching": AlgorithmFactory(RegretMatching, uses_horizon=False),
     "stationary_regret_matching": AlgorithmFactory(StationaryRegretMatching, uses_horizon=False),

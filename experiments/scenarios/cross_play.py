@@ -16,8 +16,10 @@ from experiments.spec import ExperimentSpec
 
 @dataclass(frozen=True)
 class AlgorithmFactory:
+    """Declare whether a learner's parameters use the experiment horizon."""
+
     algorithm_class: type[Algorithm]
-    uses_horizon: bool = True
+    uses_horizon: bool
 
     def create(self, n_actions: int, horizon: int, seed: int) -> Algorithm:
         if self.uses_horizon:

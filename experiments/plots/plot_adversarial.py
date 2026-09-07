@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 MAX_PLOT_POINTS = 2_000
 ALGORITHM_COLORS = {
     "hedge": "#0072B2",
-    "exp3": "#56B4E9",
+    "exp3": "#56B4E9",  # Retained for historical results only.
+    "auer_exp3": "#AA4499",
     "exp3_ix": "#332288",
     "bm": "#D55E00",
     "ito": "#009E73",
@@ -49,11 +50,12 @@ def _group_key(rows: list[dict[str, str]]) -> tuple:
         first["feedback_mode"],
         first["regret_evaluation"],
         first["implementation_version"],
+        first["runtime_fingerprint"],
         first["n_actions"],
         first["algorithm"],
         first["horizon"],
-        int(environment_seed) - replicate if environment_seed else None,
-        int(first["learner_seed"]) - replicate,
+        int(first["base_environment_seed"]) if environment_seed else None,
+        int(first["base_learner_seed"]),
     )
 
 

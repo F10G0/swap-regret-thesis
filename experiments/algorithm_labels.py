@@ -1,6 +1,7 @@
 ALGORITHM_LABELS = {
     "hedge": "Hedge",
-    "exp3": "EXP3",
+    "exp3": "EXP3",  # Retained for historical result labels only.
+    "auer_exp3": "AuerExp3",
     "exp3_ix": "EXP3-IX",
     "bm": "BM",
     "ito": "Ito",

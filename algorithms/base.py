@@ -6,14 +6,11 @@ import numpy as np
 class Algorithm(ABC):
     """Base class for learning algorithms with a current action distribution."""
 
-    def __init__(self, n_actions: int, horizon: int = 0, seed: int | None = None) -> None:
+    def __init__(self, n_actions: int, seed: int | None = None) -> None:
         if n_actions <= 0:
             raise ValueError("n_actions must be positive.")
-        if horizon < 0:
-            raise ValueError("horizon must be non-negative")
 
         self.n_actions = n_actions
-        self.horizon = horizon
         self.rng = np.random.default_rng(seed)
         self.reset()
 

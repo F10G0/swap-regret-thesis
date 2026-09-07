@@ -1,6 +1,6 @@
 import csv
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -10,7 +10,17 @@ import numpy as np
 
 from experiments.recorder import CsvRecorder, require_csv_columns
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_sources, resolve_regret_evaluation
+from experiments.runtime_environment import (
+    runtime_environment_fingerprint,
+    runtime_environment_json,
+    validate_runtime_environment,
+)
 from experiments.runner import ExperimentCancelled
+from experiments.seeding import (
+    ENVIRONMENT_SEED_DOMAIN,
+    LEARNER_SEED_DOMAIN,
+    domain_separated_seed,
+)
 from experiments.scenarios.adversarial import (
     AdversarialExperimentSpec,
     HISTORICAL_FREQUENCY_ENVIRONMENT,
@@ -26,6 +36,8 @@ from experiments.scenarios.adversarial import (
 ACTION_SCALING_IDENTITY_FIELDS = (
     "run_id",
     "implementation_version",
+    "runtime_environment",
+    "runtime_fingerprint",
     "environment",
     "initialization_mode",
     "feedback_mode",
@@ -62,6 +74,7 @@ class AdversarialScalingSpec:
     learner_seed: int
     regret_evaluation: str = "both"
     implementation_version: int = RESULT_IMPLEMENTATION_VERSION
+    runtime_environment: str = field(default_factory=runtime_environment_json)
 
     def __post_init__(self) -> None:
         action_counts = tuple(sorted(self.action_counts))
@@ -73,6 +86,11 @@ class AdversarialScalingSpec:
             raise ValueError("replicates must be positive")
         if self.implementation_version < 0:
             raise ValueError("implementation_version must be non-negative")
+        canonical_runtime = validate_runtime_environment(
+            self.runtime_environment,
+            allow_empty=self.implementation_version == 0,
+        )
+        object.__setattr__(self, "runtime_environment", canonical_runtime)
         object.__setattr__(
             self,
             "regret_evaluation",
@@ -91,6 +109,7 @@ class AdversarialScalingSpec:
                 seed=self.learner_seed,
                 regret_evaluation=self.regret_evaluation,
                 implementation_version=self.implementation_version,
+                runtime_environment=self.runtime_environment,
             )
 
     def configuration(self) -> dict:
@@ -107,9 +126,18 @@ class AdversarialScalingSpec:
             "action_counts": ",".join(map(str, self.action_counts)),
             "replicates": self.replicates,
         }
+        if self.runtime_environment:
+            configuration["runtime_environment"] = self.runtime_environment
+            configuration["runtime_fingerprint"] = self.runtime_fingerprint
         if self.implementation_version:
             configuration["implementation_version"] = self.implementation_version
         return configuration
+
+    @property
+    def runtime_fingerprint(self) -> str:
+        if not self.runtime_environment:
+            return ""
+        return runtime_environment_fingerprint(self.runtime_environment)
 
     @property
     def run_id(self) -> str:
@@ -152,8 +180,6 @@ def run_adversarial_scaling_experiment(
                 for replicate in range(spec.replicates):
                     if should_cancel is not None and should_cancel():
                         raise ExperimentCancelled("experiment cancelled")
-                    learner_seed = spec.learner_seed + replicate
-                    environment_seed = spec.environment_seed + replicate
                     result_path = run_adversarial_experiment(
                         environment=spec.environment,
                         initialization_mode=spec.initialization_mode,
@@ -166,6 +192,7 @@ def run_adversarial_scaling_experiment(
                         replicate=replicate,
                         regret_evaluation=spec.regret_evaluation,
                         implementation_version=spec.implementation_version,
+                        runtime_environment=spec.runtime_environment,
                         output_dir=temporary_directory,
                         should_cancel=should_cancel,
                     )
@@ -176,9 +203,11 @@ def run_adversarial_scaling_experiment(
                             "n_actions": n_actions,
                             "replicate": replicate,
                             "environment_seed": (
-                                environment_seed if final["environment_seed"] else ""
+                                final["environment_seed"]
+                                if final["environment_seed"]
+                                else ""
                             ),
-                            "learner_seed": learner_seed,
+                            "learner_seed": final["learner_seed"],
                             "target_regret": target_regret,
                             "expected_regret": final.get(
                                 f"expected_{target_regret}_regret",
@@ -199,7 +228,12 @@ def load_adversarial_scaling_rows(input_path: str | Path) -> list[dict[str, str]
     input_path = Path(input_path)
     with input_path.open("r", encoding="utf-8", newline="") as file:
         reader = csv.DictReader(file)
-        optional_legacy = {"regret_evaluation", "implementation_version"}
+        optional_legacy = {
+            "regret_evaluation",
+            "implementation_version",
+            "runtime_environment",
+            "runtime_fingerprint",
+        }
         require_csv_columns(input_path, reader.fieldnames or (), set(ACTION_SCALING_FIELDNAMES) - optional_legacy)
         rows = list(reader)
     if not rows:
@@ -207,6 +241,8 @@ def load_adversarial_scaling_rows(input_path: str | Path) -> list[dict[str, str]
     for row in rows:
         row.setdefault("regret_evaluation", "both")
         row.setdefault("implementation_version", "0")
+        row.setdefault("runtime_environment", "")
+        row.setdefault("runtime_fingerprint", "")
 
     identity = tuple(rows[0][field] for field in ACTION_SCALING_IDENTITY_FIELDS)
     if any(
@@ -229,7 +265,10 @@ def load_adversarial_scaling_rows(input_path: str | Path) -> list[dict[str, str]
         learner_seed=int(first["base_learner_seed"]),
         regret_evaluation=first["regret_evaluation"],
         implementation_version=int(first["implementation_version"]),
+        runtime_environment=first["runtime_environment"],
     )
+    if spec.runtime_fingerprint != first["runtime_fingerprint"]:
+        raise ValueError(f"{input_path} contains an invalid runtime fingerprint")
     if first["run_id"] != spec.run_id:
         raise ValueError(f"{input_path} contains an invalid run identity")
     expected = [
@@ -242,12 +281,30 @@ def load_adversarial_scaling_rows(input_path: str | Path) -> list[dict[str, str]
         raise ValueError(f"{input_path} contains incomplete scaling results")
     for row in rows:
         replicate = int(row["replicate"])
-        if int(row["learner_seed"]) != int(row["base_learner_seed"]) + replicate:
+        implementation_version = int(row["implementation_version"])
+        expected_learner_seed = (
+            domain_separated_seed(
+                int(row["base_learner_seed"]),
+                replicate,
+                LEARNER_SEED_DOMAIN,
+            )
+            if implementation_version >= 2
+            else int(row["base_learner_seed"]) + replicate
+        )
+        if int(row["learner_seed"]) != expected_learner_seed:
             raise ValueError(f"{input_path} contains an invalid learner seed schedule")
-        if row["environment_seed"] and int(row["environment_seed"]) != int(
-            row["base_environment_seed"]
-        ) + replicate:
-            raise ValueError(f"{input_path} contains an invalid environment seed schedule")
+        if row["environment_seed"]:
+            expected_environment_seed = (
+                domain_separated_seed(
+                    int(row["base_environment_seed"]),
+                    replicate,
+                    ENVIRONMENT_SEED_DOMAIN,
+                )
+                if implementation_version >= 2
+                else int(row["base_environment_seed"]) + replicate
+            )
+            if int(row["environment_seed"]) != expected_environment_seed:
+                raise ValueError(f"{input_path} contains an invalid environment seed schedule")
         if row["target_regret"] != TARGET_REGRET_BY_ALGORITHM[row["algorithm"]]:
             raise ValueError(f"{input_path} contains an invalid target regret")
         selected_sources = set(regret_sources(row["regret_evaluation"]))

@@ -2,7 +2,7 @@ from functools import partial
 
 import numpy as np
 
-from algorithms.external_regret import Hedge, Exp3
+from algorithms.external_regret import Hedge, TsallisINF
 from algorithms.swap_regret.base import StationaryReduction
 
 
@@ -23,7 +23,7 @@ class FullIto(ItoBase):
     """Full-information Ito reduction with anytime inner learners."""
 
     def __init__(self, n_actions: int, inner_algorithm_factory=Hedge, seed: int | None = None) -> None:
-        super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, 0), seed=seed)
+        super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, horizon=None), seed=seed)
 
     def _update_state(self, reward_vector: np.ndarray) -> None:
         self.selected_learner.update(reward_vector)
@@ -31,10 +31,10 @@ class FullIto(ItoBase):
 
 
 class BanditIto(ItoBase):
-    """Bandit-feedback Ito reduction with anytime inner learners."""
+    """Ito (2020) bandit reduction with anytime Tsallis-INF learners."""
 
-    def __init__(self, n_actions: int, inner_algorithm_factory=Exp3, seed: int | None = None) -> None:
-        super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, 0), seed=seed)
+    def __init__(self, n_actions: int, inner_algorithm_factory=TsallisINF, seed: int | None = None) -> None:
+        super().__init__(n_actions, partial(inner_algorithm_factory, n_actions), seed=seed)
 
     def _update_state(self, reward: float) -> None:
         self.selected_learner.update(reward)

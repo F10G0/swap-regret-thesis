@@ -1,6 +1,6 @@
 import csv
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -26,7 +26,17 @@ from experiments.result_schema import (
     resolve_regret_evaluation,
 )
 from experiments.results import result_regret_evaluation
+from experiments.runtime_environment import (
+    runtime_environment_fingerprint,
+    runtime_environment_json,
+    validate_runtime_environment,
+)
 from experiments.runner import ExperimentCancelled
+from experiments.seeding import (
+    ENVIRONMENT_SEED_DOMAIN,
+    LEARNER_SEED_DOMAIN,
+    domain_separated_seed,
+)
 from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT_ALGORITHMS
 from experiments.scenarios.full_information_cross_play import (
     ALGORITHMS as FULL_INFORMATION_ALGORITHMS,
@@ -55,7 +65,8 @@ FEEDBACK_MODE_LABELS = {
 }
 TARGET_REGRET_BY_ALGORITHM = {
     "hedge": "external",
-    "exp3": "external",
+    "exp3": "external",  # Historical results only; not a runnable algorithm.
+    "auer_exp3": "external",
     "exp3_ix": "external",
     "bm": "swap",
     "ito": "swap",
@@ -69,9 +80,13 @@ ADVERSARIAL_IDENTITY_FIELDS = (
     "environment",
     "initialization_mode",
     "reward_step",
+    "base_environment_seed",
     "environment_seed",
+    "base_learner_seed",
     "learner_seed",
     "replicate",
+    "runtime_environment",
+    "runtime_fingerprint",
     "feedback_mode",
     "regret_evaluation",
     "n_actions",
@@ -87,7 +102,15 @@ ADVERSARIAL_BASE_FIELDNAMES = [
     "current_best_action",
     "current_best_reward",
 ]
-ADVERSARIAL_LEGACY_FIELDS = {"replicate", "regret_evaluation", "implementation_version"}
+ADVERSARIAL_LEGACY_FIELDS = {
+    "base_environment_seed",
+    "base_learner_seed",
+    "replicate",
+    "regret_evaluation",
+    "implementation_version",
+    "runtime_environment",
+    "runtime_fingerprint",
+}
 
 
 def adversarial_result_fieldnames(regret_evaluation: str) -> list[str]:
@@ -101,6 +124,21 @@ def adversarial_result_fieldnames(regret_evaluation: str) -> list[str]:
 def _normalize_adversarial_row(row: dict[str, str]) -> None:
     row.setdefault("replicate", "0")
     row.setdefault("implementation_version", "0")
+    replicate = int(row["replicate"])
+    row.setdefault(
+        "base_learner_seed",
+        str(int(row["learner_seed"]) - replicate),
+    )
+    row.setdefault(
+        "base_environment_seed",
+        (
+            str(int(row["environment_seed"]) - replicate)
+            if row.get("environment_seed")
+            else ""
+        ),
+    )
+    row.setdefault("runtime_environment", "")
+    row.setdefault("runtime_fingerprint", "")
     row["regret_evaluation"] = result_regret_evaluation(row)
 
 
@@ -123,6 +161,7 @@ class AdversarialExperimentSpec:
     replicate: int = 0
     regret_evaluation: str = "both"
     implementation_version: int = RESULT_IMPLEMENTATION_VERSION
+    runtime_environment: str = field(default_factory=runtime_environment_json)
 
     def __post_init__(self) -> None:
         if self.feedback_mode not in ALGORITHMS_BY_FEEDBACK_MODE:
@@ -142,6 +181,11 @@ class AdversarialExperimentSpec:
             raise ValueError("replicate must be non-negative")
         if self.implementation_version < 0:
             raise ValueError("implementation_version must be non-negative")
+        canonical_runtime = validate_runtime_environment(
+            self.runtime_environment,
+            allow_empty=self.implementation_version == 0,
+        )
+        object.__setattr__(self, "runtime_environment", canonical_runtime)
         object.__setattr__(
             self,
             "regret_evaluation",
@@ -161,7 +205,9 @@ class AdversarialExperimentSpec:
             "environment": self.environment,
             "initialization_mode": self.initialization_mode if random_walk else "",
             "reward_step": RANDOM_WALK_STEP if random_walk else "",
+            "base_environment_seed": self.environment_seed if random_walk else "",
             "environment_seed": self.replicate_environment_seed if random_walk else "",
+            "base_learner_seed": self.seed,
             "learner_seed": self.learner_seed,
             "replicate": self.replicate,
             "feedback_mode": self.feedback_mode,
@@ -170,17 +216,34 @@ class AdversarialExperimentSpec:
             "algorithm": self.algorithm_name,
             "horizon": self.horizon,
         }
+        if self.runtime_environment:
+            configuration["runtime_environment"] = self.runtime_environment
+            configuration["runtime_fingerprint"] = self.runtime_fingerprint
         if self.implementation_version:
             configuration["implementation_version"] = self.implementation_version
         return configuration
 
     @property
     def learner_seed(self) -> int:
-        return self.seed + self.replicate
+        return domain_separated_seed(
+            self.seed,
+            self.replicate,
+            LEARNER_SEED_DOMAIN,
+        )
 
     @property
     def replicate_environment_seed(self) -> int:
-        return self.environment_seed + self.replicate
+        return domain_separated_seed(
+            self.environment_seed,
+            self.replicate,
+            ENVIRONMENT_SEED_DOMAIN,
+        )
+
+    @property
+    def runtime_fingerprint(self) -> str:
+        if not self.runtime_environment:
+            return ""
+        return runtime_environment_fingerprint(self.runtime_environment)
 
     @property
     def run_id(self) -> str:
@@ -194,6 +257,7 @@ class AdversarialExperimentSpec:
             }
             if self.implementation_version:
                 identity["implementation_version"] = self.implementation_version
+                identity["runtime_fingerprint"] = self.runtime_fingerprint
             if self.replicate:
                 identity["replicate"] = self.replicate
             if self.feedback_mode != "full_information":
@@ -227,6 +291,7 @@ def run_adversarial_experiment(
     replicate: int = 0,
     regret_evaluation: str = "both",
     implementation_version: int = RESULT_IMPLEMENTATION_VERSION,
+    runtime_environment: str | None = None,
 ) -> Path:
     spec = AdversarialExperimentSpec(
         algorithm_name=algorithm_name,
@@ -240,6 +305,11 @@ def run_adversarial_experiment(
         replicate=replicate,
         regret_evaluation=regret_evaluation,
         implementation_version=implementation_version,
+        runtime_environment=(
+            runtime_environment_json()
+            if runtime_environment is None
+            else runtime_environment
+        ),
     )
     output_path = Path(output_dir) / f"{spec.run_id}.csv"
     if output_path.exists():
@@ -308,7 +378,9 @@ def run_adversarial_experiment(
 def _validate_adversarial_row(row: dict[str, str], input_path: Path) -> int:
     if row["feedback_mode"] not in ALGORITHMS_BY_FEEDBACK_MODE:
         raise ValueError(f"{input_path} contains an invalid feedback mode")
-    if row["algorithm"] not in ALGORITHMS_BY_FEEDBACK_MODE[row["feedback_mode"]]:
+    # Retired Exp3 results retain their identity; new runs use the active registry.
+    legacy_exp3 = row["feedback_mode"] == "bandit" and row["algorithm"] == "exp3"
+    if row["algorithm"] not in ALGORITHMS_BY_FEEDBACK_MODE[row["feedback_mode"]] and not legacy_exp3:
         raise ValueError(f"{input_path} contains an invalid algorithm")
     if row["environment"] not in ENVIRONMENT_LABELS:
         raise ValueError(f"{input_path} contains an invalid environment")
@@ -317,14 +389,35 @@ def _validate_adversarial_row(row: dict[str, str], input_path: Path) -> int:
             raise ValueError(f"{input_path} contains an invalid initialization")
         if not np.isclose(float(row["reward_step"]), RANDOM_WALK_STEP):
             raise ValueError(f"{input_path} contains an invalid reward step")
-        if int(row["environment_seed"]) < 0:
+        if int(row["base_environment_seed"]) < 0 or int(row["environment_seed"]) < 0:
             raise ValueError(f"{input_path} contains an invalid environment seed")
-    if int(row["learner_seed"]) < 0:
+    if int(row["base_learner_seed"]) < 0 or int(row["learner_seed"]) < 0:
         raise ValueError(f"{input_path} contains an invalid learner seed")
     if int(row["replicate"]) < 0:
         raise ValueError(f"{input_path} contains an invalid replicate")
     if int(row["implementation_version"]) < 0:
         raise ValueError(f"{input_path} contains an invalid implementation version")
+    implementation_version = int(row["implementation_version"])
+    replicate = int(row["replicate"])
+    if implementation_version >= 2:
+        expected_learner_seed = domain_separated_seed(
+            int(row["base_learner_seed"]),
+            replicate,
+            LEARNER_SEED_DOMAIN,
+        )
+        if int(row["learner_seed"]) != expected_learner_seed:
+            raise ValueError(f"{input_path} contains an invalid learner seed schedule")
+        if row["environment"] == RANDOM_WALK_ENVIRONMENT:
+            expected_environment_seed = domain_separated_seed(
+                int(row["base_environment_seed"]),
+                replicate,
+                ENVIRONMENT_SEED_DOMAIN,
+            )
+            if int(row["environment_seed"]) != expected_environment_seed:
+                raise ValueError(f"{input_path} contains an invalid environment seed schedule")
+        runtime = validate_runtime_environment(row["runtime_environment"])
+        if runtime_environment_fingerprint(runtime) != row["runtime_fingerprint"]:
+            raise ValueError(f"{input_path} contains an invalid runtime fingerprint")
 
     horizon = int(row["horizon"])
     n_actions = int(row["n_actions"])

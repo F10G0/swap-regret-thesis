@@ -57,12 +57,21 @@ def test_stationary_regret_matching_experiment_smoke(tmp_path) -> None:
     assert "learning_rate_player_0" not in rows[0]
 
 
+def test_removed_exp3_is_rejected_for_new_cross_play_runs(tmp_path) -> None:
+    with pytest.raises(ValueError, match="unknown algorithm: exp3"):
+        bandit_cross_play.run_bandit_cross_play_experiment(
+            game_name="rps", algorithm_names=["exp3", "exp3_ix"],
+            horizon=3, output_dir=tmp_path,
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_bandit_experiment_smoke(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(bandit_cross_play, "RAW_DIR", tmp_path)
 
     output_path = bandit_cross_play.run_bandit_cross_play_experiment(
         game_name="rps",
-        algorithm_names=["exp3", "exp3"],
+        algorithm_names=["exp3_ix", "exp3_ix"],
         horizon=3,
         seed=7,
     )
@@ -98,7 +107,7 @@ def test_regret_evaluation_is_independent_of_feedback_mode(
         )
     else:
         output_path = bandit_cross_play.run_bandit_cross_play_experiment(
-            game_name="rps", algorithm_names=["exp3", "exp3"], horizon=2, seed=7,
+            game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=2, seed=7,
             output_dir=tmp_path, regret_evaluation=regret_evaluation,
         )
 
@@ -110,11 +119,11 @@ def test_regret_evaluation_is_independent_of_feedback_mode(
 
 def test_regret_evaluation_does_not_change_bandit_play(tmp_path) -> None:
     expected_path = bandit_cross_play.run_bandit_cross_play_experiment(
-        game_name="rps", algorithm_names=["exp3", "exp3"], horizon=10, seed=7,
+        game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=10, seed=7,
         output_dir=tmp_path, regret_evaluation="expected",
     )
     both_path = bandit_cross_play.run_bandit_cross_play_experiment(
-        game_name="rps", algorithm_names=["exp3", "exp3"], horizon=10, seed=7,
+        game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=10, seed=7,
         output_dir=tmp_path, regret_evaluation="both",
     )
 
@@ -134,16 +143,16 @@ def test_regret_evaluation_does_not_change_bandit_play(tmp_path) -> None:
 def test_cancelled_experiment_does_not_publish_partial_result(tmp_path) -> None:
     with pytest.raises(ExperimentCancelled):
         bandit_cross_play.run_bandit_cross_play_experiment(
-            game_name="rps", algorithm_names=["exp3", "exp3"], horizon=3, seed=7, output_dir=tmp_path, should_cancel=lambda: True,
+            game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=3, seed=7, output_dir=tmp_path, should_cancel=lambda: True,
         )
 
     assert list(tmp_path.iterdir()) == []
 
 
-def test_exp3_ix_experiment_smoke(tmp_path) -> None:
+def test_exp3_ix_and_bm_experiment_smoke(tmp_path) -> None:
     output_path = bandit_cross_play.run_bandit_cross_play_experiment(
         game_name="rps",
-        algorithm_names=["exp3_ix", "exp3"],
+        algorithm_names=["exp3_ix", "bm"],
         horizon=3,
         seed=7,
         output_dir=tmp_path,
@@ -176,7 +185,7 @@ def test_o1_stationary_regret_matching_handles_solver_roundoff(tmp_path) -> None
 def test_lce_ix_experiment_uses_theoretical_default_schedule(tmp_path) -> None:
     output_path = bandit_cross_play.run_bandit_cross_play_experiment(
         game_name="rps",
-        algorithm_names=["lce_ix", "exp3"],
+        algorithm_names=["lce_ix", "exp3_ix"],
         horizon=3,
         seed=7,
         output_dir=tmp_path,

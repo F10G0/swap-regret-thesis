@@ -5,17 +5,19 @@ import numpy as np
 import pytest
 
 from algorithms.base import Algorithm
-from algorithms.external_regret import Exp3, Exp3IX, Hedge
+from algorithms.external_regret import AuerExp3, Exp3IX, Hedge, TsallisINF
 from algorithms.internal_regret import RegretMatching, StationaryRegretMatching
-from algorithms.swap_regret import BanditBM, BanditIto, FullBM, FullIto, LCEIX
+from algorithms.swap_regret import BanditBM, BanditIto, FullBM, FullIto, LCEIX, LCEIXInner
 
 
 @pytest.mark.parametrize(
     ("factory", "feedback"),
     [
         pytest.param(partial(Hedge, 3, 10, seed=0), np.array([0.2, 0.5, 0.8]), id="hedge"),
-        pytest.param(partial(Exp3, 3, 10, seed=0), 0.5, id="exp3"),
-        pytest.param(partial(Exp3IX, 3, 0, seed=0), 0.5, id="exp3-ix"),
+        pytest.param(partial(Exp3IX, 3, horizon=10, seed=0), 0.5, id="exp3-ix"),
+        pytest.param(partial(AuerExp3, 3, horizon=10, seed=0), 0.5, id="auer-exp3"),
+        pytest.param(partial(TsallisINF, 3, seed=0), 0.5, id="tsallis-inf"),
+        pytest.param(partial(Hedge, 3, horizon=None, seed=0), np.array([0.2, 0.5, 0.8]), id="anytime-hedge"),
         pytest.param(partial(RegretMatching, 3, seed=0), np.array([0.2, 0.5, 0.8]), id="regret-matching"),
         pytest.param(partial(StationaryRegretMatching, 3, seed=0), np.array([0.2, 0.5, 0.8]), id="stationary-regret-matching"),
         pytest.param(partial(FullBM, 3, 10, seed=0), np.array([0.2, 0.5, 0.8]), id="full-bm"),
@@ -37,3 +39,11 @@ def test_algorithms_start_and_reset_uniformly(factory: Callable[[], Algorithm], 
 
     assert learner.current_action is None
     assert np.allclose(learner.strategy(), uniform_strategy)
+
+
+@pytest.mark.parametrize("learner_type", [TsallisINF, RegretMatching, StationaryRegretMatching, FullIto, BanditIto, LCEIX, LCEIXInner])
+def test_horizon_free_learners_reject_a_horizon_argument(learner_type) -> None:
+    learner = learner_type(3, seed=0)
+    assert not hasattr(learner, "horizon")
+    with pytest.raises(TypeError, match="horizon"):
+        learner_type(3, horizon=10, seed=0)

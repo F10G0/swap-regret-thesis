@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from algorithms.external_regret import Exp3, Exp3IX
+from algorithms.external_regret import AuerExp3, Exp3IX
 from algorithms.swap_regret import BanditBM, BanditIto, LCEIX
 from config import CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
 from environments import BanditRepeatedGame
@@ -9,9 +9,9 @@ from experiments.scenarios.cross_play import AlgorithmFactory, run_cross_play_ex
 
 
 ALGORITHMS = {
-    "exp3": AlgorithmFactory(Exp3),
-    "exp3_ix": AlgorithmFactory(Exp3IX),
-    "bm": AlgorithmFactory(BanditBM),
+    "auer_exp3": AlgorithmFactory(AuerExp3, uses_horizon=True),
+    "exp3_ix": AlgorithmFactory(Exp3IX, uses_horizon=True),
+    "bm": AlgorithmFactory(BanditBM, uses_horizon=True),
     "ito": AlgorithmFactory(BanditIto, uses_horizon=False),
     "lce_ix": AlgorithmFactory(LCEIX, uses_horizon=False),
 }

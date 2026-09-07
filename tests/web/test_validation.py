@@ -93,7 +93,7 @@ def test_experiment_form_rejects_algorithm_from_wrong_feedback_mode() -> None:
             games={"rps"},
             algorithms_by_feedback_mode={
                 "full_information": ["hedge"],
-                "bandit": ["exp3"],
+                "bandit": ["exp3_ix"],
             },
             max_horizon=100,
         )
@@ -101,9 +101,9 @@ def test_experiment_form_rejects_algorithm_from_wrong_feedback_mode() -> None:
 
 def test_bandit_form_accepts_replicate_batch() -> None:
     form = parse_experiment_form(
-        VALID_FORM | {"feedback_mode": "bandit", "algorithm_names": ["exp3", "lce_ix"], "replicates": "20"},
+        VALID_FORM | {"feedback_mode": "bandit", "algorithm_names": ["exp3_ix", "lce_ix"], "replicates": "20"},
         games={"rps"},
-        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3", "lce_ix"]},
+        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3_ix", "lce_ix"]},
         max_horizon=100,
     )
 
@@ -155,7 +155,7 @@ def test_experiment_form_accepts_every_regret_evaluation_for_each_feedback_mode(
     feedback_mode: str,
     regret_evaluation: str,
 ) -> None:
-    algorithm = "hedge" if feedback_mode == "full_information" else "exp3"
+    algorithm = "hedge" if feedback_mode == "full_information" else "exp3_ix"
     form = parse_experiment_form(
         VALID_FORM | {
             "feedback_mode": feedback_mode,
@@ -163,7 +163,7 @@ def test_experiment_form_accepts_every_regret_evaluation_for_each_feedback_mode(
             "regret_evaluation": regret_evaluation,
         },
         games={"rps"},
-        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3"]},
+        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3_ix"]},
         max_horizon=100,
     )
 

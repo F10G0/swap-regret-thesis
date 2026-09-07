@@ -7,12 +7,7 @@ from config import NUMERICAL_TOLERANCE
 
 
 class ExponentialWeightsAlgorithm(Algorithm):
-    """Base class for fixed-horizon and anytime exponential-weights algorithms."""
-
-    @property
-    def _rate_horizon(self) -> int:
-        """Return the horizon used by the learning-rate schedule."""
-        return max(self.horizon, self.t + 1)
+    """Exponential weights with a learning rate owned by each concrete learner."""
 
     @property
     @abstractmethod

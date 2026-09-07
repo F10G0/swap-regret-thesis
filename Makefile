@@ -3,8 +3,7 @@
 PYTHON ?= python3
 PIP := $(PYTHON) -m pip
 PYTEST := $(PYTHON) -m pytest
-GAMES_LEARNING_COMMIT := 6ca238a9c8716cd34fc3fcbc949bba7a7ea68dc5
-GAMES_LEARNING_EDITABLE := git+https://github.com/TUM-DSS/games_learning.git@$(GAMES_LEARNING_COMMIT)\#egg=games_learning
+LOCKFILE := requirements.lock
 
 RESULTS_DIR ?= results
 RAW_DIR ?= $(RESULTS_DIR)/raw
@@ -26,8 +25,7 @@ all: install plot ## Install the default build and refresh existing plots
 ##@ Setup
 
 install: ## Install project and tests without experimental trajectories
-	$(PIP) install --no-deps -e "$(GAMES_LEARNING_EDITABLE)"
-	EXPERIMENTAL_TRAJECTORIES="$(EXPERIMENTAL_TRAJECTORIES)" $(PIP) install -e ".[test]"
+	EXPERIMENTAL_TRAJECTORIES="$(EXPERIMENTAL_TRAJECTORIES)" $(PIP) install --requirement "$(LOCKFILE)"
 
 install-experimental: EXPERIMENTAL_TRAJECTORIES := 1
 install-experimental: install ## Install project and tests with experimental trajectories

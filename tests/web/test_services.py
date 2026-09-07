@@ -15,7 +15,7 @@ from experiments.scenarios.full_information_cross_play import (
 from web.jobs import JobManager, ServiceBusyError
 from web.presentations import GAME_PRESENTATIONS
 from web.result_groups import aggregate_result_summaries
-from web.services import DashboardService
+from web.services import DashboardService, PlotUpdateError
 from tests.web.support import block_job_queue, create_service, wait_for_async_result, wait_for_job
 from experimental.equilibrium_trajectory.web_models import (
     comparison_member_colors,
@@ -67,6 +67,10 @@ def test_bandit_dashboard_exposes_lce_ix() -> None:
 
     assert "lce_ix" in service.algorithms_by_feedback_mode["bandit"]
     assert service.algorithm_labels["lce_ix"] == "LCE-IX"
+    assert service.algorithm_labels["auer_exp3"] == "AuerExp3"
+    assert "auer_exp3" in service.algorithms_by_feedback_mode["bandit"]
+    assert "auer_exp3" in service.adversarial_algorithms_by_feedback_mode["bandit"]
+    assert "auer_exp3" not in service.algorithms_by_feedback_mode["full_information"]
     assert service.algorithm_labels["regret_matching"] == "RM"
     assert service.algorithm_labels["stationary_regret_matching"] == "SRM"
 
@@ -340,7 +344,8 @@ def test_result_snapshot_reuses_unchanged_file_summary(tmp_path: Path, monkeypat
     ("feedback_mode", "algorithms"),
     [
         ("full_information", ("hedge", "hedge")),
-        ("bandit", ("exp3", "lce_ix")),
+        ("bandit", ("exp3_ix", "lce_ix")),
+        ("bandit", ("auer_exp3", "exp3_ix")),
     ],
 )
 def test_submission_runs_requested_replicates(
@@ -449,6 +454,44 @@ def test_failed_plot_update_preserves_existing_figures(tmp_path: Path) -> None:
     assert existing_figure.read_bytes() == b"existing"
 
 
+@pytest.mark.parametrize("result_kind", ["adversarial", "adversarial_scaling"])
+def test_one_player_delete_rolls_back_csv_and_figures_when_rebuild_fails(
+    tmp_path: Path,
+    monkeypatch,
+    result_kind: str,
+) -> None:
+    service = create_service(tmp_path)
+    if result_kind == "adversarial":
+        raw_dir = service.adversarial_raw_dir
+        figure_dir = service.adversarial_figure_dir
+        delete = service.delete_adversarial_experiment
+        rebuild_name = "_publish_adversarial_plots"
+    else:
+        raw_dir = service.adversarial_scaling_raw_dir
+        figure_dir = service.adversarial_scaling_figure_dir
+        delete = service.delete_adversarial_scaling_experiment
+        rebuild_name = "_publish_adversarial_scaling_plots"
+
+    raw_dir.mkdir(parents=True)
+    figure_dir.mkdir(parents=True)
+    csv_path = raw_dir / "result.csv"
+    figure_path = figure_dir / "existing.png"
+    csv_path.write_bytes(b"recorded-result")
+    figure_path.write_bytes(b"existing-figure")
+    monkeypatch.setattr(
+        service,
+        rebuild_name,
+        lambda: (_ for _ in ()).throw(RuntimeError("plot failed")),
+    )
+
+    with pytest.raises(PlotUpdateError, match="were restored"):
+        delete(csv_path.name)
+
+    assert csv_path.read_bytes() == b"recorded-result"
+    assert figure_path.read_bytes() == b"existing-figure"
+    assert not list(raw_dir.parent.glob(".delete-result-*"))
+
+
 def test_plot_publication_skips_malformed_result_files(tmp_path: Path) -> None:
     service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
     run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
@@ -477,7 +520,7 @@ def test_bandit_results_contain_only_realized_regret(tmp_path: Path) -> None:
     )
     run_bandit_cross_play_experiment(
         game_name="rps",
-        algorithm_names=["exp3", "exp3"],
+        algorithm_names=["exp3_ix", "exp3_ix"],
         horizon=2,
         output_dir=service.raw_dir,
     )
@@ -497,7 +540,7 @@ def test_bandit_results_contain_only_realized_regret(tmp_path: Path) -> None:
 def test_plotting_keeps_expected_and_realized_results_for_the_same_game(tmp_path: Path) -> None:
     service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
     run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
-    run_bandit_cross_play_experiment(game_name="rps", algorithm_names=["exp3", "exp3"], horizon=2, output_dir=service.raw_dir)
+    run_bandit_cross_play_experiment(game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=2, output_dir=service.raw_dir)
 
     service._publish_plots("rps")
     figures = service.figure_records()

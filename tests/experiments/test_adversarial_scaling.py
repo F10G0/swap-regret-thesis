@@ -15,6 +15,11 @@ from experiments.scenarios.adversarial_scaling import (
     load_adversarial_scaling_rows,
     run_adversarial_scaling_experiment,
 )
+from experiments.seeding import (
+    ENVIRONMENT_SEED_DOMAIN,
+    LEARNER_SEED_DOMAIN,
+    domain_separated_seed,
+)
 
 
 def scaling_spec(**overrides) -> AdversarialScalingSpec:
@@ -22,7 +27,7 @@ def scaling_spec(**overrides) -> AdversarialScalingSpec:
         "environment": RANDOM_WALK_ENVIRONMENT,
         "initialization_mode": "centered",
         "feedback_mode": "bandit",
-        "algorithm_name": "exp3",
+        "algorithm_name": "exp3_ix",
         "action_counts": (2, 4),
         "replicates": 3,
         "horizon": 4,
@@ -48,8 +53,12 @@ def test_scaling_experiment_uses_common_seed_schedule_at_every_action_count(
     ]
     for replicate in range(3):
         matched = [row for row in rows if int(row["replicate"]) == replicate]
-        assert {row["learner_seed"] for row in matched} == {str(23 + replicate)}
-        assert {row["environment_seed"] for row in matched} == {str(11 + replicate)}
+        assert {row["learner_seed"] for row in matched} == {
+            str(domain_separated_seed(23, replicate, LEARNER_SEED_DOMAIN))
+        }
+        assert {row["environment_seed"] for row in matched} == {
+            str(domain_separated_seed(11, replicate, ENVIRONMENT_SEED_DOMAIN))
+        }
     assert {row["target_regret"] for row in rows} == {"external"}
     assert all(np.isfinite(float(row["expected_regret"])) for row in rows)
     assert all(np.isfinite(float(row["realized_regret"])) for row in rows)

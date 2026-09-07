@@ -11,6 +11,10 @@ from experiments.result_schema import (
     regret_sources,
 )
 from experiments.recorder import read_final_csv_rows, require_csv_columns
+from experiments.runtime_environment import (
+    runtime_environment_fingerprint,
+    validate_runtime_environment,
+)
 
 
 IDENTITY_COLUMNS = (
@@ -121,10 +125,30 @@ def result_implementation_version(row: dict[str, str]) -> int:
     return version
 
 
+def result_runtime_environment(row: dict[str, str]) -> str:
+    serialized = row.get("runtime_environment", "").strip()
+    if not serialized or serialized == "0":
+        return ""
+    return validate_runtime_environment(serialized)
+
+
+def result_runtime_fingerprint(row: dict[str, str]) -> str:
+    environment = result_runtime_environment(row)
+    fingerprint = row.get("runtime_fingerprint", "").strip()
+    if not environment and (not fingerprint or fingerprint == "0"):
+        return ""
+    if not PAYOFF_DIGEST_PATTERN.fullmatch(fingerprint):
+        raise ValueError("invalid runtime_fingerprint")
+    if runtime_environment_fingerprint(environment) != fingerprint:
+        raise ValueError("runtime_fingerprint does not match runtime_environment")
+    return fingerprint
+
+
 def _row_identity(row: dict[str, str]) -> tuple:
     return (
         *(row[column] for column in IDENTITY_COLUMNS),
         result_implementation_version(row),
+        result_runtime_fingerprint(row),
         result_game_payoff_digest(row),
         result_regret_evaluation(row),
         *result_algorithm_profile(row),
