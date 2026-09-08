@@ -37,6 +37,7 @@ from experiments.plots import (
     publish_figure_pair,
 )
 from experiments.results import iter_result_rows
+from experiments.parallel import run_replicates
 from experiments.spec import ExperimentSpec
 from experiments.scenarios.adversarial import (
     ALGORITHMS_BY_FEEDBACK_MODE as ADVERSARIAL_ALGORITHMS_BY_FEEDBACK_MODE,
@@ -161,6 +162,7 @@ class DashboardService:
         figure_dir: str | Path,
         job_manager: JobManager | None = None,
         custom_game_dir: str | Path = CUSTOM_GAME_DIR,
+        replicate_workers: int | None = None,
     ):
         self.results_dir = Path(results_dir)
         self.raw_dir = Path(raw_dir)
@@ -173,6 +175,7 @@ class DashboardService:
         self.adversarial_scaling_figure_dir = self.adversarial_scaling_dir / "figures"
         self.game_catalog = GameCatalog(custom_game_dir)
         self.jobs = job_manager or JobManager()
+        self.replicate_workers = replicate_workers
         self.result_index = ResultIndex(self.raw_dir)
         self._experimental_trajectory_dashboard = None
         self._detail_figure_lock = Lock()
@@ -383,6 +386,7 @@ class DashboardService:
         resource_key: Callable,
         description: str,
         run: Callable,
+        task_kwargs: Callable,
         rebuild: Callable[[], None],
         duplicate_message: str,
         rebuild_error: str,
@@ -397,10 +401,11 @@ class DashboardService:
             raise FileExistsError(duplicate_message)
 
         def operation(job: JobContext) -> str:
-            for spec in missing:
-                job.check_cancelled()
-                run(spec, job)
-                job.advance()
+            run_replicates(
+                run, [task_kwargs(spec) for spec in missing],
+                workers=self.replicate_workers,
+                should_cancel=lambda: job.cancelled, completed=job.advance,
+            )
             job.check_cancelled()
             try:
                 rebuild()
@@ -434,8 +439,8 @@ class DashboardService:
             )
             for replicate in range(form.replicates)
         ]
-        def run(spec, job):
-            run_adversarial_experiment(
+        def task_kwargs(spec):
+            return dict(
                 environment=spec.environment,
                 initialization_mode=spec.initialization_mode,
                 environment_seed=spec.environment_seed,
@@ -447,7 +452,6 @@ class DashboardService:
                 replicate=spec.replicate,
                 regret_evaluation=spec.regret_evaluation,
                 output_dir=self.adversarial_raw_dir,
-                should_cancel=lambda: job.cancelled,
             )
 
         return self._submit_replicates(
@@ -462,8 +466,9 @@ class DashboardService:
                 f"{form.n_actions} actions · "
                 f"{form.replicates} replicates · base learner seed {form.learner_seed}"
             ),
-            run,
-            self._publish_adversarial_plots,
+            run_adversarial_experiment,
+            task_kwargs,
+            lambda: self._publish_adversarial_plots((form.environment, form.feedback_mode, form.n_actions)),
             "all requested adversarial replicates already exist or are queued",
             "adversarial runs were saved, but their figures could not be rebuilt",
         )
@@ -498,6 +503,7 @@ class DashboardService:
                 self.adversarial_scaling_raw_dir,
                 should_cancel=lambda: job.cancelled,
                 completed=job.advance,
+                workers=self.replicate_workers,
             )
             job.check_cancelled()
             try:
@@ -520,14 +526,19 @@ class DashboardService:
             resource_keys={resource_key},
         )
 
-    def _publish_adversarial_plots(self) -> None:
-        from experiments.plots.plot_adversarial import plot_adversarial_results
+    def _publish_adversarial_plots(self, scope: tuple[str, str, int] | None = None) -> None:
+        from experiments.plots.plot_adversarial import adversarial_figure_prefix, plot_adversarial_results
+
+        plotter = plot_adversarial_results if scope is None else lambda input_dir, output_dir, skip_invalid: plot_adversarial_results(
+            input_dir, output_dir, skip_invalid=skip_invalid, scope=scope,
+        )
 
         self._publish_generated_plots(
             self.adversarial_raw_dir,
             self.adversarial_figure_dir,
             ".adversarial-figures-",
-            plot_adversarial_results,
+            plotter,
+            filename_prefix=adversarial_figure_prefix(scope) if scope is not None else None,
         )
 
     def _publish_adversarial_scaling_plots(self) -> None:
@@ -814,15 +825,14 @@ class DashboardService:
         mode = FEEDBACK_MODES[form.feedback_mode]
         specs = [self._spec(form, replicate=replicate) for replicate in range(form.replicates)]
 
-        def run(spec, job):
-            mode.runner(
+        def task_kwargs(spec):
+            return dict(
                 game_name=spec.game_name,
                 algorithm_names=list(spec.algorithm_names),
                 horizon=spec.horizon,
                 seed=spec.seed,
                 replicate=spec.replicate,
                 output_dir=self.raw_dir,
-                should_cancel=lambda: job.cancelled,
                 custom_game_dir=self.game_catalog.custom_game_dir,
                 regret_evaluation=spec.regret_evaluation,
             )
@@ -832,7 +842,8 @@ class DashboardService:
             self.raw_dir,
             lambda spec: spec.run_id,
             f"{form.game}: {algorithm_profile_label(form.algorithm_names)}",
-            run,
+            mode.runner,
+            task_kwargs,
             lambda: self._publish_plots(form.game),
             "all requested replicates already exist or are queued",
             "experiments were saved, but their figures could not be rebuilt",
@@ -1135,6 +1146,7 @@ class DashboardService:
                 temporary_path,
                 game_label=self.game_presentations[game_name]["label"],
                 custom_game_dir=self.game_catalog.custom_game_dir,
+                cache_dir=self.results_dir / "cache" / "equilibrium_distance",
             )
             with self._detail_figure_lock:
                 if generation != self._detail_figure_generation:

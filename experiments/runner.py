@@ -3,6 +3,7 @@ from collections.abc import Callable
 from algorithms.base import Algorithm
 from environments.base import FixedGameEnvironment
 from experiments.recorder import CsvRecorder
+from experiments.recording import MAX_RECORDED_POINTS, encode_action_block, recording_checkpoints
 from experiments.result_schema import regret_sources, resolve_regret_evaluation
 from metrics.regret import RegretBundles
 
@@ -12,7 +13,8 @@ class ExperimentCancelled(RuntimeError):
 
 
 def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, algorithm_name: str, players: list[Algorithm], recorder: CsvRecorder, horizon: int,
-             metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None, regret_evaluation: str = "feedback_aligned") -> None:
+             metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None, regret_evaluation: str = "feedback_aligned",
+             max_recorded_points: int = MAX_RECORDED_POINTS) -> None:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     if feedback_mode not in {"full_information", "bandit"}:
@@ -25,7 +27,11 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
 
     metadata = metadata or {}
     regret_evaluation = resolve_regret_evaluation(feedback_mode, regret_evaluation)
-    regrets = [RegretBundles(n_actions) for n_actions in game.n_actions]
+    regrets = [RegretBundles(n_actions, regret_evaluation) for n_actions in game.n_actions]
+    sources = regret_sources(regret_evaluation)
+    checkpoints = set(recording_checkpoints(horizon, max_recorded_points))
+    sparse = len(checkpoints) < horizon
+    action_blocks = [[] for _ in players] if sparse else None
 
     for t in range(1, horizon + 1):
         if should_cancel is not None and should_cancel():
@@ -47,9 +53,18 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
 
             regret.update(strategy, action, deviation_payoffs)
             player.update(feedback)
+            if sparse:
+                action_blocks[player_id].append(action)
+            if t not in checkpoints:
+                continue
             regret_summary = {}
-            for source in regret_sources(regret_evaluation):
+            for source in sources:
                 regret_summary.update(getattr(regret, source).summary(t))
+
+            action_history = {}
+            if sparse:
+                action_history["action_history"] = encode_action_block(action_blocks[player_id])
+                action_blocks[player_id].clear()
 
             recorder.record({
                 "game": game_name,
@@ -59,5 +74,6 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
                 "player": player_id,
                 "action": action,
                 "payoff": payoff,
+                **action_history,
                 **regret_summary,
             })

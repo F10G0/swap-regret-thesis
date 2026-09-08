@@ -26,7 +26,7 @@ def create_test_app(
 ):
     service = create_service(tmp_path)
     if disable_adversarial_plots:
-        service._publish_adversarial_plots = lambda: None
+        service._publish_adversarial_plots = lambda scope=None: None
     config = {
         "TESTING": True,
         "SECRET_KEY": "test-secret",

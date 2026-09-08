@@ -5,6 +5,13 @@ PIP := $(PYTHON) -m pip
 PYTEST := $(PYTHON) -m pytest
 LOCKFILE := requirements.lock
 
+# Set numerical-library limits before Python imports NumPy/BLAS. Spawned
+# replicate workers inherit these; explicit make/environment overrides work.
+export OMP_NUM_THREADS ?= 1
+export OPENBLAS_NUM_THREADS ?= 1
+export MKL_NUM_THREADS ?= 1
+export NUMEXPR_NUM_THREADS ?= 1
+
 RESULTS_DIR ?= results
 RAW_DIR ?= $(RESULTS_DIR)/raw
 FIGURE_DIR ?= $(RESULTS_DIR)/figures

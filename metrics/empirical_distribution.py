@@ -115,6 +115,7 @@ def _validated_checkpoints(checkpoints: Iterable[int] | None, horizon: int) -> n
 
 def empirical_distribution_trajectory(action_profiles: Iterable[Sequence[int]], action_shape: Sequence[int],
                                       checkpoints: Iterable[int] | None = None) -> EmpiricalDistributionTrajectory:
+    """Accumulate project-generated or loader-validated joint-action profiles."""
     shape = validate_action_shape(action_shape)
     profiles = list(action_profiles)
     if not profiles:
@@ -124,15 +125,7 @@ def empirical_distribution_trajectory(action_profiles: Iterable[Sequence[int]], 
     counts = np.zeros(int(np.prod(shape)), dtype=np.int64)
     vectors = np.empty((len(horizons), counts.size), dtype=float)
 
-    for horizon, raw_profile in enumerate(profiles, start=1):
-        try:
-            profile = tuple(index(action) for action in raw_profile)
-        except TypeError as error:
-            raise ValueError(f"round {horizon} must contain integer actions") from error
-        if len(profile) != len(shape):
-            raise ValueError(f"round {horizon} must contain one action per player")
-        if any(action < 0 or action >= shape[player] for player, action in enumerate(profile)):
-            raise ValueError(f"round {horizon} contains an out-of-range action")
+    for horizon, profile in enumerate(profiles, start=1):
         counts[np.ravel_multi_index(profile, shape, order="C")] += 1
         position = checkpoint_indices.get(horizon)
         if position is not None:

@@ -11,6 +11,7 @@ from experiments.result_schema import (
     regret_sources,
 )
 from experiments.recorder import read_final_csv_rows, require_csv_columns
+from experiments.recording import action_block_length
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
     validate_runtime_environment,
@@ -26,6 +27,18 @@ IDENTITY_COLUMNS = (
     "seed",
     "replicate",
     "stationary_method",
+)
+
+CONSTANT_RESULT_COLUMNS = IDENTITY_COLUMNS + (
+    "implementation_version",
+    "runtime_environment",
+    "runtime_fingerprint",
+    "game_payoff_digest",
+    "regret_evaluation",
+    "algorithm_profile",
+    "n_players",
+    "algorithm_player_0",
+    "algorithm_player_1",
 )
 
 BASE_RESULT_COLUMNS = set(IDENTITY_COLUMNS) | {"t", "player"}
@@ -135,24 +148,15 @@ def result_runtime_environment(row: dict[str, str]) -> str:
 def result_runtime_fingerprint(row: dict[str, str]) -> str:
     environment = result_runtime_environment(row)
     fingerprint = row.get("runtime_fingerprint", "").strip()
-    if not environment and (not fingerprint or fingerprint == "0"):
-        return ""
+    if not environment:
+        if not fingerprint or fingerprint == "0":
+            return ""
+        raise ValueError("runtime_fingerprint requires runtime_environment")
     if not PAYOFF_DIGEST_PATTERN.fullmatch(fingerprint):
         raise ValueError("invalid runtime_fingerprint")
     if runtime_environment_fingerprint(environment) != fingerprint:
         raise ValueError("runtime_fingerprint does not match runtime_environment")
     return fingerprint
-
-
-def _row_identity(row: dict[str, str]) -> tuple:
-    return (
-        *(row[column] for column in IDENTITY_COLUMNS),
-        result_implementation_version(row),
-        result_runtime_fingerprint(row),
-        result_game_payoff_digest(row),
-        result_regret_evaluation(row),
-        *result_algorithm_profile(row),
-    )
 
 
 def _validated_round(
@@ -185,23 +189,30 @@ def _validated_rows(
     n_players = None
     first_time = None
     current_time = None
+    previous_time = 0
     current_rows: list[dict[str, str]] = []
     for row in rows:
-        regret_evaluation = result_regret_evaluation(row)
-        row["regret_evaluation"] = regret_evaluation
-        identity = _row_identity(row)
+        # Fully validate constants once; compare their original CSV strings on
+        # every subsequent row, before filling inferred legacy metadata.
+        identity = tuple(row.get(column) for column in CONSTANT_RESULT_COLUMNS)
         if expected_identity is None:
+            regret_evaluation = result_regret_evaluation(row)
             require_csv_columns(input_path, fieldnames, required_columns(row["feedback_mode"], regret_evaluation))
+            result_implementation_version(row)
+            result_runtime_fingerprint(row)
+            result_game_payoff_digest(row)
             expected_identity = identity
             expected_horizon = int(row["horizon"])
             n_players = len(result_algorithm_profile(row))
+            if expected_horizon <= 0 or int(row["seed"]) < 0 or int(row["replicate"]) < 0:
+                raise ValueError(f"{input_path} contains invalid run metadata")
         elif identity != expected_identity:
             raise ValueError(f"{input_path} contains inconsistent run metadata")
+        row["regret_evaluation"] = regret_evaluation
 
-        horizon = int(row["horizon"])
         time = int(row["t"])
         player = int(row["player"])
-        if horizon <= 0 or time <= 0 or time > horizon or not 0 <= player < n_players:
+        if time <= 0 or time > expected_horizon or not 0 <= player < n_players:
             raise ValueError(f"{input_path} contains invalid round metadata")
 
         if current_time is None:
@@ -209,15 +220,15 @@ def _validated_rows(
         elif time != current_time:
             if time <= current_time:
                 raise ValueError(f"{input_path} rounds are not strictly increasing")
-            if require_complete_trajectory and time != current_time + 1:
-                raise ValueError(
-                    f"{input_path} has a gap between rounds {current_time} and {time}"
-                )
             yield from _validated_round(
                 input_path, current_time, current_rows, n_players
             )
-            current_time = time
+            previous_time, current_time = current_time, time
             current_rows = []
+        if "action_history" in fieldnames:
+            count = action_block_length(row["action_history"])
+            if (require_complete_trajectory and count != time - previous_time) or count > time:
+                raise ValueError(f"{input_path} action_history does not cover the checkpoint interval")
         current_rows.append(row)
 
     if current_time is None:
@@ -227,7 +238,7 @@ def _validated_rows(
     if require_complete_trajectory:
         if first_time != 1 or current_time != expected_horizon:
             raise ValueError(
-                f"{input_path} must contain every round from 1 through {expected_horizon}"
+                f"{input_path} must include checkpoints 1 and {expected_horizon}"
             )
     elif current_time != expected_horizon:
         raise ValueError(f"{input_path} has no complete final-horizon round")

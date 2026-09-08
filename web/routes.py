@@ -7,9 +7,11 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     url_for,
 )
+from pypdf.errors import PyPdfError
 
 from experiments.game_catalog import MAX_CUSTOM_ACTIONS_PER_PLAYER, MAX_CUSTOM_PLAYERS
 from experiments.plots import FIGURE_FORMATS, figure_path
@@ -19,6 +21,7 @@ from experiments.scenarios.adversarial import (
     MAX_ADVERSARIAL_ACTIONS,
 )
 from web.jobs import ServiceBusyError
+from web.pdf_export import merged_figure_pdf
 from web.services import DashboardService, PlotUpdateError
 from web.validation import (
     ExperimentForm,
@@ -327,6 +330,45 @@ def cancel_job(job_id: str):
 def serve_figure(filename: str):
     service = get_service()
     return _send_result(filename, service.validate_figure_filename, service.figure_dir)
+
+
+@dashboard.post("/figures/download-filtered.pdf")
+def download_filtered_figures():
+    service = get_service()
+    mode = request.form.get("mode")
+    if mode == "fixed":
+        directory, validator = service.figure_dir, service.validate_figure_filename
+    elif mode == "adversarial":
+        directory, validator = service.adversarial_figure_dir, service.validate_adversarial_figure_filename
+    else:
+        return jsonify(error="Unknown experiment mode."), 400
+    filenames = request.form.getlist("filenames")
+    if not filenames:
+        return jsonify(error="No figures match the current filters."), 400
+
+    paths = []
+    try:
+        for filename in filenames:
+            path = (directory / validator(filename)).resolve()
+            if path.parent != directory.resolve():
+                raise ValueError("Figure is outside the result directory")
+            paths.append(path)
+    except (FileNotFoundError, ValueError):
+        return jsonify(error="A selected figure is no longer available. Refresh the page and try again."), 404
+    try:
+        output = merged_figure_pdf(paths)
+    except (OSError, ValueError, PyPdfError):
+        return jsonify(error="Could not read a selected figure. Rebuild the figures and try again."), 422
+
+    response = send_file(
+        output,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name="filtered-regret-figures.pdf",
+        max_age=0,
+    )
+    response.cache_control.no_store = True
+    return response
 
 
 @dashboard.get("/games/<game_name>/equilibria/<equilibrium>.<figure_format>")

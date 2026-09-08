@@ -15,6 +15,7 @@ dependencies = [
     # games_learning's pinned editable checkout is installed by the Makefile
     # because its wheel omits the game and utils subpackages used here.
     "PuLP==2.9.0",
+    "pypdf==6.18.0",
     "scipy==1.15.3",
 ]
 

@@ -22,8 +22,9 @@ def create_app(
         RAW_DIR=RAW_DIR,
         FIGURE_DIR=FIGURE_DIR,
         CUSTOM_GAME_DIR=CUSTOM_GAME_DIR,
-        MAX_HORIZON=100_000,
+        MAX_HORIZON=1_000_000,
         MAX_REPLICATES=100,
+        REPLICATE_WORKERS=None,
         EXPERIMENTAL_TRAJECTORIES_ENABLED=experimental_trajectories_enabled,
     )
 
@@ -36,6 +37,7 @@ def create_app(
             raw_dir=Path(app.config["RAW_DIR"]),
             figure_dir=Path(app.config["FIGURE_DIR"]),
             custom_game_dir=Path(app.config["CUSTOM_GAME_DIR"]),
+            replicate_workers=app.config["REPLICATE_WORKERS"],
         )
 
     app.extensions["dashboard_service"] = service

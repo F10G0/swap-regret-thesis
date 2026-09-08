@@ -2,6 +2,10 @@
 
 Utilities for regret, empirical play, and equilibrium convergence.
 
+`RegretBundles(n_actions, regret_evaluation=...)` allocates only the selected expected/realized trackers (`both` by default). Runners update those trackers every round and extract summaries only at recording checkpoints; the regret definitions are unchanged.
+
+Regret updates trust learner strategies and environment payoff vectors; they perform only the replacement-gain arithmetic. Empirical counting likewise trusts project-generated or loader-validated action profiles, retaining one-time action-shape and checkpoint configuration checks.
+
 ## Regret
 
 For cumulative replacement gains `G[i, j]`:

@@ -11,7 +11,7 @@ import numpy as np
 
 from metrics.confidence import mean_confidence_interval_half_width
 from metrics.empirical_distribution import EmpiricalDistributionTrajectory
-from metrics.equilibrium_distance import equilibrium_l1_distance
+from metrics.equilibrium_distance import _PreparedDistanceLP
 
 
 @dataclass(frozen=True)
@@ -35,19 +35,16 @@ def equilibrium_distance_trajectory(
     payoff_tensor,
     empirical: EmpiricalDistributionTrajectory,
 ) -> EquilibriumDistanceTrajectory:
+    ce = _PreparedDistanceLP(payoff_tensor, "ce")
+    cce = _PreparedDistanceLP(payoff_tensor, "cce")
+    if empirical.action_shape != ce.action_shape:
+        raise ValueError("empirical action shape must match the payoff tensor")
     ce_distances = []
     cce_distances = []
-    for distribution in empirical.distributions:
-        ce_distances.append(
-            equilibrium_l1_distance(
-                payoff_tensor, distribution, "ce"
-            ).distance
-        )
-        cce_distances.append(
-            equilibrium_l1_distance(
-                payoff_tensor, distribution, "cce"
-            ).distance
-        )
+    for vector in empirical.vectors:
+        # Figures need only the objective, not a reshaped nearest equilibrium.
+        ce_distances.append(float(ce.solve(vector).fun))
+        cce_distances.append(float(cce.solve(vector).fun))
     return EquilibriumDistanceTrajectory(
         empirical.horizons,
         np.asarray(ce_distances),

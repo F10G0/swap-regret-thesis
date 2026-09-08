@@ -77,11 +77,7 @@ class LazyRandomWalkEnvironment:
         return state + 1
 
     def step(self) -> None:
-        if self._round + 1 >= self.horizon:
-            raise RuntimeError("random-walk horizon is exhausted")
         self._round += 1
 
     def feedback(self) -> np.ndarray:
-        if self._round < 0:
-            raise RuntimeError("call step before requesting feedback")
         return self.reward_states[self._round] * RANDOM_WALK_STEP

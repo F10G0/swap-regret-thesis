@@ -1,5 +1,4 @@
 from collections.abc import Iterable
-from itertools import chain
 from pathlib import Path
 
 import matplotlib
@@ -13,6 +12,7 @@ from config import CUSTOM_GAME_DIR
 from experiments.game_catalog import load_game_payoffs
 from experiments.plots import HEATMAP_COLORMAP, save_figure_pair
 from experiments.results import iter_result_rows
+from experiments.result_trajectories import load_result_action_profiles
 
 
 def joint_action_distribution(input_path: str | Path, custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> tuple[str, np.ndarray]:
@@ -26,24 +26,9 @@ def joint_action_distribution(input_path: str | Path, custom_game_dir: str | Pat
     action_counts = load_game_payoffs(game_name, custom_game_dir).shape[1:]
     if len(action_counts) != 2:
         raise ValueError("joint-action heatmaps require exactly two players")
-    n_players = len(action_counts)
+    profiles = load_result_action_profiles(input_path, action_counts)
     counts = np.zeros(action_counts, dtype=int)
-    current_time = None
-    actions = {}
-
-    for row in chain((first_row,), rows):
-        time = int(row["t"])
-        if current_time is not None and time != current_time:
-            if len(actions) != n_players:
-                raise ValueError(f"round {current_time} has incomplete actions")
-            counts[actions[0], actions[1]] += 1
-            actions = {}
-        current_time = time
-        actions[int(row["player"])] = int(row["action"])
-
-    if len(actions) != n_players:
-        raise ValueError(f"round {current_time} has incomplete actions")
-    counts[actions[0], actions[1]] += 1
+    np.add.at(counts, tuple(profiles.T), 1)
     return game_name, counts / np.sum(counts)
 
 

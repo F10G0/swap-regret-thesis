@@ -348,12 +348,15 @@ def test_result_snapshot_reuses_unchanged_file_summary(tmp_path: Path, monkeypat
         ("bandit", ("auer_exp3", "exp3_ix")),
     ],
 )
+@pytest.mark.parametrize("workers", [1, 2])
 def test_submission_runs_requested_replicates(
     tmp_path: Path,
     feedback_mode: str,
     algorithms: tuple[str, str],
+    workers: int,
 ) -> None:
     service = create_service(tmp_path)
+    service.replicate_workers = workers
     form = ExperimentForm(
         "rps",
         feedback_mode,
@@ -452,6 +455,44 @@ def test_failed_plot_update_preserves_existing_figures(tmp_path: Path) -> None:
 
     assert wait_for_job(service, job.id) == "failed"
     assert existing_figure.read_bytes() == b"existing"
+
+
+def test_adversarial_job_rebuilds_only_its_own_scope(tmp_path, monkeypatch):
+    from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT
+    from web.validation import AdversarialExperimentForm
+
+    service = create_service(tmp_path)
+    scopes = []
+    monkeypatch.setattr(service, "_publish_adversarial_plots", scopes.append)
+    form = AdversarialExperimentForm(RANDOM_WALK_ENVIRONMENT, "centered", "bandit", "auer_exp3",
+                                    7, 3, 11, 7, 2, "both")
+    job = service.submit_adversarial_experiment(form)
+    assert wait_for_job(service, job.id) == "succeeded"
+    assert scopes == [(RANDOM_WALK_ENVIRONMENT, "bandit", 7)]
+
+
+def test_scoped_adversarial_publication_keeps_unrelated_figures(tmp_path, monkeypatch):
+    from experiments.plots import plot_adversarial as plots
+    from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT
+
+    service = create_service(tmp_path)
+    scope = (RANDOM_WALK_ENVIRONMENT, "bandit", 7)
+    prefix = plots.adversarial_figure_prefix(scope)
+    service.adversarial_figure_dir.mkdir(parents=True)
+    unrelated = service.adversarial_figure_dir / "adversarial_unrelated.png"
+    unrelated.write_bytes(b"keep")
+    stale = service.adversarial_figure_dir / f"{prefix}stale.pdf"
+    stale.write_bytes(b"old")
+
+    def plot(raw_dir, output_dir, skip_invalid, **kwargs):
+        assert kwargs["scope"] == scope
+        (output_dir / f"{prefix}new.png").write_bytes(b"new")
+
+    monkeypatch.setattr(plots, "plot_adversarial_results", plot)
+    service._publish_adversarial_plots(scope)
+    assert unrelated.read_bytes() == b"keep"
+    assert not stale.exists()
+    assert (service.adversarial_figure_dir / f"{prefix}new.png").read_bytes() == b"new"
 
 
 @pytest.mark.parametrize("result_kind", ["adversarial", "adversarial_scaling"])

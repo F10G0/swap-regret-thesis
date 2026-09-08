@@ -2,6 +2,8 @@
 
 Regret-minimizing learners used by the experiment runners. Every learner exposes `strategy()`, `sample_action()`, `update(feedback)`, and `reset()`. Full-information learners receive a reward vector; bandit learners receive only the selected reward. Experiment runners create one deterministically seeded learner per player.
 
+The computation core trusts the validated experiment and environment. `update()` does not revalidate feedback or probabilities each round. `strategy()` returns the current array, which callers must not mutate; updates replace it. Configuration is checked at construction, and tests verify valid-run feedback, normalization, and finite state. The stationary solver trusts its stochastic input but retains numerical postconditions, clipping/normalization, residual verification, and direct-solve/pseudoinverse fallback.
+
 ## Horizon contracts
 
 The experiment runner always stops at a preset positive horizon `T`. The common `Algorithm` and `StationaryReduction` bases have no horizon parameter, and `ExponentialWeightsAlgorithm` leaves the rate entirely to its subclasses.
@@ -27,6 +29,8 @@ Zero is rejected by horizon-taking learners. Fixed rates never switch automatica
 | `TsallisINF` | Standard importance-weighted bandit losses and the `1/2`-Tsallis FTRL/OMD distribution | [Zimmert and Seldin (2019)](https://proceedings.mlr.press/v89/zimmert19a/zimmert19a.pdf): `eta_t=1/sqrt(t)` with local update time; `w_i=1/(eta_t^2 (L_hat_i+lambda)^2)` and `lambda` normalizes `w` | Anytime adversarial pseudo-regret at most `4 sqrt(KT)+1`; canonical inner learner for Bandit Ito |
 
 `Exp3IX`, `AuerExp3`, and `TsallisINF` have distinct exploration mechanisms, estimators, schedules, and associated proofs. For all anytime learners, after local update `t` the newly computed strategy uses the round-`t+1` parameter.
+
+Fixed-horizon Hedge, AuerExp3, and Exp3IX cache their constant parameters at construction. TsallisINF solves the same KKT equation in scaled coordinates: `a = eta * (L - min(L))`, `sum((a + z)^(-2)) = 1`, with `z` bracketed by `1` and `sqrt(K)`. Safeguarded Newton steps use bisection when a step leaves the bracket, stopping at a `1e-14` residual or relative bracket width before the existing final normalization. A 64-step safety ceiling allows endpoint cases to converge by bisection; ordinary solves terminate much earlier. The loss estimator and local-time schedule are unchanged.
 
 The bandit experiment registry exposes `auer_exp3`, `exp3_ix`, `bm`, `ito`, and `lce_ix`. `auer_exp3` is the selectable AuerExp3 external baseline in both web experiment modes and uses the same fixed Blum–Mansour tuning as the BM inner learner. There is no generic `Exp3` learner or `exp3` run option: BM uses `AuerExp3`, Ito uses `TsallisINF`, and LCE-IX uses its dedicated IX learner. Existing results named `exp3` remain readable and keep their historical labels; they are never reinterpreted as another learner. `ImplicitExplorationAlgorithm` shares only the IX estimator, not a horizon convention or learning-rate schedule.
 

@@ -9,6 +9,7 @@ import tempfile
 import numpy as np
 
 from experiments.recorder import CsvRecorder, require_csv_columns
+from experiments.parallel import run_replicates
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_sources, resolve_regret_evaluation
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
@@ -162,6 +163,7 @@ def run_adversarial_scaling_experiment(
     output_dir: str | Path,
     should_cancel: Callable[[], bool] | None = None,
     completed: Callable[[], None] | None = None,
+    workers: int | None = None,
 ) -> Path:
     output_dir = Path(output_dir)
     output_path = output_dir / f"{spec.run_id}.csv"
@@ -175,52 +177,45 @@ def run_adversarial_scaling_experiment(
         prefix=".action-scaling-",
         dir=output_dir,
     ) as temporary_directory:
+        tasks = [
+            dict(
+                environment=spec.environment,
+                initialization_mode=spec.initialization_mode,
+                environment_seed=spec.environment_seed,
+                feedback_mode=spec.feedback_mode,
+                algorithm_name=spec.algorithm_name,
+                n_actions=n_actions,
+                horizon=spec.horizon,
+                seed=spec.learner_seed,
+                replicate=replicate,
+                regret_evaluation=spec.regret_evaluation,
+                implementation_version=spec.implementation_version,
+                runtime_environment=spec.runtime_environment,
+                output_dir=temporary_directory,
+                max_recorded_points=2,  # Scaling consumes only the final summaries.
+            )
+            for n_actions in spec.action_counts
+            for replicate in range(spec.replicates)
+        ]
+        paths = run_replicates(
+            run_adversarial_experiment, tasks, workers=workers,
+            should_cancel=should_cancel, completed=completed,
+        )
         with CsvRecorder(ACTION_SCALING_FIELDNAMES, output_path) as recorder:
-            for n_actions in spec.action_counts:
-                for replicate in range(spec.replicates):
-                    if should_cancel is not None and should_cancel():
-                        raise ExperimentCancelled("experiment cancelled")
-                    result_path = run_adversarial_experiment(
-                        environment=spec.environment,
-                        initialization_mode=spec.initialization_mode,
-                        environment_seed=spec.environment_seed,
-                        feedback_mode=spec.feedback_mode,
-                        algorithm_name=spec.algorithm_name,
-                        n_actions=n_actions,
-                        horizon=spec.horizon,
-                        seed=spec.learner_seed,
-                        replicate=replicate,
-                        regret_evaluation=spec.regret_evaluation,
-                        implementation_version=spec.implementation_version,
-                        runtime_environment=spec.runtime_environment,
-                        output_dir=temporary_directory,
-                        should_cancel=should_cancel,
-                    )
-                    final = load_final_adversarial_row(result_path)
-                    recorder.record(
-                        {
-                            **metadata,
-                            "n_actions": n_actions,
-                            "replicate": replicate,
-                            "environment_seed": (
-                                final["environment_seed"]
-                                if final["environment_seed"]
-                                else ""
-                            ),
-                            "learner_seed": final["learner_seed"],
-                            "target_regret": target_regret,
-                            "expected_regret": final.get(
-                                f"expected_{target_regret}_regret",
-                                "",
-                            ),
-                            "realized_regret": final.get(
-                                f"realized_{target_regret}_regret",
-                                "",
-                            ),
-                        }
-                    )
-                    if completed is not None:
-                        completed()
+            for task, result_path in zip(tasks, paths):
+                if should_cancel is not None and should_cancel():
+                    raise ExperimentCancelled("experiment cancelled")
+                final = load_final_adversarial_row(result_path)
+                recorder.record({
+                    **metadata,
+                    "n_actions": task["n_actions"],
+                    "replicate": task["replicate"],
+                    "environment_seed": final["environment_seed"],
+                    "learner_seed": final["learner_seed"],
+                    "target_regret": target_regret,
+                    "expected_regret": final.get(f"expected_{target_regret}_regret", ""),
+                    "realized_regret": final.get(f"realized_{target_regret}_regret", ""),
+                })
     return output_path
 
 

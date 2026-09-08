@@ -1,7 +1,10 @@
 import csv
 from collections import defaultdict
+import json
 import logging
+import os
 from pathlib import Path
+import tempfile
 
 import matplotlib
 
@@ -15,6 +18,7 @@ from experiments.algorithm_labels import algorithm_label
 from experiments.plots import confidence_free_figure_path, remove_stale_figure_pairs, save_figure_pair
 from experiments.result_schema import regret_sources
 from experiments.scenarios.adversarial import (
+    ADVERSARIAL_BASE_FIELDNAMES,
     ENVIRONMENT_LABELS,
     FEEDBACK_MODE_LABELS,
     TARGET_REGRET_BY_ALGORITHM,
@@ -25,6 +29,7 @@ from metrics.confidence import mean_confidence_interval_half_width
 
 logger = logging.getLogger(__name__)
 MAX_PLOT_POINTS = 2_000
+PLOT_ROW_CACHE_VERSION = 1
 ALGORITHM_COLORS = {
     "hedge": "#0072B2",
     "exp3": "#56B4E9",  # Retained for historical results only.
@@ -76,9 +81,11 @@ def aggregate_adversarial_regret(
     column: str,
     scale_by_sqrt_time: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    times = np.asarray([int(row["t"]) for row in trajectories[0]])
+    rows_by_time = [{int(row["t"]): row for row in trajectory} for trajectory in trajectories]
+    # Use exactly observed, shared timestamps when recording budgets differ.
+    times = np.asarray(sorted(set.intersection(*(set(rows) for rows in rows_by_time))), dtype=int)
     values = np.asarray(
-        [[float(row[column]) for row in trajectory] for trajectory in trajectories]
+        [[float(rows[time][column]) for time in times] for rows in rows_by_time]
     )
     if scale_by_sqrt_time:
         values = values / np.sqrt(times)
@@ -89,15 +96,80 @@ def aggregate_adversarial_regret(
     )
 
 
+def _source_identity(path: Path) -> dict:
+    stat = path.stat()
+    return {
+        "version": PLOT_ROW_CACHE_VERSION,
+        "source": str(path.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "ctime_ns": stat.st_ctime_ns,
+        "max_points": MAX_PLOT_POINTS,
+    }
+
+
+def _load_plot_rows(path: Path, cache_dir: Path) -> list[dict[str, str]]:
+    identity = _source_identity(path)
+    cache_path = cache_dir / f"{path.stem}.json"
+    try:
+        with cache_path.open(encoding="utf-8") as file:
+            cached = json.load(file)
+        if isinstance(cached, dict) and cached.get("identity") == identity:
+            rows = cached.get("rows")
+            if isinstance(rows, list) and rows and all(
+                isinstance(row, dict) and set(ADVERSARIAL_BASE_FIELDNAMES) <= row.keys()
+                for row in rows
+            ):
+                return rows
+    except (OSError, ValueError, TypeError):
+        pass
+
+    rows = load_adversarial_rows(path, max_points=MAX_PLOT_POINTS)
+    if _source_identity(path) != identity:
+        raise ValueError(f"{path} changed while its trajectory was being loaded")
+    temporary_path = None
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_dir, delete=False) as file:
+            temporary_path = Path(file.name)
+            json.dump({"identity": identity, "rows": rows}, file, separators=(",", ":"))
+        os.replace(temporary_path, cache_path)
+    except OSError as error:
+        logger.warning("Could not cache adversarial plot rows for %s: %s", path, error)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return rows
+
+
+def adversarial_figure_prefix(scope: tuple[str, str, int]) -> str:
+    environment, feedback_mode, n_actions = scope
+    return f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_"
+
+
 def collect_adversarial_results(
     input_dir: str | Path,
     skip_invalid: bool = False,
+    *,
+    scope: tuple[str, str, int] | None = None,
+    cache_dir: str | Path | None = None,
 ) -> list[tuple[Path, list[dict[str, str]]]]:
+    input_dir = Path(input_dir)
+    cache_dir = Path(cache_dir) if cache_dir is not None else input_dir.parent / "cache" / "plot_rows"
     results = []
-    for path in sorted(Path(input_dir).glob("*.csv")):
+    for path in sorted(input_dir.glob("*.csv")):
         try:
-            rows = load_adversarial_rows(path, max_points=MAX_PLOT_POINTS)
-        except (OSError, TypeError, ValueError, csv.Error) as error:
+            if scope is not None:
+                # Inspect only one row of unrelated files, never their trajectories.
+                # Do not infer scope from names: legacy/renamed CSVs remain supported.
+                with path.open(encoding="utf-8", newline="") as file:
+                    first = next(csv.DictReader(file), None)
+                if first is None:
+                    raise ValueError(f"{path} is empty")
+                if (first["environment"], first["feedback_mode"], int(first["n_actions"])) != scope:
+                    continue
+            rows = _load_plot_rows(path, cache_dir)
+        except (OSError, KeyError, TypeError, ValueError, csv.Error) as error:
             if not skip_invalid:
                 raise
             logger.warning("Skipping invalid adversarial result %s: %s", path, error)
@@ -193,8 +265,10 @@ def plot_adversarial_results(
     input_dir: str | Path = ADVERSARIAL_RAW_DIR,
     output_dir: str | Path = ADVERSARIAL_FIGURE_DIR,
     skip_invalid: bool = False,
+    *,
+    scope: tuple[str, str, int] | None = None,
 ) -> list[Path]:
-    results = collect_adversarial_results(input_dir, skip_invalid=skip_invalid)
+    results = collect_adversarial_results(input_dir, skip_invalid=skip_invalid, scope=scope)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     generated = []
@@ -248,7 +322,8 @@ def plot_adversarial_results(
         for path in generated
         if confidence_free_figure_path(path).is_file()
     ]
-    remove_stale_figure_pairs(output_dir, generated_paths)
+    remove_stale_figure_pairs(output_dir, generated_paths,
+                             filename_prefix=adversarial_figure_prefix(scope) if scope is not None else None)
     return generated
 
 

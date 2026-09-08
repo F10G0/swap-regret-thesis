@@ -26,7 +26,7 @@ def confidence_free_figure_path(output_path: str | Path) -> Path:
     return path.with_name(f"{path.stem}{CONFIDENCE_FREE_SUFFIX}{path.suffix}")
 
 
-def remove_stale_figure_pairs(output_dir: str | Path, generated_paths) -> None:
+def remove_stale_figure_pairs(output_dir: str | Path, generated_paths, filename_prefix: str | None = None) -> None:
     output_dir = Path(output_dir)
     generated_names = {
         Path(path).with_suffix(suffix).name
@@ -35,7 +35,7 @@ def remove_stale_figure_pairs(output_dir: str | Path, generated_paths) -> None:
     }
     for suffix in FIGURE_SUFFIXES:
         for path in output_dir.glob(f"*{suffix}"):
-            if path.name not in generated_names:
+            if path.name not in generated_names and (filename_prefix is None or path.name.startswith(filename_prefix)):
                 path.unlink()
 
 

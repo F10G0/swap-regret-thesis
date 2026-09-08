@@ -30,6 +30,8 @@ The sidebar configures the next run. The global result filters control saved fig
 
 PNG previews have matching vector PDFs. Regret plots update after a run; a manual rebuild uses the same background queue and refreshes the page when finished. Detail figures are generated lazily and cached. Custom-game equilibrium heatmaps stay with the game; built-in heatmaps can be rebuilt with `make precompute-equilibria`.
 
+In **Visual analysis**, **Download merged PDF** combines the currently filtered regret figures in their displayed order, honoring each figure's confidence-interval toggle. Existing PDF pages are preserved; older PNG-only figures are converted to PDF pages. Exporting does not rerun experiments or rebuild plots.
+
 | Location | Contents |
 |---|---|
 | `results/raw/` | Fixed-game CSVs |

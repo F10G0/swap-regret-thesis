@@ -23,22 +23,32 @@ class TsallisINF(Algorithm):
         if self.n_actions == 1:
             return np.ones(1, dtype=float)
 
-        # The KKT conditions for the 1/2-Tsallis regularizer give
-        #   w_i = 1 / (eta^2 (L_i + lambda)^2).
-        # Shift cumulative losses for translation invariance, then find the
-        # unique positive normalizer that makes the probabilities sum to one.
-        shifted_loss = self.cumulative_loss - np.min(self.cumulative_loss)
-        eta = self.learning_rate
-        lower = 0.0
-        upper = np.sqrt(self.n_actions) / eta
+        # Scaled KKT equation: sum_i (a_i + z)^(-2) = 1,
+        # a = eta * (L - min(L)). Its decreasing root lies in [1, sqrt(K)].
+        a = self.learning_rate * (self.cumulative_loss - np.min(self.cumulative_loss))
+        lower, upper = 1.0, np.sqrt(self.n_actions)
+        z = (lower + upper) / 2.0
+        inv = np.empty_like(a)
+        probabilities = np.empty_like(a)
 
-        for _ in range(100):
-            normalizer = (lower + upper) / 2.0
-            probabilities = 1.0 / np.square(eta * (shifted_loss + normalizer))
-            if np.sum(probabilities) > 1.0:
-                lower = normalizer
+        # Newton normally converges in a handful of steps. The larger safety
+        # ceiling also permits full-precision bisection near an endpoint root.
+        tolerance = 1e-14
+        for _ in range(64):
+            np.add(a, z, out=inv)
+            np.reciprocal(inv, out=inv)
+            np.square(inv, out=probabilities)
+            residual = np.sum(probabilities) - 1.0
+            if abs(residual) <= tolerance or upper - lower <= tolerance * z:
+                break
+            if residual > 0.0:
+                lower = z
             else:
-                upper = normalizer
+                upper = z
+            derivative = -2.0 * np.dot(probabilities, inv)
+            newton = z - residual / derivative
+            z = newton if np.isfinite(newton) and lower < newton < upper else (lower + upper) / 2.0
+        else:
+            raise FloatingPointError("Tsallis-INF normalizer did not converge")
 
-        probabilities = 1.0 / np.square(eta * (shifted_loss + upper))
         return probabilities / np.sum(probabilities)

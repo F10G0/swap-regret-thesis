@@ -18,13 +18,14 @@ from experiments.algorithm_labels import algorithm_profile_label
 from experiments.plots import FIGURE_SUFFIXES, confidence_free_figure_path, save_figure_pair
 from experiments.results import average_regret_column, iter_result_rows, regret_column
 from experiments.result_schema import REGRET_NAMES
+from experiments.sampling import CheckpointRows
 from metrics.confidence import mean_confidence_interval_half_width
 
 
 logger = logging.getLogger(__name__)
 
 MAX_PLOT_POINTS_PER_PLAYER = 2000
-PLOT_ROW_CACHE_VERSION = 1
+PLOT_ROW_CACHE_VERSION = 3
 
 REGRET_TYPES = {
     "expected": "Expected",
@@ -102,13 +103,12 @@ def load_rows(
         if rows is not None:
             return rows
 
-    sampled_rows = []
+    sampler = None
     for row in iter_result_rows(input_path):
-        horizon = int(row["horizon"])
-        time = int(row["t"])
-        stride = max(1, (horizon + max_points_per_player - 1) // max_points_per_player)
-        if time == 1 or time == horizon or time % stride == 0:
-            sampled_rows.append(row)
+        if sampler is None:
+            sampler = CheckpointRows(int(row["horizon"]), max_points_per_player)
+        sampler.add({key: value for key, value in row.items() if key != "action_history"})
+    sampled_rows = sampler.rows() if sampler is not None else []
 
     current_stat = input_path.stat()
     source_unchanged = current_stat.st_mtime_ns == source_stat.st_mtime_ns and current_stat.st_size == source_stat.st_size
@@ -180,7 +180,8 @@ def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column
                 value /= np.sqrt(time)
             values_by_time[time].append(value)
 
-    times = np.array(sorted(values_by_time), dtype=int)
+    # Never interpolate regret or average over a changing subset of replicates.
+    times = np.array(sorted(time for time, values in values_by_time.items() if len(values) == len(replicate_runs)), dtype=int)
     means = np.empty(len(times), dtype=float)
     confidence = np.zeros(len(times), dtype=float)
 

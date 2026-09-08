@@ -32,9 +32,6 @@ class BaseReplacementRegretBundle:
         return float(np.sum(best_replacement_gains))
 
     def summary(self, time: int) -> dict[str, float]:
-        if time <= 0:
-            raise ValueError("time must be positive")
-
         regret_type = self.regret_type
         external_regret = self.external_regret
         internal_regret = self.internal_regret
@@ -49,22 +46,6 @@ class BaseReplacementRegretBundle:
             f"average_{regret_type}_swap_regret": swap_regret / time,
         }
 
-    def _validate_strategy(self, strategy: np.ndarray) -> None:
-        if strategy.shape != (self.n_actions,):
-            raise ValueError(f"strategy must have shape ({self.n_actions},)")
-        if not np.all(np.isfinite(strategy)):
-            raise ValueError("strategy must contain only finite probabilities")
-        if np.any(strategy < 0.0):
-            raise ValueError("strategy must not contain negative probabilities")
-        if not np.isclose(np.sum(strategy), 1.0):
-            raise ValueError("strategy must sum to 1")
-
-    def _validate_payoff_vector(self, payoff_vector: np.ndarray) -> None:
-        if payoff_vector.shape != (self.n_actions,):
-            raise ValueError(f"payoff_vector must have shape ({self.n_actions},)")
-        if not np.all(np.isfinite(payoff_vector)):
-            raise ValueError("payoff_vector must contain only finite values")
-
 
 class ExpectedRegretBundle(BaseReplacementRegretBundle):
     """Expected-regret tracker with G[i, j] = sum_t p_t[i](r_t[j] - r_t[i])."""
@@ -73,9 +54,6 @@ class ExpectedRegretBundle(BaseReplacementRegretBundle):
         super().__init__(n_actions, regret_type="expected")
 
     def update(self, strategy: np.ndarray, payoff_vector: np.ndarray) -> None:
-        self._validate_strategy(strategy)
-        self._validate_payoff_vector(payoff_vector)
-
         replacement_gains = payoff_vector[None, :] - payoff_vector[:, None]
         weighted_replacement_gains = strategy[:, None] * replacement_gains
         self.cumulative_replacement_gains += weighted_replacement_gains
@@ -88,19 +66,21 @@ class RealizedRegretBundle(BaseReplacementRegretBundle):
         super().__init__(n_actions, regret_type="realized")
 
     def update(self, action: int, payoff_vector: np.ndarray) -> None:
-        self._validate_payoff_vector(payoff_vector)
-
         replacement_gains = payoff_vector - payoff_vector[action]
         self.cumulative_replacement_gains[action] += replacement_gains
 
 
 class RegretBundles:
-    """Expected and realized regret trackers for one player."""
+    """Only the selected regret trackers for one player (both by default)."""
 
-    def __init__(self, n_actions: int):
-        self.expected = ExpectedRegretBundle(n_actions)
-        self.realized = RealizedRegretBundle(n_actions)
+    def __init__(self, n_actions: int, regret_evaluation: str = "both"):
+        if regret_evaluation not in {"expected", "realized", "both"}:
+            raise ValueError(f"unknown regret evaluation: {regret_evaluation}")
+        self.expected = ExpectedRegretBundle(n_actions) if regret_evaluation != "realized" else None
+        self.realized = RealizedRegretBundle(n_actions) if regret_evaluation != "expected" else None
 
     def update(self, strategy: np.ndarray, action: int, payoff_vector: np.ndarray) -> None:
-        self.expected.update(strategy, payoff_vector)
-        self.realized.update(action, payoff_vector)
+        if self.expected is not None:
+            self.expected.update(strategy, payoff_vector)
+        if self.realized is not None:
+            self.realized.update(action, payoff_vector)

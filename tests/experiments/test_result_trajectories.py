@@ -54,7 +54,7 @@ def test_result_loader_keeps_three_player_profiles_and_final_rows(
     ] == [0, 1, 2]
 
 
-def test_streaming_result_loader_rejects_missing_round(tmp_path) -> None:
+def test_streaming_result_loader_accepts_checkpoint_gaps(tmp_path) -> None:
     output_path = run_full_information_cross_play_experiment(
         "rps",
         ["hedge", "hedge"],
@@ -70,8 +70,10 @@ def test_streaming_result_loader_rejects_missing_round(tmp_path) -> None:
         writer.writeheader()
         writer.writerows(rows)
 
-    with pytest.raises(ValueError, match="gap between rounds"):
-        list(iter_result_rows(output_path))
+    assert [int(row["t"]) for row in iter_result_rows(output_path)] == [1, 1, 3, 3]
+    # Sparse actions alone cannot stand in for the complete joint-action history.
+    with pytest.raises(ValueError, match="contiguous"):
+        load_result_action_profiles(output_path, (3, 3))
 
 
 def test_joint_action_distributions_are_averaged_across_replicates(

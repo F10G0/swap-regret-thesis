@@ -384,6 +384,10 @@ function applyFilters() {
     if (element("figure-empty")) {
         element("figure-empty").hidden = visible > 0;
     }
+    const downloadButton = element("download-filtered-figures");
+    if (downloadButton) {
+        downloadButton.disabled = visible === 0 || downloadButton.dataset.exporting === "true";
+    }
     document.querySelectorAll("[data-result-card]").forEach((card) => {
         card.hidden = !matchesFilters(card, "[data-result-filter]", "resultFilter");
     });
@@ -392,6 +396,50 @@ function applyFilters() {
     });
     updateSummarySourceColumns();
     updateSummaryRows();
+}
+
+function visibleFigureDownloads() {
+    // DOM order is the displayed order; read the active link to honor CI toggles.
+    return [...document.querySelectorAll("#figure-grid .figure-card")]
+        .filter((card) => !card.hidden)
+        .map((card) => card.querySelector(".figure-actions a[download]").getAttribute("download"));
+}
+
+async function downloadFilteredFigures(event) {
+    event.preventDefault();
+    const button = element("download-filtered-figures");
+    if (button.dataset.exporting === "true") return;
+    const filenames = visibleFigureDownloads();
+    if (!filenames.length) return;
+    const form = event.currentTarget;
+    const status = element("figure-export-status");
+    const body = new URLSearchParams(new FormData(form));
+    filenames.forEach((filename) => body.append("filenames", filename));
+    button.dataset.exporting = "true";
+    button.disabled = true;
+    status.hidden = false;
+    status.textContent = `Preparing PDF with ${filenames.length} figure${filenames.length === 1 ? "" : "s"}…`;
+    try {
+        const response = await fetch(form.action, {method: "POST", body});
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || "Download failed. Refresh the page and try again.");
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "filtered-regret-figures.pdf";
+        document.body.append(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+        status.textContent = "Merged PDF downloaded.";
+    } catch (error) {
+        status.textContent = error.message;
+    } finally {
+        button.dataset.exporting = "false";
+        button.disabled = visibleFigureDownloads().length === 0;
+    }
 }
 
 function selectAvailableFigureSource(figures) {
@@ -662,6 +710,7 @@ document.querySelectorAll(".summary-row").forEach((row) => {
     });
 });
 listen("reuse-experiment", "click", reuseSelectedExperiment);
+listen("download-filtered-figures-form", "submit", downloadFilteredFigures);
 restoreFormState();
 if (element("feedback-mode")) {
     element("feedback-mode").dataset.previousValue = element("feedback-mode").value;

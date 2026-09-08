@@ -15,16 +15,18 @@ class AuerExp3(ExponentialWeightsAlgorithm):
     def __init__(self, n_actions: int, horizon: int, seed: int | None = None) -> None:
         self.horizon = _validate_horizon(horizon)
         super().__init__(n_actions, seed=seed)
+        self._explicit_exploration = min(1.0, np.sqrt(self.n_actions * np.log(self.n_actions) / self.horizon))
+        self._learning_rate = self._explicit_exploration / self.n_actions
 
     @property
     def explicit_exploration(self) -> float:
         """Return gamma = min(1, sqrt(K log(K) / T))."""
-        return min(1.0, np.sqrt(self.n_actions * np.log(self.n_actions) / self.horizon))
+        return self._explicit_exploration
 
     @property
     def learning_rate(self) -> float:
         """Return eta = gamma / K."""
-        return self.explicit_exploration / self.n_actions
+        return self._learning_rate
 
     def _compute_strategy(self) -> np.ndarray:
         strategy = super()._compute_strategy()
@@ -57,8 +59,9 @@ class Exp3IX(ImplicitExplorationAlgorithm):
     def __init__(self, n_actions: int, horizon: int, seed: int | None = None) -> None:
         self.horizon = _validate_horizon(horizon)
         super().__init__(n_actions, seed=seed)
+        self._learning_rate = np.sqrt(2.0 * np.log(self.n_actions) / (self.n_actions * self.horizon))
 
     @property
     def learning_rate(self) -> float:
         """Return eta = sqrt(2 log(K) / (K T))."""
-        return np.sqrt(2.0 * np.log(self.n_actions) / (self.n_actions * self.horizon))
+        return self._learning_rate

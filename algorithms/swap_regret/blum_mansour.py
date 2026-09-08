@@ -32,11 +32,10 @@ class BanditBM(StationaryReduction):
         super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, horizon=horizon), seed=seed)
 
     def _update_state(self, reward: float) -> None:
-        transition_matrix = self._transition_matrix
         probability = self.current_strategy[self.current_action]
 
         for i, learner in enumerate(self.learners):
-            observed_gain = (self.current_strategy[i] * transition_matrix[i, self.current_action] * reward / probability)
+            observed_gain = (self.current_strategy[i] * learner.current_strategy[self.current_action] * reward / probability)
             learner.current_action = self.current_action
             learner.update(observed_gain)
 
@@ -57,10 +56,9 @@ class LCEIX(StationaryReduction):
         super().__init__(n_actions, partial(LCEIXInner, n_actions), seed=seed)
 
     def _update_state(self, reward: float) -> None:
-        transition_matrix = self._transition_matrix
         probability = self.current_strategy[self.current_action]
 
         for i, learner in enumerate(self.learners):
-            observed_loss = (self.current_strategy[i] * (1.0 - reward) * transition_matrix[i, self.current_action] / probability)
+            observed_loss = (self.current_strategy[i] * (1.0 - reward) * learner.current_strategy[self.current_action] / probability)
             learner.current_action = self.current_action
             learner.update(1.0 - observed_loss)

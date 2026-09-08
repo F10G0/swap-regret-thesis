@@ -27,16 +27,6 @@ def test_implicit_exploration_algorithms_allow_one_action(factory) -> None:
     assert np.array_equal(learner.strategy(), [1.0])
 
 
-@pytest.mark.parametrize("reward", [np.nan, np.inf, -np.inf])
-@pytest.mark.parametrize("learner_type", [AuerExp3, Exp3IX])
-def test_bandit_exponential_weights_reject_non_finite_rewards(learner_type, reward: float) -> None:
-    learner = learner_type(2, horizon=10, seed=0)
-    learner.sample_action()
-
-    with pytest.raises(ValueError, match="finite"):
-        learner.update(reward)
-
-
 def test_exp3_ix_uses_implicit_exploration_loss_estimate() -> None:
     learner = Exp3IX(2, horizon=10, seed=0)
     action = learner.sample_action()
@@ -82,13 +72,6 @@ def test_auer_exp3_mixes_weights_with_explicit_uniform_exploration() -> None:
 
     assert np.allclose(strategy, expected)
     assert np.all(strategy >= gamma / 3.0)
-
-
-def test_hedge_rejects_non_finite_reward_vectors() -> None:
-    learner = Hedge(2, horizon=10, seed=0)
-
-    with pytest.raises(ValueError, match="finite"):
-        learner.update(np.array([np.nan, 0.5]))
 
 
 def test_hedge_updates_cumulative_score() -> None:

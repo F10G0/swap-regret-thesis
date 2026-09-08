@@ -9,6 +9,7 @@ from config import CUSTOM_GAME_DIR
 from environments.base import FixedGameEnvironment
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.recorder import CsvRecorder
+from experiments.recording import MAX_RECORDED_POINTS, recording_checkpoints
 from experiments.runner import run_game
 from experiments.result_schema import regret_fieldnames
 from experiments.spec import ExperimentSpec
@@ -51,7 +52,7 @@ def replicate_player_seeds(
 def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_names: list[str], horizon: int, seed: int, replicate: int,
                               environment_factory: Callable[[np.ndarray], FixedGameEnvironment], algorithm_registry: dict[str, AlgorithmFactory], output_dir: str | Path,
                               should_cancel: Callable[[], bool] | None = None, custom_game_dir: str | Path = CUSTOM_GAME_DIR,
-                              regret_evaluation: str = "feedback_aligned") -> Path:
+                              regret_evaluation: str = "feedback_aligned", max_recorded_points: int = MAX_RECORDED_POINTS) -> Path:
     for name in algorithm_names:
         if name not in algorithm_registry:
             raise ValueError(f"unknown algorithm: {name}")
@@ -79,10 +80,15 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
     if output_path.exists():
         raise FileExistsError(f"experiment {spec.run_id} already exists at {output_path}")
 
-    with CsvRecorder(regret_fieldnames(spec.regret_evaluation), output_path) as recorder:
+    checkpoints = recording_checkpoints(horizon, max_recorded_points)
+    fieldnames = regret_fieldnames(spec.regret_evaluation)
+    if len(checkpoints) < horizon:
+        fieldnames = fieldnames + ["action_history"]
+    with CsvRecorder(fieldnames, output_path) as recorder:
         run_game(
             game_name=spec.game_name, feedback_mode=spec.feedback_mode, algorithm_name=spec.algorithm_profile_name, game=game, players=players, recorder=recorder, horizon=spec.horizon,
             metadata=spec.metadata(), should_cancel=should_cancel, regret_evaluation=spec.regret_evaluation,
+            max_recorded_points=max_recorded_points,
         )
 
     return output_path

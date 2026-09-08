@@ -926,6 +926,14 @@ fieldset {
     margin-top: 7px;
 }
 
+.figure-export-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .figure-actions a,
 .confidence-toggle {
     font-size: 0.75rem;

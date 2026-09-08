@@ -19,15 +19,14 @@ class FixedGameEnvironment(ABC):
         return self.payoff_tensor.shape[1:]
 
     def step(self, actions: tuple[int, ...]) -> None:
-        self._validate_actions(actions)
         self.actions = actions
 
     # In bandit experiments, use only for evaluation—never as learner feedback.
     def deviation_payoffs(self, player: int) -> np.ndarray:
-        self._validate_player(player)
+        """Return a payoff view for read-only use by learners and evaluation."""
         indices = list(self.actions)
         indices[player] = slice(None)
-        return self.payoff_tensor[(player, *indices)].copy()
+        return self.payoff_tensor[(player, *indices)]
 
     @abstractmethod
     def feedback(self, player: int) -> float | np.ndarray:
@@ -49,14 +48,3 @@ class FixedGameEnvironment(ABC):
         if np.any((payoff_tensor < 0.0) | (payoff_tensor > 1.0)):
             raise ValueError("payoffs must contain values in [0, 1]")
         return payoff_tensor.copy()
-
-    def _validate_player(self, player: int) -> None:
-        if not 0 <= player < self.n_players:
-            raise IndexError("invalid player index")
-
-    def _validate_actions(self, actions: tuple[int, ...]) -> None:
-        if len(actions) != self.n_players:
-            raise ValueError("number of actions must match number of players")
-        for player, action in enumerate(actions):
-            if not 0 <= action < self.n_actions[player]:
-                raise IndexError(f"invalid action index {action} for player {player}")

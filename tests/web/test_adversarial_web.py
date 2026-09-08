@@ -451,10 +451,12 @@ def test_adversarial_page_records_only_selected_regret_source(tmp_path) -> None:
     assert summary["realized_regret"] is None
 
 
+@pytest.mark.parametrize("workers", [1, 2])
 def test_adversarial_page_queues_replicates_with_common_seed_schedule(
-    tmp_path,
+    tmp_path, workers,
 ) -> None:
     app, service = _app(tmp_path)
+    service.replicate_workers = workers
     client = app.test_client()
 
     response = client.post(

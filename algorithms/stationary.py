@@ -4,17 +4,8 @@ from config import NUMERICAL_TOLERANCE, STATIONARY_METHOD
 
 
 def stationary_distribution(transition_matrix: np.ndarray, method: str = STATIONARY_METHOD, max_iterations: int = 1000) -> np.ndarray:
-    if transition_matrix.ndim != 2:
-        raise ValueError("transition_matrix must be a 2D array")
-    dim, columns = transition_matrix.shape
-    if dim != columns:
-        raise ValueError("transition_matrix must be square")
-    if not np.all(np.isfinite(transition_matrix)):
-        raise ValueError("transition_matrix must contain only finite entries")
-    if np.any(transition_matrix < 0.0):
-        raise ValueError("transition_matrix must not contain negative entries")
-    if not np.allclose(np.sum(transition_matrix, axis=1), 1.0, atol=NUMERICAL_TOLERANCE, rtol=0.0):
-        raise ValueError("transition_matrix rows must sum to 1")
+    """Solve pQ = p for a trusted stochastic matrix, checking numerical success."""
+    dim = transition_matrix.shape[0]
 
     if method == "solve":
         return _stationary_distribution_solve(transition_matrix, dim)
@@ -27,13 +18,25 @@ def stationary_distribution(transition_matrix: np.ndarray, method: str = STATION
     raise ValueError(f"unknown stationary distribution method: {method}")
 
 
+def _stationary_equations(transition_matrix: np.ndarray) -> np.ndarray:
+    # For stochastic Q, Q[i, i] - 1 = -sum(Q[i, j] for j != i).
+    # Sum off-diagonal flows instead of subtracting nearly equal numbers.
+    A = np.array(transition_matrix.T, dtype=float, copy=True)
+    np.fill_diagonal(A, 0.0)
+    np.fill_diagonal(A, -np.sum(A, axis=0))
+
+    # Scale only the homogeneous stationary equations, leaving zero rows alone.
+    scales = np.max(np.abs(A), axis=1, keepdims=True)
+    np.divide(A, scales, out=A, where=scales != 0.0)
+    return A
+
+
 def _stationary_distribution_solve(transition_matrix: np.ndarray, dim: int) -> np.ndarray:
-    # Solve pQ = p, equivalently (Q^T - I) p^T = 0.
-    A = transition_matrix.T - np.eye(dim)
+    A = _stationary_equations(transition_matrix)
     b = np.zeros(dim)
 
     # Replace one redundant equation by sum(p) = 1.
-    A[-1] = np.ones(dim)
+    A[-1] = 1.0
     b[-1] = 1.0
 
     try:
@@ -44,8 +47,9 @@ def _stationary_distribution_solve(transition_matrix: np.ndarray, dim: int) -> n
 
 
 def _stationary_distribution_pinv(transition_matrix: np.ndarray, dim: int) -> np.ndarray:
-    A = transition_matrix.T - np.eye(dim)
-    A = np.vstack([A, np.ones(dim)])
+    A = np.empty((dim + 1, dim))
+    A[:dim] = _stationary_equations(transition_matrix)
+    A[-1] = 1.0
     b = np.zeros(dim + 1)
     b[-1] = 1.0
 

@@ -65,8 +65,8 @@ def validate_runtime_environment(serialized: str, *, allow_empty: bool = False) 
     return json.dumps(environment, sort_keys=True, separators=(",", ":"))
 
 
-def runtime_environment_fingerprint(serialized: str) -> str:
-    canonical = validate_runtime_environment(serialized)
+def runtime_environment_fingerprint(canonical: str) -> str:
+    """Hash runtime JSON already canonicalized at construction or file input."""
     digest = sha256()
     digest.update(b"swap-regret-runtime-environment-v1\0")
     digest.update(canonical.encode("utf-8"))

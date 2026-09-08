@@ -1,4 +1,5 @@
 import numpy as np
+import pulp
 import pytest
 
 from config import EQUILIBRIUM_LP_TOLERANCE
@@ -8,23 +9,75 @@ from metrics.equilibrium_distance import equilibrium_l1_distance
 from tests.support import coordination_game_payoffs
 
 
-@pytest.mark.parametrize(("equilibrium", "expected_coarse"), [("ce", False), ("cce", True)])
-def test_distance_reuses_upstream_equilibrium_polytope(monkeypatch, equilibrium: str, expected_coarse: bool) -> None:
-    upstream_create_lp = equilibrium_module.games_learning_equilibrium.create_cce_lp
-    coarse_arguments = []
+def old_pulp_distance(payoffs, empirical, concept):
+    """Pre-change production formulation, retained only as a test oracle."""
+    variables, problem = equilibrium_module.create_equilibrium_lp(payoffs, concept, np.zeros(empirical.shape))
+    deviations = pulp.LpVariable.dicts("l1_distance", list(variables), lowBound=0.0)
+    for profile in variables:
+        problem += deviations[profile] >= variables[profile] - empirical[profile]
+        problem += deviations[profile] >= empirical[profile] - variables[profile]
+    problem.sense = pulp.LpMinimize
+    problem.setObjective(pulp.lpSum(deviations.values()))
+    assert problem.solve(pulp.PULP_CBC_CMD(msg=False)) == pulp.LpStatusOptimal
+    return float(pulp.value(problem.objective))
 
-    def recording_create_lp(payoff_matrix, coarse, objective=None):
-        coarse_arguments.append(coarse)
-        return upstream_create_lp(payoff_matrix=payoff_matrix, coarse=coarse, objective=objective)
 
-    monkeypatch.setattr(equilibrium_module.games_learning_equilibrium, "create_cce_lp", recording_create_lp)
-    empirical = np.array([[1.0, 0.0], [0.0, 0.0]])
+@pytest.mark.parametrize("concept", ["ce", "cce"])
+@pytest.mark.parametrize("payoffs", [
+    np.array([[[1., 0.], [0., 1.]], [[0., 1.], [1., 0.]]]),
+    coordination_game_payoffs(),
+    create_rock_paper_scissors_payoffs(),
+    np.random.default_rng(17).random((3, 2, 1, 3)),
+])
+def test_highs_matches_old_polytope_and_distance(payoffs, concept):
+    shape = payoffs.shape[1:]
+    random = np.random.default_rng(42)
+    pure = np.zeros(shape)
+    pure.flat[0] = 1
+    distributions = [pure, np.full(shape, 1 / np.prod(shape)),
+                     *[random.dirichlet(np.ones(np.prod(shape))).reshape(shape) for _ in range(4)]]
+    for empirical in distributions:
+        result = equilibrium_l1_distance(payoffs, empirical, concept)
+        assert result.distance == pytest.approx(old_pulp_distance(payoffs, empirical, concept), abs=1e-8, rel=1e-8)
+        nearest = result.nearest_distribution
+        assert nearest.shape == shape
+        assert nearest.min() >= -1e-9
+        assert nearest.sum() == pytest.approx(1, abs=1e-9)
+        assert np.abs(nearest - empirical).sum() == pytest.approx(result.distance, abs=1e-8)
+        # Verify feasibility in the upstream polytope, not just our own matrices.
+        variables, problem = equilibrium_module.create_equilibrium_lp(payoffs, concept, np.zeros(shape))
+        for profile, variable in variables.items():
+            variable.varValue = nearest[profile]
+        for constraint in problem.constraints.values():
+            if constraint.sense == pulp.LpConstraintEQ:
+                assert abs(constraint.value()) < 1e-8
+            else:
+                assert constraint.sense * constraint.value() >= -1e-8
 
-    result = equilibrium_l1_distance(coordination_game_payoffs(), empirical, equilibrium)
 
-    assert coarse_arguments == [expected_coarse]
-    assert result.distance == pytest.approx(0.0, abs=EQUILIBRIUM_LP_TOLERANCE)
-    assert result.nearest_distribution.shape == empirical.shape
+def test_prepared_distance_reuses_all_coefficient_matrices(monkeypatch):
+    import metrics.equilibrium_distance as module
+    original = module.linprog
+    matrices = []
+
+    def solve(*args, **kwargs):
+        assert kwargs["method"] == "highs"
+        matrices.append((kwargs["A_ub"], kwargs["A_eq"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "linprog", solve)
+    prepared = module._PreparedDistanceLP(create_rock_paper_scissors_payoffs(), "ce")
+    for vector in (np.full(9, 1/9), np.eye(9)[0], np.eye(9)[1]):
+        prepared.solve(vector)
+    assert all(a is matrices[0][0] and b is matrices[0][1] for a, b in matrices)
+
+
+def test_failed_distance_solve_is_not_silently_used(monkeypatch):
+    from types import SimpleNamespace
+    import metrics.equilibrium_distance as module
+    monkeypatch.setattr(module, "linprog", lambda *args, **kwargs: SimpleNamespace(success=False, message="test failure"))
+    with pytest.raises(RuntimeError, match="CE distance optimization failed"):
+        equilibrium_l1_distance(coordination_game_payoffs(), np.full((2, 2), 0.25))
 
 
 def test_rps_diagonal_distribution_has_zero_cce_but_positive_ce_distance() -> None:

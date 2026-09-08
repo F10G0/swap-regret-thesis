@@ -52,3 +52,28 @@ def test_distance_aggregation_rejects_mismatched_horizons() -> None:
 def test_distance_aggregation_requires_a_replicate() -> None:
     with pytest.raises(ValueError, match="at least one"):
         aggregate_equilibrium_distance_trajectories([])
+
+
+def test_trajectory_prepares_once_per_concept_and_uses_only_scalar_objectives(monkeypatch):
+    from types import SimpleNamespace
+    import metrics.equilibrium_convergence as module
+    from metrics.empirical_distribution import EmpiricalDistributionTrajectory
+    concepts, calls = [], []
+
+    class Prepared:
+        action_shape = (2, 2)
+
+        def __init__(self, payoff_tensor, equilibrium):
+            concepts.append(equilibrium)
+            self.equilibrium = equilibrium
+
+        def solve(self, vector):
+            calls.append(self.equilibrium)
+            return SimpleNamespace(fun=float(vector[0]))  # Deliberately no x.
+
+    monkeypatch.setattr(module, "_PreparedDistanceLP", Prepared)
+    empirical = EmpiricalDistributionTrajectory((2, 2), np.array([1, 10, 100]), np.full((3, 4), .25))
+    result = module.equilibrium_distance_trajectory(np.zeros((2, 2, 2)), empirical)
+    assert concepts == ["ce", "cce"]
+    assert calls == ["ce", "cce"] * 3
+    np.testing.assert_array_equal(result.ce, [.25] * 3)

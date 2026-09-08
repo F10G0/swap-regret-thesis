@@ -76,7 +76,7 @@ def test_deviation_payoffs_are_computed_on_demand_for_evaluation() -> None:
     assert not hasattr(game, "_deviation_payoffs")
 
 
-def test_feedback_is_independent_from_payoff_tensor() -> None:
+def test_constructor_owns_external_tensor_but_feedback_is_a_view() -> None:
     payoff_tensor = asymmetric_payoff_tensor()
     game = RepeatedGame(payoff_tensor)
     game.step((1, 2))
@@ -85,29 +85,8 @@ def test_feedback_is_independent_from_payoff_tensor() -> None:
     assert game.feedback(0)[1] == pytest.approx(0.6)
 
     feedback = game.feedback(0)
-    feedback[0] = 0.0
-    assert game.feedback(0)[0] == pytest.approx(0.3)
-
-
-@pytest.mark.parametrize("player", [-1, 2])
-def test_feedback_rejects_invalid_player_indices(player: int) -> None:
-    game = RepeatedGame(asymmetric_payoff_tensor())
-    game.step((1, 2))
-    with pytest.raises(IndexError, match="invalid player index"):
-        game.feedback(player)
-
-
-@pytest.mark.parametrize("actions", [(-1, 2), (2, 2), (1, -1), (1, 3)])
-def test_step_rejects_invalid_action_indices(actions: tuple[int, ...]) -> None:
-    game = RepeatedGame(asymmetric_payoff_tensor())
-    with pytest.raises(IndexError, match="invalid action index"):
-        game.step(actions)
-
-
-def test_step_rejects_wrong_number_of_actions() -> None:
-    game = RepeatedGame(asymmetric_payoff_tensor())
-    with pytest.raises(ValueError, match="number of actions"):
-        game.step((1,))
+    assert np.shares_memory(feedback, game.payoff_tensor)
+    assert not np.shares_memory(feedback, payoff_tensor)
 
 
 @pytest.mark.parametrize(
@@ -227,16 +206,12 @@ def test_random_walk_seed_is_reproducible_and_action_independent() -> None:
     np.testing.assert_array_equal(first.reward_states, second.reward_states)
 
 
-def test_random_walk_horizon_and_feedback_boundaries() -> None:
+def test_random_walk_feedback_follows_precomputed_rounds() -> None:
     environment = LazyRandomWalkEnvironment(3, 2, 7)
 
-    with pytest.raises(RuntimeError, match="call step"):
-        environment.feedback()
-    environment.step()
-    np.testing.assert_array_equal(environment.feedback(), [0.5, 0.5, 0.5])
-    environment.step()
-    with pytest.raises(RuntimeError, match="exhausted"):
+    for expected in environment.reward_states:
         environment.step()
+        np.testing.assert_array_equal(environment.feedback(), expected * RANDOM_WALK_STEP)
 
 
 def test_runner_steps_environment_once_per_round() -> None:

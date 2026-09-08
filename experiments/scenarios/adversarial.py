@@ -19,6 +19,8 @@ from environments.adversarial import (
     RANDOM_WALK_STEP,
 )
 from experiments.recorder import CsvRecorder, read_final_csv_rows, require_csv_columns
+from experiments.recording import MAX_RECORDED_POINTS, recording_checkpoints
+from experiments.sampling import CheckpointRows
 from experiments.result_schema import (
     REGRET_FIELDNAMES,
     RESULT_IMPLEMENTATION_VERSION,
@@ -292,6 +294,7 @@ def run_adversarial_experiment(
     regret_evaluation: str = "both",
     implementation_version: int = RESULT_IMPLEMENTATION_VERSION,
     runtime_environment: str | None = None,
+    max_recorded_points: int = MAX_RECORDED_POINTS,
 ) -> Path:
     spec = AdversarialExperimentSpec(
         algorithm_name=algorithm_name,
@@ -332,7 +335,9 @@ def run_adversarial_experiment(
         spec.horizon,
         spec.learner_seed,
     )
-    regrets = RegretBundles(spec.n_actions)
+    regrets = RegretBundles(spec.n_actions, spec.regret_evaluation)
+    sources = regret_sources(spec.regret_evaluation)
+    checkpoints = set(recording_checkpoints(spec.horizon, max_recorded_points))
     metadata = spec.configuration() | {"run_id": spec.run_id}
 
     with CsvRecorder(
@@ -347,17 +352,18 @@ def run_adversarial_experiment(
             action = learner.sample_action()
             if historical:
                 experiment_environment.step((action,))
-                punished_actions = " ".join(map(str, experiment_environment.punished_actions))
             else:
                 experiment_environment.step()
-                punished_actions = ""
             payoffs = experiment_environment.feedback()
             regrets.update(strategy, action, payoffs)
             feedback = payoffs if spec.feedback_mode == "full_information" else float(payoffs[action])
             learner.update(feedback)
 
+            if time not in checkpoints:
+                continue
+            punished_actions = " ".join(map(str, experiment_environment.punished_actions)) if historical else ""
             regret_summary = {}
-            for source in regret_sources(spec.regret_evaluation):
+            for source in sources:
                 regret_summary.update(getattr(regrets, source).summary(time))
             recorder.record(
                 {
@@ -375,7 +381,7 @@ def run_adversarial_experiment(
     return output_path
 
 
-def _validate_adversarial_row(row: dict[str, str], input_path: Path) -> int:
+def _validate_adversarial_metadata(row: dict[str, str], input_path: Path) -> int:
     if row["feedback_mode"] not in ALGORITHMS_BY_FEEDBACK_MODE:
         raise ValueError(f"{input_path} contains an invalid feedback mode")
     # Retired Exp3 results retain their identity; new runs use the active registry.
@@ -420,9 +426,12 @@ def _validate_adversarial_row(row: dict[str, str], input_path: Path) -> int:
             raise ValueError(f"{input_path} contains an invalid runtime fingerprint")
 
     horizon = int(row["horizon"])
-    n_actions = int(row["n_actions"])
     if horizon <= 0:
         raise ValueError(f"{input_path} contains invalid round metadata")
+    return horizon
+
+
+def _validate_adversarial_observation(row: dict[str, str], input_path: Path, n_actions: int) -> None:
     if not 0 <= int(row["action"]) < n_actions:
         raise ValueError(f"{input_path} contains an invalid action")
     if not 0 <= int(row["current_best_action"]) < n_actions:
@@ -436,6 +445,11 @@ def _validate_adversarial_row(row: dict[str, str], input_path: Path) -> int:
             raise ValueError(f"{input_path} contains invalid punished actions") from error
         if len(punished_actions) != (n_actions + 1) // 2 or len(set(punished_actions)) != len(punished_actions) or any(not 0 <= action < n_actions for action in punished_actions):
             raise ValueError(f"{input_path} contains invalid punished actions")
+
+
+def _validate_adversarial_row(row: dict[str, str], input_path: Path) -> int:
+    horizon = _validate_adversarial_metadata(row, input_path)
+    _validate_adversarial_observation(row, input_path, int(row["n_actions"]))
     return horizon
 
 
@@ -448,36 +462,48 @@ def load_adversarial_rows(
     input_path = Path(input_path)
     rows = []
     expected_identity = None
-    expected_time = 1
-    stride = 1
+    previous_time = 0
+    sampler = None
     with input_path.open("r", encoding="utf-8", newline="") as file:
         reader = csv.DictReader(file)
         fieldnames = set(reader.fieldnames or ())
         require_csv_columns(input_path, fieldnames, set(ADVERSARIAL_BASE_FIELDNAMES) - ADVERSARIAL_LEGACY_FIELDS)
         for row in reader:
-            _normalize_adversarial_row(row)
-            horizon = _validate_adversarial_row(row, input_path)
-            identity = tuple(row[field] for field in ADVERSARIAL_IDENTITY_FIELDS)
+            # Compare the original metadata on EVERY row, including rows omitted
+            # from plots. Seed derivation and runtime JSON/hashing need run only once.
+            identity = tuple(row.get(field) for field in ADVERSARIAL_IDENTITY_FIELDS)
             if expected_identity is None:
+                _normalize_adversarial_row(row)
+                horizon = _validate_adversarial_metadata(row, input_path)
+                n_actions = int(row["n_actions"])
+                normalized_identity = {field: row[field] for field in ADVERSARIAL_IDENTITY_FIELDS}
                 required = set(adversarial_result_fieldnames(row["regret_evaluation"])) - ADVERSARIAL_LEGACY_FIELDS
                 require_csv_columns(input_path, fieldnames, required)
                 expected_identity = identity
                 if max_points is not None:
-                    stride = max(1, (horizon + max_points - 1) // max_points)
+                    sampler = CheckpointRows(horizon, max_points)
             elif identity != expected_identity:
                 raise ValueError(f"{input_path} contains inconsistent metadata")
+            else:
+                row.update(normalized_identity)
+
+            _validate_adversarial_observation(row, input_path, n_actions)
 
             time = int(row["t"])
-            if time != expected_time or time > horizon:
+            if time <= previous_time or time > horizon or (previous_time == 0 and time != 1):
                 raise ValueError(f"{input_path} contains invalid round metadata")
 
-            if time == 1 or time == horizon or time % stride == 0:
+            if sampler is None:
                 rows.append(row)
-            expected_time += 1
+            else:
+                sampler.add(row)
+            previous_time = time
 
     if expected_identity is None:
         raise ValueError(f"{input_path} is empty")
-    if expected_time - 1 != int(rows[-1]["horizon"]):
+    if sampler is not None:
+        rows = sampler.rows()
+    if previous_time != int(rows[-1]["horizon"]):
         raise ValueError(f"{input_path} does not contain the complete trajectory")
     return rows
 

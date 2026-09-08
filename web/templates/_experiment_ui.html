@@ -79,8 +79,14 @@
     <section class="panel figures-panel" aria-labelledby="figures-heading">
         <div class="section-heading">
             <div><p class="eyebrow">Visual analysis</p><h2 id="figures-heading">Regret figures</h2></div>
-            <span id="figure-counter" class="counter"></span>
+            <form id="download-filtered-figures-form" class="figure-export-actions" method="post" action="{{ url_for('dashboard.download_filtered_figures') }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="mode" value="{{ experiment_mode }}">
+                <span id="figure-counter" class="counter"></span>
+                <button id="download-filtered-figures" type="submit" disabled>Download merged PDF</button>
+            </form>
         </div>
+        <p id="figure-export-status" class="hint" role="status" hidden></p>
         {{ regret_figure_filters(figures) }}
         <div id="figure-grid" class="figure-grid">
             {% for figure in figures %}

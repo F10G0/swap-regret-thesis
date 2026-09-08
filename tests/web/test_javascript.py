@@ -5,6 +5,99 @@ import subprocess
 import pytest
 
 
+def test_filtered_pdf_download_uses_visible_order_and_active_ci_links() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
+    script = r'''
+const assert = require("assert").strict;
+const source = require("fs").readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("function visibleFigureDownloads");
+const end = source.indexOf("\nfunction selectAvailableFigureSource", start);
+const card = (filename, hidden = false) => ({hidden, filename, querySelector() {
+    return {getAttribute: () => this.filename};
+}});
+const cards = [card("third_without_ci.pdf"), card("hidden.pdf", true), card("first.pdf")];
+const button = {dataset: {}, disabled: false};
+const status = {hidden: true, textContent: ""};
+global.element = (id) => id === "download-filtered-figures" ? button : status;
+let clicked = false;
+global.document = {
+    querySelectorAll: () => cards,
+    createElement: () => ({click() {clicked = true;}, remove() {}}),
+    body: {append() {}},
+};
+global.FormData = class {constructor() {return [["mode", "fixed"], ["_csrf_token", "token"]];}};
+global.window = {setTimeout() {}};
+URL.createObjectURL = () => "blob:export";
+let sent;
+global.fetch = async (url, options) => {
+    sent = options.body;
+    assert.equal(url, "/figures/download-filtered.pdf");
+    assert.equal(options.method, "POST");
+    assert.equal(button.disabled, true);
+    return {ok: true, blob: async () => ({})};
+};
+eval(source.slice(start, end));
+const event = {preventDefault() {}, currentTarget: {action: "/figures/download-filtered.pdf"}};
+(async () => {
+    assert.deepEqual(visibleFigureDownloads(), ["third_without_ci.pdf", "first.pdf"]);
+    await downloadFilteredFigures(event);
+    assert.deepEqual(sent.getAll("filenames"), ["third_without_ci.pdf", "first.pdf"]);
+    assert.equal(sent.get("_csrf_token"), "token");
+    assert.equal(sent.get("mode"), "fixed");
+    assert.equal(clicked, true);
+    assert.equal(button.disabled, false);
+    // Changing the displayed variant or order is reflected immediately.
+    cards[0].filename = "third.pdf";
+    cards.reverse();
+    assert.deepEqual(visibleFigureDownloads(), ["first.pdf", "third.pdf"]);
+    global.fetch = async () => ({ok: false, json: async () => ({error: "Figure missing"})});
+    await downloadFilteredFigures(event);
+    assert.equal(status.textContent, "Figure missing");
+    assert.equal(button.disabled, false);
+    cards.forEach((card) => card.hidden = true);
+    global.fetch = () => {throw new Error("Empty selections must not be submitted");};
+    await downloadFilteredFigures(event);
+})().catch((error) => {console.error(error); process.exit(1);});
+'''
+    result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_filtered_pdf_button_tracks_empty_filters_and_active_download() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
+    script = r'''
+const assert = require("assert").strict;
+const source = require("fs").readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("function applyFilters");
+const end = source.indexOf("\nfunction visibleFigureDownloads", start);
+const button = {dataset: {}};
+const counter = {};
+let matches = false;
+global.element = (id) => ({"download-filtered-figures": button, "figure-counter": counter}[id]);
+global.document = {querySelectorAll: (selector) => selector === "#figure-grid .figure-card" ? [{}] : []};
+global.matchesFilters = () => matches;
+global.updateSummarySourceColumns = global.updateSummaryRows = () => {};
+eval(source.slice(start, end));
+applyFilters();
+assert.equal(button.disabled, true);
+assert.equal(counter.textContent, "0 figures");
+matches = true;
+applyFilters();
+assert.equal(button.disabled, false);
+button.dataset.exporting = "true";
+applyFilters();
+assert.equal(button.disabled, true);
+'''
+    result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("filename", ["common.js", "dashboard.js", "custom_games.js", "experimental_trajectory.js"])
 def test_web_javascript_parses(filename: str) -> None:
     node = shutil.which("node")
