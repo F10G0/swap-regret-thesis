@@ -3,7 +3,6 @@ from abc import abstractmethod
 import numpy as np
 
 from algorithms.base import Algorithm
-from config import NUMERICAL_TOLERANCE
 
 
 class ExponentialWeightsAlgorithm(Algorithm):
@@ -22,5 +21,4 @@ class ExponentialWeightsAlgorithm(Algorithm):
         logits = self.learning_rate * self.cumulative_score
         logits -= np.max(logits)
         weights = np.exp(logits)
-        strategy = np.maximum(weights / np.sum(weights), NUMERICAL_TOLERANCE)
-        return strategy / np.sum(strategy)
+        return weights / np.sum(weights)

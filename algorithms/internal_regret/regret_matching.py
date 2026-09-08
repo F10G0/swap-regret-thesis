@@ -8,7 +8,11 @@ class RegretMatching(RegretMatchingBase):
     """Inertia-based Hart-Mas-Colell regret matching from equation (2.2)."""
 
     def _compute_strategy(self) -> np.ndarray:
-        return self._regret_transition_matrix[self.current_action]
+        action = self.current_action
+        strategy = np.maximum(self.cumulative_regret[action], 0.0) / (self.normalization * self.t)
+        strategy[action] = 0.0
+        strategy[action] = 1.0 - np.sum(strategy)
+        return strategy
 
 
 class StationaryRegretMatching(RegretMatchingBase):

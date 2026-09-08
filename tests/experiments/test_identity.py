@@ -1,4 +1,5 @@
 import csv
+from dataclasses import replace
 from hashlib import sha256
 import json
 import os
@@ -12,7 +13,7 @@ from experiments.game_catalog import GameCatalog, payoff_tensor_digest
 from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret, run_label
 from experiments.scenarios.cross_play import player_seed
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
-from experiments.result_schema import regret_fieldnames
+from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
 from experiments.results import (
     iter_result_rows,
     result_implementation_version,
@@ -84,7 +85,23 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     )
     assert baseline.run_id != changed_horizon.run_id
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, stationary_method="pinv").run_id
-    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=3).run_id
+    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=2).run_id
+
+
+def test_v3_identity_and_loader_preserve_legacy_v2_results(tmp_path) -> None:
+    current = make_spec()
+    legacy = replace(current, implementation_version=2)
+    assert RESULT_IMPLEMENTATION_VERSION == current.implementation_version == 3
+    assert current.run_id != legacy.run_id
+    legacy_path = tmp_path / f"{legacy.run_id}.csv"
+    current_path = tmp_path / f"{current.run_id}.csv"
+    write_result(legacy_path, legacy)
+    legacy_bytes = legacy_path.read_bytes()
+    write_result(current_path, current)
+
+    assert {result_implementation_version(row) for row in iter_result_rows(legacy_path)} == {2}
+    assert {result_implementation_version(row) for row in iter_result_rows(current_path)} == {3}
+    assert legacy_path.read_bytes() == legacy_bytes
 
 
 def test_runtime_environment_changes_identity_and_is_recorded(tmp_path) -> None:

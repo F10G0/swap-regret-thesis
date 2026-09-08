@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from algorithms.external_regret import AuerExp3, Exp3IX, Hedge, TsallisINF
-from algorithms.swap_regret import BanditBM, FullBM, LCEIX
+from algorithms.swap_regret import BanditBM, FullBM, LCEIX, LCEIXInner
 from config import NUMERICAL_TOLERANCE
 
 
@@ -90,8 +90,65 @@ def test_exponential_weights_remain_normalized_for_extreme_scores() -> None:
 
     strategy = learner.strategy()
     assert np.all(np.isfinite(strategy))
-    assert np.all(strategy >= NUMERICAL_TOLERANCE / (1.0 + NUMERICAL_TOLERANCE))
+    np.testing.assert_array_equal(strategy, [0.0, 1.0])
     assert np.isclose(np.sum(strategy), 1.0)
+
+
+@pytest.mark.parametrize("factory", [
+    partial(Hedge, 3, horizon=100),
+    partial(Hedge, 3, horizon=None),
+    partial(Exp3IX, 3, horizon=100),
+    partial(LCEIXInner, 3),
+])
+@pytest.mark.parametrize("logits", [
+    [0.0, 0.0, 0.0],
+    [-1.0, 0.0, 2.0],
+    [-80.0, -40.0, 0.0],
+    [-1000.0, -500.0, 0.0],
+    [10000.0, 9999.0, 9990.0],
+])
+def test_exponential_weights_equal_unfloored_softmax(factory, logits) -> None:
+    learner = factory()
+    learner.cumulative_score = np.array(logits) / learner.learning_rate
+    original_score = learner.cumulative_score.copy()
+    scaled_scores = learner.learning_rate * original_score
+    weights = np.exp(scaled_scores - scaled_scores.max())
+    expected = weights / weights.sum()
+
+    np.testing.assert_array_equal(learner._compute_strategy(), expected)
+    np.testing.assert_array_equal(learner.cumulative_score, original_score)
+
+
+@pytest.mark.parametrize("horizon", [1, 100, 1_000_000])
+def test_auer_exp3_retains_explicit_exploration_when_softmax_underflows(horizon) -> None:
+    learner = AuerExp3(3, horizon=horizon)
+    learner.cumulative_score = np.array([-1000.0, -2000.0, 0.0]) / learner.learning_rate
+    gamma = min(1.0, np.sqrt(3.0 * np.log(3.0) / horizon))
+    expected = (1.0 - gamma) * np.array([0.0, 0.0, 1.0]) + gamma / 3.0
+
+    np.testing.assert_array_equal(learner._compute_strategy(), expected)
+    assert learner.learning_rate == gamma / 3.0
+    assert np.all(learner._compute_strategy() >= gamma / 3.0)
+
+
+@pytest.mark.parametrize("factory", [partial(Exp3IX, 3, horizon=100), partial(LCEIXInner, 3)])
+@pytest.mark.parametrize("logit", [-80.0, -1000.0])
+def test_ix_estimator_uses_exact_unfloored_probability_plus_gamma(factory, logit) -> None:
+    learner = factory()
+    learner.t = 7
+    learner.cumulative_score = np.array([logit, 0.0, -1.0]) / learner.learning_rate
+    learner.current_strategy = learner._compute_strategy()
+    probability = learner.current_strategy[0]
+    assert probability < NUMERICAL_TOLERANCE
+    learner.current_action = 0  # Isolate the estimator, even at underflow-sized p.
+    eta = learner.learning_rate
+    expected = learner.cumulative_score.copy()
+    expected[0] -= 0.75 / (probability + eta / 2.0)
+
+    learner.update(0.25)
+
+    np.testing.assert_array_equal(learner.cumulative_score, expected)
+    assert learner.implicit_exploration == learner.learning_rate / 2.0
 
 
 def test_bandit_blum_mansour_survives_large_inner_scores() -> None:

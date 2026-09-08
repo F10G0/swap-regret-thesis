@@ -337,7 +337,27 @@ def test_adversarial_loader_accepts_legacy_csv_without_replicate(tmp_path) -> No
 def test_adversarial_implementation_version_changes_run_identity() -> None:
     common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 10, "seed": 7}
 
-    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=3).run_id
+    assert AdversarialExperimentSpec(**common).implementation_version == 3
+    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=2).run_id
+
+
+def test_adversarial_loader_preserves_v2_alongside_v3(tmp_path) -> None:
+    common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 3, "seed": 7}
+    current_path = run_adversarial_experiment(**common, output_dir=tmp_path)
+    legacy = AdversarialExperimentSpec(**common, implementation_version=2)
+    legacy_path = tmp_path / f"{legacy.run_id}.csv"
+    # A schema fixture, not a reproduction of the v2 learner implementation.
+    rows = _rows(current_path)
+    with legacy_path.open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(row | {"implementation_version": "2", "run_id": legacy.run_id} for row in rows)
+    legacy_bytes = legacy_path.read_bytes()
+
+    assert {row["implementation_version"] for row in load_adversarial_rows(current_path)} == {"3"}
+    assert {row["implementation_version"] for row in load_adversarial_rows(legacy_path)} == {"2"}
+    assert load_final_adversarial_row(legacy_path)["implementation_version"] == "2"
+    assert legacy_path.read_bytes() == legacy_bytes
 
 
 def test_adversarial_regret_aggregation_uses_student_t_intervals() -> None:

@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from algorithms.internal_regret import RegretMatching, StationaryRegretMatching
+from algorithms.internal_regret.base import RegretMatchingBase
 
 
 def _play(learner: RegretMatching, action: int, reward_vector: np.ndarray) -> None:
@@ -49,6 +50,41 @@ def test_regret_matching_preserves_inertia() -> None:
 
     assert learner.strategy()[0] > 0.0
     assert np.isclose(np.sum(learner.strategy()), 1.0)
+
+
+@pytest.mark.parametrize("n_actions", [1, 3, 9, 50])
+@pytest.mark.parametrize("round_count", [1, 1000, 1_000_000])
+def test_regret_matching_row_equals_previous_full_matrix(n_actions, round_count) -> None:
+    learner = RegretMatching(n_actions)
+    learner.t = round_count
+    random = np.random.default_rng(42)
+    for regrets in [
+        np.zeros((n_actions, n_actions)),
+        -random.random((n_actions, n_actions)) * round_count,
+        random.uniform(-1.0, 1.0, size=(n_actions, n_actions)) * round_count,
+    ]:
+        np.fill_diagonal(regrets, 0.0)
+        learner.cumulative_regret = regrets.copy()
+        previous = np.maximum(regrets, 0.0) / (n_actions * round_count)
+        np.fill_diagonal(previous, 1.0 - previous.sum(axis=1))
+        for action in range(n_actions):
+            learner.current_action = action
+            np.testing.assert_array_equal(learner._compute_strategy(), previous[action])
+        np.testing.assert_array_equal(learner.cumulative_regret, regrets)
+
+
+def test_regret_matching_does_not_construct_full_transition_matrix(monkeypatch) -> None:
+    def unexpected_matrix(_learner):
+        pytest.fail("ordinary RegretMatching must only construct its selected row")
+
+    monkeypatch.setattr(RegretMatchingBase, "_regret_transition_matrix", property(unexpected_matrix))
+    learner = RegretMatching(9, seed=42)
+    random = np.random.default_rng(7)
+    for _ in range(20):
+        learner.sample_action()
+        learner.update(random.random(9))
+        assert learner.strategy().shape == (9,)
+        assert learner.strategy().sum() == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("learner_type", [RegretMatching, StationaryRegretMatching])
