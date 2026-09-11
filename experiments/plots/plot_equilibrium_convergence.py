@@ -19,6 +19,7 @@ import numpy as np
 from config import CUSTOM_GAME_DIR, EQUILIBRIUM_LP_TOLERANCE
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
+from experiments.plots.style import publication_plot, finish_line_figure
 from experiments.result_trajectories import load_result_action_profiles
 from experiments.results import iter_result_rows, result_game_payoff_digest
 from metrics.empirical_distribution import (
@@ -37,6 +38,7 @@ from metrics.equilibrium_distance import EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VER
 MAX_EQUILIBRIUM_DISTANCE_POINTS = 160
 DISTANCE_CACHE_VERSION = 1
 DISTANCE_CHECKPOINT_POLICY = "nearest-log-horizon-v1"
+EQUILIBRIUM_DISTANCE_FIGURE_VERSION = 4
 logger = logging.getLogger(__name__)
 
 
@@ -123,18 +125,20 @@ def remove_equilibrium_distance_figures(detail_figure_dir: str | Path) -> list[P
     return removed
 
 
+@publication_plot
 def _plot_equilibrium_distance(
     distances: ReplicateEquilibriumDistanceTrajectory,
     output_path: str | Path,
-    game_name: str,
 ) -> None:
     output_path = Path(output_path)
-    figure, axes = plt.subplots(figsize=(7.2, 4.6))
+    figure, axes = plt.subplots()
     axes.plot(
         distances.horizons,
         distances.ce_mean,
         color="#d97706",
         marker="o",
+        markevery=0.12,
+        linestyle="-",
         linewidth=2.0,
         label="CE",
     )
@@ -143,50 +147,20 @@ def _plot_equilibrium_distance(
         distances.cce_mean,
         color="#2563eb",
         marker="s",
+        markevery=0.12,
+        linestyle="--",
         linewidth=2.0,
         label="CCE",
     )
-    if distances.n_replicates > 1:
-        axes.fill_between(
-            distances.horizons,
-            np.maximum(
-                0.0,
-                distances.ce_mean - distances.ce_confidence,
-            ),
-            distances.ce_mean + distances.ce_confidence,
-            color="#d97706",
-            alpha=0.18,
-        )
-        axes.fill_between(
-            distances.horizons,
-            np.maximum(
-                0.0,
-                distances.cce_mean - distances.cce_confidence,
-            ),
-            distances.cce_mean + distances.cce_confidence,
-            color="#2563eb",
-            alpha=0.18,
-        )
     if (
         len(distances.horizons) > 1
         and distances.horizons[-1] / distances.horizons[0] >= 10
     ):
         axes.set_xscale("log")
-    axes.set_xlabel("Horizon")
-    axes.set_ylabel("L1 distance")
+    axes.set_xlabel(r"Round $T$")
+    axes.set_ylabel(r"$L^1$ distance")
     axes.set_ylim(bottom=0.0)
-    axes.grid(alpha=0.25)
-    axes.legend()
-    title = (
-        "Equilibrium Distance"
-        if distances.n_replicates == 1
-        else (
-            "Mean Equilibrium Distance "
-            f"({distances.n_replicates} replicates)"
-        )
-    )
-    axes.set_title(f"{game_name}: {title}")
-    figure.tight_layout()
+    finish_line_figure(figure, axes)
     save_figure_pair(figure, output_path)
     plt.close(figure)
 
@@ -200,7 +174,7 @@ def load_equilibrium_result_inputs(
         if isinstance(input_paths, (str, Path))
         else [Path(path) for path in input_paths]
     )
-    game_name, payoff_tensor = _load_equilibrium_game(paths, custom_game_dir)
+    game_name, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
     profiles = [
         load_result_action_profiles(path, payoff_tensor.shape[1:])
         for path in paths
@@ -208,7 +182,7 @@ def load_equilibrium_result_inputs(
     return game_name, payoff_tensor, profiles
 
 
-def _load_equilibrium_game(paths: list[Path], custom_game_dir: str | Path) -> tuple[str, np.ndarray]:
+def _load_equilibrium_game(paths: list[Path], custom_game_dir: str | Path) -> tuple[str, np.ndarray, list[dict]]:
     if not paths:
         raise ValueError("at least one result file is required")
     first_rows = []
@@ -237,7 +211,7 @@ def _load_equilibrium_game(paths: list[Path], custom_game_dir: str | Path) -> tu
         raise ValueError(
             "recorded payoff tensor does not match the current game definition"
         )
-    return game_name, payoff_tensor
+    return game_name, payoff_tensor, first_rows
 
 
 def empirical_distribution_trajectories(
@@ -259,13 +233,12 @@ def plot_result_equilibrium_distance(
     input_paths: str | Path | Iterable[str | Path],
     output_path: str | Path,
     checkpoints: Iterable[int] | None = None,
-    game_label: str | None = None,
     custom_game_dir: str | Path = CUSTOM_GAME_DIR,
     *,
     cache_dir: str | Path | None = None,
 ) -> None:
     paths = [Path(input_paths)] if isinstance(input_paths, (str, Path)) else [Path(path) for path in input_paths]
-    game_name, payoff_tensor = _load_equilibrium_game(paths, custom_game_dir)
+    _, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
     checkpoints = tuple(checkpoints) if checkpoints is not None else None
     replicate_distances = [
         _load_result_distances(
@@ -281,5 +254,4 @@ def plot_result_equilibrium_distance(
     _plot_equilibrium_distance(
         distances,
         output_path,
-        game_label or game_name,
     )

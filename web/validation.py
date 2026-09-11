@@ -3,7 +3,49 @@ from pathlib import Path
 import re
 from typing import Mapping
 
-from experiments.result_schema import REGRET_EVALUATIONS, default_regret_evaluation
+
+@dataclass(frozen=True)
+class ProfileSelection:
+    mode: str
+    context_id: str
+    profiles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FigureSelection:
+    mode: str
+    context_id: str
+    metric: str
+    view: str
+    profiles: tuple[str, ...]
+
+
+def parse_figure_selection(values: Mapping[str, str]) -> FigureSelection:
+    selection = parse_profile_selection(values)
+    metric = values.get("metric", "")
+    view = values.get("view", "")
+    if metric not in {"external", "internal", "swap"} or view not in {"average", "sqrt_scaling"}:
+        raise ValueError("Unknown regret metric or view")
+    return FigureSelection(selection.mode, selection.context_id, metric, view, selection.profiles)
+
+
+def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
+    mode = values.get("mode", "")
+    context_id = values.get("context_id", "")
+    if mode not in {"fixed", "adversarial"}:
+        raise ValueError("Unknown experiment mode")
+    if not re.fullmatch(r"[0-9a-f]{24}", context_id):
+        raise ValueError("Choose an available result set")
+    if hasattr(values, "getlist"):
+        profiles = values.getlist("profiles")
+    else:
+        profiles = values.get("profiles", [])
+        profiles = [profiles] if isinstance(profiles, str) else profiles
+    if not isinstance(profiles, (list, tuple)) or not profiles:
+        raise ValueError("Select at least one algorithm profile")
+    if len(profiles) > 256 or any(not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9_]+", profile) for profile in profiles):
+        raise ValueError("Invalid algorithm profile selection")
+    return ProfileSelection(mode, context_id, tuple(sorted(set(profiles))))
 
 
 @dataclass(frozen=True)
@@ -14,13 +56,11 @@ class ExperimentForm:
     horizon: int
     seed: int
     replicates: int
-    regret_evaluation: str = "feedback_aligned"
 
 
 @dataclass(frozen=True)
 class AdversarialExperimentForm:
     environment: str
-    initialization_mode: str
     feedback_mode: str
     algorithm_name: str
     n_actions: int
@@ -28,13 +68,11 @@ class AdversarialExperimentForm:
     environment_seed: int
     learner_seed: int
     replicates: int
-    regret_evaluation: str
 
 
 @dataclass(frozen=True)
 class AdversarialScalingForm:
     environment: str
-    initialization_mode: str
     feedback_mode: str
     algorithm_name: str
     action_counts: tuple[int, ...]
@@ -42,7 +80,6 @@ class AdversarialScalingForm:
     horizon: int
     environment_seed: int
     learner_seed: int
-    regret_evaluation: str
 
 
 def _parse_integer(value: str, field_name: str) -> int:
@@ -118,13 +155,10 @@ def _form_algorithm_names(values: Mapping[str, str]) -> tuple[str, ...]:
 def _validate_learning_configuration(
     feedback_mode: str,
     algorithm_names: tuple[str, ...],
-    regret_evaluation: str,
     algorithms_by_feedback_mode: Mapping[str, list[str]],
 ) -> None:
     if feedback_mode not in algorithms_by_feedback_mode:
         raise ValueError(f"unknown feedback mode: {feedback_mode}")
-    if regret_evaluation not in REGRET_EVALUATIONS:
-        raise ValueError(f"unknown regret evaluation: {regret_evaluation}")
     for algorithm_name in algorithm_names:
         if algorithm_name not in algorithms_by_feedback_mode[feedback_mode]:
             raise ValueError(f"algorithm {algorithm_name} is not available for {feedback_mode}")
@@ -133,24 +167,18 @@ def _validate_learning_configuration(
 def _parse_learning_configuration(
     values: Mapping[str, str],
     algorithms_by_feedback_mode: Mapping[str, list[str]],
-    default_evaluation: str | None = None,
-) -> tuple[str, tuple[str, ...], str]:
+) -> tuple[str, tuple[str, ...]]:
     try:
         feedback_mode = values["feedback_mode"]
     except KeyError as error:
         raise ValueError("missing form field: feedback_mode") from error
     algorithm_names = _form_algorithm_names(values)
-    regret_evaluation = values.get(
-        "regret_evaluation",
-        default_evaluation or default_regret_evaluation(feedback_mode),
-    )
     _validate_learning_configuration(
         feedback_mode,
         algorithm_names,
-        regret_evaluation,
         algorithms_by_feedback_mode,
     )
-    return feedback_mode, algorithm_names, regret_evaluation
+    return feedback_mode, algorithm_names
 
 
 def parse_experiment_form(
@@ -169,7 +197,7 @@ def parse_experiment_form(
 
     if game not in games:
         raise ValueError(f"unknown game: {game}")
-    feedback_mode, algorithm_names, regret_evaluation = _parse_learning_configuration(
+    feedback_mode, algorithm_names = _parse_learning_configuration(
         values,
         algorithms_by_feedback_mode,
     )
@@ -189,7 +217,6 @@ def parse_experiment_form(
         horizon=parse_positive_integer(horizon_value, "horizon", max_horizon),
         seed=parse_non_negative_integer(seed_value, "seed"),
         replicates=replicates,
-        regret_evaluation=regret_evaluation,
     )
 
 
@@ -197,7 +224,6 @@ def parse_adversarial_experiment_form(
     values: Mapping[str, str],
     algorithms_by_feedback_mode: Mapping[str, list[str]],
     environments: set[str],
-    initialization_modes: set[str],
     max_actions: int,
     max_horizon: int,
     max_replicates: int = 100,
@@ -210,21 +236,17 @@ def parse_adversarial_experiment_form(
     except KeyError as error:
         raise ValueError(f"missing form field: {error.args[0]}") from error
 
-    feedback_mode, algorithm_names, regret_evaluation = _parse_learning_configuration(
+    feedback_mode, algorithm_names = _parse_learning_configuration(
         values,
         algorithms_by_feedback_mode,
-        default_evaluation="both",
     )
     if len(algorithm_names) != 1:
         raise ValueError("one-player environments require one algorithm")
     algorithm_name = algorithm_names[0]
 
-    initialization_mode = values.get("initialization_mode", "centered")
     environment_seed = values.get("environment_seed", "0")
     if environment not in environments:
         raise ValueError(f"unknown adversarial environment: {environment}")
-    if initialization_mode not in initialization_modes:
-        raise ValueError(f"unknown initialization mode: {initialization_mode}")
     action_count = parse_positive_integer(
         n_actions,
         "number of actions",
@@ -234,7 +256,6 @@ def parse_adversarial_experiment_form(
         raise ValueError("number of actions must be at least 2")
     return AdversarialExperimentForm(
         environment=environment,
-        initialization_mode=initialization_mode,
         feedback_mode=feedback_mode,
         algorithm_name=algorithm_name,
         n_actions=action_count,
@@ -249,7 +270,6 @@ def parse_adversarial_experiment_form(
             "replicates",
             max_replicates,
         ),
-        regret_evaluation=regret_evaluation,
     )
 
 
@@ -257,7 +277,6 @@ def parse_adversarial_scaling_form(
     values: Mapping[str, str],
     algorithms_by_feedback_mode: Mapping[str, list[str]],
     environments: set[str],
-    initialization_modes: set[str],
     max_actions: int,
     max_horizon: int,
     max_replicates: int,
@@ -273,14 +292,12 @@ def parse_adversarial_scaling_form(
         common_values,
         algorithms_by_feedback_mode,
         environments,
-        initialization_modes,
         max_actions,
         max_horizon,
         max_replicates,
     )
     return AdversarialScalingForm(
         environment=common.environment,
-        initialization_mode=common.initialization_mode,
         feedback_mode=common.feedback_mode,
         algorithm_name=common.algorithm_name,
         action_counts=action_counts,
@@ -292,5 +309,4 @@ def parse_adversarial_scaling_form(
         horizon=common.horizon,
         environment_seed=common.environment_seed,
         learner_seed=common.learner_seed,
-        regret_evaluation=common.regret_evaluation,
     )

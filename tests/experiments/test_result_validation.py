@@ -14,7 +14,7 @@ from tests.support import read_csv_rows
 
 def create_run(directory, max_recorded_points=6):
     return run_full_information_cross_play_experiment(
-        "rps", ["hedge", "bm"], horizon=30, regret_evaluation="both",
+        "rps", ["hedge", "bm"], horizon=30,
         output_dir=directory, max_recorded_points=max_recorded_points,
     )
 
@@ -30,7 +30,7 @@ def rewrite_rows(path, rows):
 def test_fixed_metadata_is_parsed_and_hashed_once_per_file(tmp_path, monkeypatch, loader):
     path = create_run(tmp_path)
     calls = Counter()
-    names = ["result_regret_evaluation", "result_algorithm_profile", "result_game_payoff_digest",
+    names = ["result_algorithm_profile", "result_game_payoff_digest",
              "result_implementation_version", "validate_runtime_environment", "runtime_environment_fingerprint"]
     for name in names:
         original = getattr(results, name)
@@ -66,7 +66,7 @@ def test_fixed_loader_rejects_constant_changes_on_every_row(tmp_path, field):
 @pytest.mark.parametrize("field,value", [
     ("feedback_mode", "invalid"), ("implementation_version", "-1"),
     ("runtime_environment", "[]"), ("runtime_fingerprint", "f" * 64),
-    ("game_payoff_digest", "not-a-digest"), ("regret_evaluation", "realized"),
+    ("game_payoff_digest", "not-a-digest"),
     ("algorithm_profile", '["hedge"]'), ("algorithm_profile", "not JSON"),
     ("horizon", "0"), ("seed", "-1"), ("replicate", "-1"),
 ])
@@ -80,16 +80,15 @@ def test_first_row_still_establishes_valid_file_metadata(tmp_path, field, value)
         list(results.iter_result_rows(path))
 
 
-def test_legacy_profiles_and_inferred_regret_sources_still_load(tmp_path):
+def test_alternative_algorithm_profile_columns_still_load(tmp_path):
     path = create_run(tmp_path)
     rows = read_csv_rows(path)
     for row in rows:
         del row["algorithm_profile"]
-        del row["regret_evaluation"]
         row.update(algorithm_player_0="hedge", algorithm_player_1="bm")
     rewrite_rows(path, rows)
     loaded = list(results.iter_result_rows(path))
-    assert loaded == [row | {"regret_evaluation": "both"} for row in rows]
+    assert loaded == rows
 
 
 def test_runtime_fingerprint_does_not_reparse_canonical_input(monkeypatch):

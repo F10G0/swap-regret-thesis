@@ -6,9 +6,7 @@ import re
 
 from experiments.result_schema import (
     REGRET_FIELDNAMES,
-    REGRET_NAMES,
-    default_regret_evaluation,
-    regret_sources,
+    result_implementation_version,
 )
 from experiments.recorder import read_final_csv_rows, require_csv_columns
 from experiments.recording import action_block_length
@@ -34,7 +32,6 @@ CONSTANT_RESULT_COLUMNS = IDENTITY_COLUMNS + (
     "runtime_environment",
     "runtime_fingerprint",
     "game_payoff_digest",
-    "regret_evaluation",
     "algorithm_profile",
     "n_players",
     "algorithm_player_0",
@@ -46,46 +43,16 @@ LEGACY_ALGORITHM_COLUMNS = {"algorithm_player_0", "algorithm_player_1"}
 PAYOFF_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
-def regret_column(regret_type: str, regret_name: str) -> str:
-    return f"{regret_type}_{regret_name}_regret"
+def regret_column(regret_name: str) -> str:
+    return f"{regret_name}_regret"
 
 
-def average_regret_column(regret_type: str, regret_name: str) -> str:
-    return f"average_{regret_column(regret_type, regret_name)}"
+def average_regret_column(regret_name: str) -> str:
+    return f"average_{regret_column(regret_name)}"
 
 
-def regret_columns(regret_evaluation: str) -> tuple[str, ...]:
-    return tuple(
-        field
-        for source in regret_sources(regret_evaluation)
-        for name in REGRET_NAMES
-        for field in (regret_column(source, name), average_regret_column(source, name))
-    )
-
-
-def required_columns(feedback_mode: str, regret_evaluation: str | None = None) -> set[str]:
-    evaluation = default_regret_evaluation(feedback_mode) if regret_evaluation is None else regret_evaluation
-    return BASE_RESULT_COLUMNS | set(regret_columns(evaluation))
-
-
-def result_regret_evaluation(row: dict[str, str]) -> str:
-    default_regret_evaluation(row["feedback_mode"])
-    present_sources = {
-        source
-        for source, fields in REGRET_FIELDNAMES.items()
-        if any(field in row for field in fields)
-    }
-    declared = row.get("regret_evaluation", "").strip()
-    if declared:
-        declared_sources = set(regret_sources(declared))
-        if present_sources != declared_sources:
-            raise ValueError("regret_evaluation does not match regret columns")
-        return declared
-    if present_sources == {"expected", "realized"}:
-        return "both"
-    if len(present_sources) == 1:
-        return present_sources.pop()
-    raise ValueError("result has no regret evaluation columns")
+def required_columns() -> set[str]:
+    return BASE_RESULT_COLUMNS | set(REGRET_FIELDNAMES)
 
 
 def result_algorithm_profile(row: dict[str, str]) -> tuple[str, ...]:
@@ -126,16 +93,6 @@ def result_game_payoff_digest(row: dict[str, str]) -> str:
     if not PAYOFF_DIGEST_PATTERN.fullmatch(digest):
         raise ValueError("invalid game_payoff_digest")
     return digest
-
-
-def result_implementation_version(row: dict[str, str]) -> int:
-    serialized = row.get("implementation_version", "").strip()
-    if not serialized:
-        return 0
-    version = int(serialized)
-    if version < 0:
-        raise ValueError("invalid implementation_version")
-    return version
 
 
 def result_runtime_environment(row: dict[str, str]) -> str:
@@ -193,12 +150,13 @@ def _validated_rows(
     current_rows: list[dict[str, str]] = []
     for row in rows:
         # Fully validate constants once; compare their original CSV strings on
-        # every subsequent row, before filling inferred legacy metadata.
+        # every subsequent row.
         identity = tuple(row.get(column) for column in CONSTANT_RESULT_COLUMNS)
         if expected_identity is None:
-            regret_evaluation = result_regret_evaluation(row)
-            require_csv_columns(input_path, fieldnames, required_columns(row["feedback_mode"], regret_evaluation))
             result_implementation_version(row)
+            require_csv_columns(input_path, fieldnames, required_columns())
+            if row["feedback_mode"] not in {"full_information", "bandit"}:
+                raise ValueError(f"unknown feedback mode: {row['feedback_mode']}")
             result_runtime_fingerprint(row)
             result_game_payoff_digest(row)
             expected_identity = identity
@@ -208,7 +166,6 @@ def _validated_rows(
                 raise ValueError(f"{input_path} contains invalid run metadata")
         elif identity != expected_identity:
             raise ValueError(f"{input_path} contains inconsistent run metadata")
-        row["regret_evaluation"] = regret_evaluation
 
         time = int(row["t"])
         player = int(row["player"])

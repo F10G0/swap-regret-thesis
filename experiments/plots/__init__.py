@@ -5,7 +5,6 @@ from pathlib import Path
 HEATMAP_COLORMAP = "Blues"
 FIGURE_FORMATS = ("png", "pdf")
 FIGURE_SUFFIXES = tuple(f".{figure_format}" for figure_format in FIGURE_FORMATS)
-CONFIDENCE_FREE_SUFFIX = "_without_ci"
 
 
 def figure_path(output_path: str | Path, figure_format: str) -> Path:
@@ -19,11 +18,6 @@ def figure_paths(output_path: str | Path) -> tuple[Path, Path]:
     if preview_path.suffix.lower() != ".png":
         raise ValueError("figure output path must use the .png suffix")
     return preview_path, preview_path.with_suffix(".pdf")
-
-
-def confidence_free_figure_path(output_path: str | Path) -> Path:
-    path = Path(output_path)
-    return path.with_name(f"{path.stem}{CONFIDENCE_FREE_SUFFIX}{path.suffix}")
 
 
 def remove_stale_figure_pairs(output_dir: str | Path, generated_paths, filename_prefix: str | None = None) -> None:
@@ -69,7 +63,8 @@ def save_figure_pair(
 ) -> tuple[Path, Path]:
     preview_path, pdf_path = figure_paths(output_path)
     preview_path.parent.mkdir(parents=True, exist_ok=True)
-    png_options = kwargs | ({"dpi": png_dpi} if png_dpi is not None else {})
+    # Keep the physical page size; PDF artists remain vector, PNG is a preview.
+    png_options = kwargs | {"dpi": png_dpi or 150}
+    figure.savefig(pdf_path, **kwargs)
     figure.savefig(preview_path, **png_options)
-    figure.savefig(pdf_path, dpi=300, **kwargs)
     return preview_path, pdf_path

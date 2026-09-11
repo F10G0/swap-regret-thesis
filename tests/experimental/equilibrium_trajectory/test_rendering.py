@@ -49,7 +49,6 @@ def test_trajectory_subdivides_final_log_interval_while_distance_is_unchanged(tm
     def capture_trajectory_plot(
         analysis,
         output_path,
-        game_name,
         n_replicates,
         focus_from_checkpoint=0,
     ):
@@ -145,7 +144,6 @@ def test_comparison_uses_shared_focused_checkpoints_and_retains_incoming_node(
         analysis,
         plot_members,
         output_path,
-        game_name,
         focus_from_checkpoint,
     ):
         captured["analysis"] = analysis
@@ -261,7 +259,7 @@ def test_unified_comparison_focus_bypasses_geometry_and_keeps_predecessor(
     monkeypatch.setattr(
         plot_equilibrium_convergence,
         "_plot_equilibrium_trajectory_comparison",
-        lambda analysis, members, output_path, game_name, focus: (
+        lambda analysis, members, output_path, focus: (
             captured.update(focus=focus)
         ),
     )
@@ -361,7 +359,6 @@ def test_comparison_renderer_excludes_incoming_node_from_shared_limits(
         analysis,
         plot_members,
         tmp_path / "comparison.png",
-        "RPS",
         focus_from_checkpoint=1,
     )
 
@@ -373,7 +370,7 @@ def test_comparison_renderer_excludes_incoming_node_from_shared_limits(
     assert axes.get_xlim()[1] < 2.0
     assert axes.get_ylim()[0] == 0.0
     assert not axes.texts
-    assert "Unified Equilibrium-Relative" in axes.get_title()
+    assert axes.get_title() == ""
     close_figure(figure)
 
 
@@ -409,7 +406,7 @@ def test_trajectory_labels_only_logarithmic_horizons_and_final() -> None:
     ) == [0, 1, 3, 4]
 
 
-def test_trajectory_plot_has_larger_endpoint_labels_and_fixed_extent(
+def test_trajectory_plot_has_readable_endpoint_labels_and_fixed_extent(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -444,7 +441,6 @@ def test_trajectory_plot_has_larger_endpoint_labels_and_fixed_extent(
     plot_equilibrium_convergence._plot_equilibrium_trajectory(
         analysis,
         output_path,
-        "test",
         n_replicates=1,
     )
 
@@ -452,7 +448,7 @@ def test_trajectory_plot_has_larger_endpoint_labels_and_fixed_extent(
     axes = figure.axes[0]
     trajectory_lines = axes.lines
     assert [text.get_text() for text in axes.texts] == ["1", "100k"]
-    assert all(text.get_fontsize() == 11 for text in axes.texts)
+    assert all(text.get_fontsize() == 9 for text in axes.texts)
     assert len(trajectory_lines) == 1
     assert trajectory_lines[0].get_color() == "#4b5563"
     assert [collection.get_label() for collection in axes.collections] == [
@@ -509,7 +505,6 @@ def test_focus_final_interval_keeps_only_preceding_log_segment_offscreen(
     plot_equilibrium_convergence._plot_equilibrium_trajectory(
         analysis,
         tmp_path / "focused.png",
-        "test",
         n_replicates=1,
         focus_from_checkpoint=3,
     )
@@ -523,7 +518,8 @@ def test_focus_final_interval_keeps_only_preceding_log_segment_offscreen(
     assert np.allclose(axes.collections[0].get_offsets()[0], [0.0, 0.0])
     assert [text.get_text() for text in axes.texts] == ["1k", "10k"]
     assert np.allclose(axes.texts[0].xy, [0.0, 0.0])
-    assert axes.get_ylabel() == "L1 distance to CCE"
+    assert axes.get_ylabel() == r"$L^1$ distance to CCE"
+    assert analysis.axis_labels[1] == "L1 distance to CCE"  # Display formatting does not mutate analysis.
     assert axes.get_aspect() == "auto"
     close_figure(figure)
 

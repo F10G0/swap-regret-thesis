@@ -14,28 +14,23 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from config import FIGURE_DIR, RAW_DIR
-from experiments.algorithm_labels import algorithm_profile_label
-from experiments.plots import FIGURE_SUFFIXES, confidence_free_figure_path, save_figure_pair
+from experiments.game_catalog import CUSTOM_GAME_PREFIX
+from experiments.games import PAYOFF_FACTORIES
+from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
+from experiments.plots.style import publication_plot, curve_labels, algorithm_style, regret_axis_label, finish_line_figure
 from experiments.results import average_regret_column, iter_result_rows, regret_column
 from experiments.result_schema import REGRET_NAMES
 from experiments.sampling import CheckpointRows
-from metrics.confidence import mean_confidence_interval_half_width
 
 
 logger = logging.getLogger(__name__)
 
 MAX_PLOT_POINTS_PER_PLAYER = 2000
-PLOT_ROW_CACHE_VERSION = 3
-
-REGRET_TYPES = {
-    "expected": "Expected",
-    "realized": "Realized",
-}
+PLOT_ROW_CACHE_VERSION = 5
 
 REPLICATE_GROUP_COLUMNS = (
     "game",
     "feedback_mode",
-    "regret_evaluation",
     "algorithm",
     "horizon",
     "seed",
@@ -137,7 +132,17 @@ def collect_results(
 
     for path in paths:
         try:
-            rows = load_rows(path, cache_dir=cache_dir)
+            cache_path = Path(cache_dir) / f"{path.stem}.json"
+            rows = _cached_rows(cache_path, path, path.stat(), MAX_PLOT_POINTS_PER_PLAYER)
+            if rows is None:
+                # Identify retired games before schema validation or cache writes.
+                # Valid cache hits still avoid reading the source CSV entirely.
+                with path.open("r", encoding="utf-8", newline="") as file:
+                    result_game = next(csv.DictReader(file), {}).get("game")
+                if result_game is not None and result_game not in PAYOFF_FACTORIES and not result_game.startswith(CUSTOM_GAME_PREFIX):
+                    logger.warning("Skipping result %s for unsupported game %s", path, result_game)
+                    continue
+                rows = load_rows(path, cache_dir=cache_dir)
         except (OSError, KeyError, TypeError, ValueError, csv.Error) as error:
             if not skip_invalid:
                 raise
@@ -147,6 +152,9 @@ def collect_results(
             continue
 
         result_game = rows[0]["game"]
+        if result_game not in PAYOFF_FACTORIES and not result_game.startswith(CUSTOM_GAME_PREFIX):
+            logger.warning("Skipping result %s for unsupported game %s", path, result_game)
+            continue
         if game_name is not None and result_game != game_name:
             continue
         run_id = rows[0]["run_id"]
@@ -167,7 +175,7 @@ def group_replicate_runs(rows_by_run: dict[str, list[dict]]) -> list[list[list[d
     return [sorted(group, key=lambda rows: int(rows[0]["replicate"])) for group in groups.values()]
 
 
-def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column: str, divide_by_sqrt_time: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column: str, divide_by_sqrt_time: bool = False) -> tuple[np.ndarray, np.ndarray]:
     values_by_time = defaultdict(list)
 
     for rows in replicate_runs:
@@ -183,68 +191,38 @@ def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column
     # Never interpolate regret or average over a changing subset of replicates.
     times = np.array(sorted(time for time, values in values_by_time.items() if len(values) == len(replicate_runs)), dtype=int)
     means = np.empty(len(times), dtype=float)
-    confidence = np.zeros(len(times), dtype=float)
 
     for index, time in enumerate(times):
         values = np.asarray(values_by_time[time], dtype=float)
         if len(values) != len(replicate_runs):
             raise ValueError("replicate runs contain inconsistent time points")
         means[index] = np.mean(values)
-        confidence[index] = mean_confidence_interval_half_width(values)
 
-    return times, means, confidence
-
-
-def run_label(rows: list[dict], n_replicates: int, include_solver: bool = False, include_feedback: bool = False,
-              include_evaluation: bool = False) -> str:
-    first_row = rows[0]
-    profile = algorithm_profile_label(first_row["algorithm"].split("_vs_"))
-    label = f"{profile} · seed {first_row['seed']}"
-    if include_feedback:
-        label += f" · {first_row['feedback_mode'].replace('_', ' ')}"
-    if include_evaluation:
-        label += f" · evaluation {first_row['regret_evaluation']}"
-    if include_solver:
-        label += f" · solver {first_row['stationary_method']}"
-    if n_replicates > 1:
-        label += f" · {n_replicates} replicates"
-    return label
+    return times, means
 
 
-def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret_type: str, regret_name: str, player: int, average: bool, output_dir: str | Path = FIGURE_DIR) -> None:
-    regret_type_label = REGRET_TYPES[regret_type]
+@publication_plot
+def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret_name: str, player: int, average: bool, output_dir: str | Path = FIGURE_DIR) -> None:
     if average:
-        column = average_regret_column(regret_type, regret_name)
-        ylabel = f"Average {regret_type_label.lower()} {regret_name} regret"
-        title = f"{game_name}: average {regret_type_label.lower()} {regret_name} regret, player {player}"
-        filename = f"{game_name}_average_{regret_type}_{regret_name}_regret_player_{player}.png"
+        column = average_regret_column(regret_name)
+        filename = f"{game_name}_average_{regret_name}_regret_player_{player}.png"
     else:
-        column = regret_column(regret_type, regret_name)
-        ylabel = f"{regret_type_label} {regret_name} regret / sqrt(t)"
-        title = f"{game_name}: {regret_type_label.lower()} {regret_name} regret scaling, player {player}"
-        filename = f"{game_name}_{regret_type}_{regret_name}_regret_over_sqrt_t_player_{player}.png"
+        column = regret_column(regret_name)
+        filename = f"{game_name}_{regret_name}_regret_over_sqrt_t_player_{player}.png"
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots()
     plotted = False
-    confidence_bands = []
 
-    color_map = plt.get_cmap("tab20")
-    include_solver = len({group[0][0]["stationary_method"] for group in replicate_groups}) > 1
-    include_feedback = len({group[0][0]["feedback_mode"] for group in replicate_groups}) > 1
-    include_evaluation = len({group[0][0]["regret_evaluation"] for group in replicate_groups}) > 1
+    labels = curve_labels([group[0][0] | {"replicate_count": len(group)} for group in replicate_groups])
     for group_index, replicate_runs in enumerate(replicate_groups):
-        times, means, confidence = aggregate_metric_curve(replicate_runs, player, column, divide_by_sqrt_time=not average)
+        times, means = aggregate_metric_curve(replicate_runs, player, column, divide_by_sqrt_time=not average)
         if len(times) == 0:
             continue
         plotted = True
-        color = color_map(group_index % color_map.N)
-        axes.plot(times, means, color=color, label=run_label(
-            replicate_runs[0], len(replicate_runs), include_solver, include_feedback, include_evaluation
-        ))
-        if len(replicate_runs) > 1:
-            confidence_bands.append((times, means, confidence, color))
+        algorithm = replicate_runs[0][0]["algorithm"].split("_vs_")[player]
+        axes.plot(times, means, **algorithm_style(algorithm), label=labels[group_index])
 
     if not plotted:
         plt.close(figure)
@@ -253,24 +231,11 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
     if not average:
         axes.set_xscale("log")
     axes.axhline(0.0, color="#7b8580", linewidth=0.8, linestyle="--")
-    axes.set_xlabel("Round")
-    axes.set_ylabel(ylabel)
-    axes.set_title(title)
-    axes.grid(True)
-    handles, labels = axes.get_legend_handles_labels()
-    legend_columns = min(2, len(handles))
-    legend_rows = (len(handles) + legend_columns - 1) // legend_columns
-    legend_height = 0.22 * legend_rows + 0.25
-    figure_height = 4.4 + legend_height
-    figure.set_size_inches(11, figure_height)
-    figure.subplots_adjust(left=0.09, right=0.98, top=1.0 - 0.45 / figure_height, bottom=(legend_height + 0.35) / figure_height)
-    figure.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.02), ncol=legend_columns, frameon=False, fontsize="small")
+    axes.set_xlabel(r"Round $T$")
+    axes.set_ylabel(regret_axis_label(regret_name, "average" if average else "sqrt_scaling"))
+    finish_line_figure(figure, axes)
     output_path = output_dir / filename
-    if confidence_bands:
-        save_figure_pair(figure, confidence_free_figure_path(output_path), png_dpi=150, bbox_inches="tight", pad_inches=0.15)
-        for times, means, confidence, color in confidence_bands:
-            axes.fill_between(times, means - confidence, means + confidence, color=color, alpha=0.2)
-    save_figure_pair(figure, output_path, png_dpi=150, bbox_inches="tight", pad_inches=0.15)
+    save_figure_pair(figure, output_path)
     plt.close(figure)
 
 
@@ -287,18 +252,11 @@ def clear_game_figures(game_name: str, output_dir: str | Path = FIGURE_DIR) -> N
 def plot_game_results(game_name: str, rows_by_run: dict[str, list[dict]], output_dir: str | Path) -> None:
     clear_game_figures(game_name, output_dir)
     replicate_groups = group_replicate_runs(rows_by_run)
-    groups_by_regret_type = {
-        source: [group for group in replicate_groups if regret_column(source, REGRET_NAMES[0]) in group[0][0]]
-        for source in REGRET_TYPES
-    }
     players = sorted({int(row["player"]) for rows in rows_by_run.values() for row in rows})
     for player in players:
-        for regret_type, source_groups in groups_by_regret_type.items():
-            if not source_groups:
-                continue
-            for regret_name in REGRET_NAMES:
-                plot_regret(game_name, source_groups, regret_type, regret_name, player, average=True, output_dir=output_dir)
-                plot_regret(game_name, source_groups, regret_type, regret_name, player, average=False, output_dir=output_dir)
+        for regret_name in REGRET_NAMES:
+            plot_regret(game_name, replicate_groups, regret_name, player, average=True, output_dir=output_dir)
+            plot_regret(game_name, replicate_groups, regret_name, player, average=False, output_dir=output_dir)
 
 
 def plot_selected_results(game_name: str, input_dir: str | Path = RAW_DIR, output_dir: str | Path = FIGURE_DIR, skip_invalid: bool = False) -> None:

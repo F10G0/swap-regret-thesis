@@ -1,16 +1,17 @@
 import json
+from html.parser import HTMLParser
 from pathlib import Path
 import time
 
 import numpy as np
 import pytest
 
-from experiments.plots import confidence_free_figure_path
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
 from web.presentations import GAME_PRESENTATIONS
 from tests.web.support import block_job_queue, create_test_app, csrf_token, wait_for_http_response, wait_for_job
 from web.validation import (
+    ExperimentForm,
     parse_experiment_form,
     parse_positive_integer,
     validate_leaf_filename,
@@ -29,8 +30,16 @@ VALID_FORM = {
     "horizon": "2",
     "seed": "42",
     "replicates": "1",
-    "regret_evaluation": "expected",
 }
+
+
+RETIRED_GAME_IDS = (
+    "bertrand_standard_o1",
+    "bertrand_linear_o2",
+    "bertrand_logit_o3",
+    "bertrand_linear_o2_prime",
+    "bertrand_logit_o3_prime",
+)
 
 
 def wait_for_trajectory_comparison(client, url: str):
@@ -150,34 +159,16 @@ def test_all_feedback_modes_require_replicates() -> None:
 
 
 @pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
-@pytest.mark.parametrize("regret_evaluation", ["expected", "realized", "both"])
-def test_experiment_form_accepts_every_regret_evaluation_for_each_feedback_mode(
-    feedback_mode: str,
-    regret_evaluation: str,
-) -> None:
+def test_experiment_form_accepts_feedback_without_an_evaluation_mode(feedback_mode):
     algorithm = "hedge" if feedback_mode == "full_information" else "exp3_ix"
     form = parse_experiment_form(
-        VALID_FORM | {
-            "feedback_mode": feedback_mode,
-            "algorithm_names": [algorithm, algorithm],
-            "regret_evaluation": regret_evaluation,
-        },
+        VALID_FORM | {"feedback_mode": feedback_mode, "algorithm_names": [algorithm] * 2},
         games={"rps"},
         algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3_ix"]},
         max_horizon=100,
     )
-
-    assert form.regret_evaluation == regret_evaluation
-
-
-def test_experiment_form_rejects_unknown_regret_evaluation() -> None:
-    with pytest.raises(ValueError, match="unknown regret evaluation"):
-        parse_experiment_form(
-            VALID_FORM | {"regret_evaluation": "unknown"},
-            games={"rps"},
-            algorithms_by_feedback_mode={"full_information": ["hedge"]},
-            max_horizon=100,
-        )
+    assert form.feedback_mode == feedback_mode
+    assert not hasattr(form, "regret_evaluation")
 
 
 def test_leaf_filename_validation_rejects_paths_and_wrong_suffixes() -> None:
@@ -226,16 +217,35 @@ def test_dashboard_queues_valid_experiment_and_exposes_job_status(
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 1
 
 
-def test_dashboard_exposes_regret_evaluation_control(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
+def test_dashboard_exposes_only_current_controls_and_figure_state(tmp_path: Path, mode) -> None:
     app, _ = create_test_app(tmp_path)
+    page = app.test_client().get("/", query_string={"mode": mode}).get_data(as_text=True)
+    assert 'id="feedback-mode"' in page
+    for obsolete in ('id="regret-evaluation"', 'value="expected"', 'value="realized"', 'value="both"'):
+        assert obsolete not in page
+    controls = []
 
-    page = app.test_client().get("/").get_data(as_text=True)
+    class ControlParser(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag in {"input", "select", "button"}:
+                controls.append(dict(attrs))
 
-    assert 'id="regret-evaluation"' in page
-    assert '<option value="expected"' in page
-    assert '<option value="realized"' in page
-    assert '<option value="both"' in page
-    assert "Choose whether to record expected regret, realized regret, or both without changing learner feedback." in page
+    ControlParser().feed(page)
+    identifiers = {control.get(key) for control in controls for key in ("id", "name", "value")}
+    assert identifiers.isdisjoint({
+        "regret_evaluation", "regret-source", "confidence-toggle", "show_ci", "hide_ci",
+        "initialization_mode", "uniform_grid", "matching_pennies",
+    })
+    assert {control["id"] for control in controls if control.get("id", "").startswith("builder-")} == {
+        "builder-generate", "builder-download",
+    }
+    assert {control["id"] for control in controls if control.get("id", "").startswith("filter-")} == {
+        "filter-scope", "filter-feedback", "filter-player", "filter-metric", "filter-view",
+        "filter-context", "filter-profiles", "filter-select-all", "filter-clear-all",
+    }
+    payload = json.loads(page.split('<script id="dashboard-data" type="application/json">', 1)[1].split('</script>', 1)[0])
+    assert "figures" not in payload  # No empty legacy gallery state or automatic all-profile preview.
 
 
 def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
@@ -278,19 +288,15 @@ def test_plot_rebuild_uses_standard_redirect(tmp_path: Path) -> None:
     assert wait_for_job(service, job.id) == "succeeded"
 
 
-def test_figure_source_filter_has_only_separate_sources(tmp_path: Path) -> None:
+def test_figure_filters_keep_regret_and_view_without_source(tmp_path: Path) -> None:
     app, service = create_test_app(tmp_path)
     service.figure_dir.mkdir(parents=True)
-    for source in ("expected", "realized"):
-        (service.figure_dir / f"rps_average_{source}_external_regret_player_0.png").write_bytes(b"png")
-
+    (service.figure_dir / "rps_average_external_regret_player_0.png").write_bytes(b"png")
     page = app.test_client().get("/").get_data(as_text=True)
-    source_filter = page.split('<select id="filter-source"', 1)[1].split("</select>", 1)[0]
-
-    assert '<option value="expected">Expected</option>' in source_filter
-    assert '<option value="realized">Realized</option>' in source_filter
-    assert 'value="all"' not in source_filter
-    assert "Expected and realized" not in source_filter
+    assert 'id="filter-metric"' in page
+    assert 'id="filter-view"' in page
+    assert 'id="filter-source"' not in page
+    assert 'data-source=' not in page
 
 
 def test_dashboard_uses_compact_management_and_has_no_all_pairs_action(
@@ -375,9 +381,9 @@ def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_pa
     assert b"Equilibrium Convergence" in dashboard_response.data
     assert b">Trajectories</a>" in dashboard_response.data
     assert b'class="results-toolbar"' in dashboard_response.data
-    assert b'id="filter-summary-source"' in dashboard_response.data
-    assert b'data-regret-source="expected"' in dashboard_response.data
-    assert b'data-regret-source="realized"' in dashboard_response.data
+    assert b'id="filter-summary-source"' not in dashboard_response.data
+    assert b'data-regret-source=' not in dashboard_response.data
+    assert b'data-metric="average_external"' in dashboard_response.data
     assert b'class="panel disclosure-panel equilibrium-panel"' in dashboard_response.data
     assert b'id="trajectory-comparison-view"' not in dashboard_response.data
     assert workspace_response.status_code == 200
@@ -435,14 +441,14 @@ def test_dashboard_combines_matching_replicates_and_retains_raw_downloads(tmp_pa
     payload = page.split('<script id="dashboard-data" type="application/json">', 1)[1].split("</script>", 1)[0]
     summaries = json.loads(payload)["summaries"]
     raw_player_zero = [row for row in service.result_snapshot().summaries if row["player"] == 0]
-    expected = sum(row["average_expected_external_regret"] for row in raw_player_zero) / 2
+    expected = sum(row["average_external_regret"] for row in raw_player_zero) / 2
 
     assert response.status_code == 200
     assert len(summaries) == 2
     assert all(summary["replicates"] == [0, 1] for summary in summaries)
     assert all(summary["replicate_count"] == 2 for summary in summaries)
     assert all(len(summary["runs"]) == 2 for summary in summaries)
-    assert summaries[0]["average_expected_external_regret"] == pytest.approx(expected)
+    assert summaries[0]["average_external_regret"] == pytest.approx(expected)
     assert summaries[0]["joint_actions_url"].startswith("/experiment-groups/")
     assert summaries[0]["equilibrium_distance_url"].startswith("/experiment-groups/")
     assert {run["experiment"] for run in summaries[0]["runs"]} == set(service.result_snapshot().filenames)
@@ -502,7 +508,7 @@ def test_dashboard_renders_balanced_top_controls_and_theme_selector(
     assert 'class="control-card control-card-game"' in page
     assert 'aria-describedby="game-description"' in page
     assert 'aria-describedby="feedback-description"' in page
-    assert 'aria-describedby="regret-evaluation-description"' in page
+    assert 'aria-describedby="regret-evaluation-description"' not in page
     assert 'class="field-grid field-grid-two horizon-seed-grid"' in page
     assert 'id="replicate-fields" class="field"' in page
     horizon_seed = page.split('class="field-grid field-grid-two horizon-seed-grid"', 1)[1].split("</div>", 3)
@@ -512,7 +518,7 @@ def test_dashboard_renders_balanced_top_controls_and_theme_selector(
     assert 'id="replicates"' in page
     assert "Number of rounds run by each experiment; the dashboard maximum is 100." in page
     assert "Base seed used to derive reproducible random streams for every player and replicate." in page
-    assert "aggregate them with Student-t 95% confidence intervals" in page
+    assert "plot their replicate mean" in page
     assert 'class="theme-control" for="primary-theme"' in page
     assert 'id="primary-theme" aria-label="Primary color theme"' in page
     assert page.index('id="primary-theme"') < page.index('id="experiment-form"')
@@ -524,24 +530,22 @@ def test_dashboard_renders_balanced_top_controls_and_theme_selector(
     assert 'swap-regret-primary-theme' in page
 
 
-def test_fixed_dashboard_can_hide_confidence_intervals(tmp_path: Path) -> None:
+def test_fixed_dashboard_requires_selection_before_showing_a_figure(tmp_path: Path) -> None:
     app, service = create_test_app(tmp_path)
     service.figure_dir.mkdir(parents=True)
-    figure = service.figure_dir / "rps_average_expected_external_regret_player_0.png"
-    for path in (figure, figure.with_suffix(".pdf"), confidence_free_figure_path(figure), confidence_free_figure_path(figure).with_suffix(".pdf")):
+    figure = service.figure_dir / "rps_average_external_regret_player_0.png"
+    for path in (figure, figure.with_suffix(".pdf")):
         path.write_bytes(b"figure")
 
     page = app.test_client().get("/").get_data(as_text=True)
 
-    assert page.count('class="confidence-toggle"') == 1
-    assert 'id="confidence-intervals"' not in page
-    assert "Hide 95% CI" in page
-    assert "data-without-confidence-src" in page
-    assert "data-without-confidence-href" in page
-    assert "data-without-confidence-download" in page
+    assert page.count('class="figure-open"') == 0
+    assert 'id="filter-profiles"' in page
+    assert figure.read_bytes() == b"figure"
+    assert "confidence-toggle" not in page
 
 
-def test_dashboard_renders_readable_bertrand_names_and_parameters(
+def test_dashboard_exposes_only_surviving_builtin_game_options(
     tmp_path: Path,
 ) -> None:
     app, _ = create_test_app(tmp_path)
@@ -555,41 +559,61 @@ def test_dashboard_renders_readable_bertrand_names_and_parameters(
     dashboard_data = json.loads(dashboard_payload)
 
     assert response.status_code == 200
-    for game_name in (
-        "bertrand_linear_o2",
-        "bertrand_logit_o3",
-        "bertrand_linear_o2_prime",
-        "bertrand_logit_o3_prime",
-    ):
+    assert set(dashboard_data["gamePresentations"]) == {"rps", "rpsls"}
+    for game_name in ("rps", "rpsls"):
         presentation = GAME_PRESENTATIONS[game_name]
         assert f'value="{game_name}"' in page
         assert presentation["label"] in page
         assert dashboard_data["gamePresentations"][game_name] == presentation
+    for game_name in RETIRED_GAME_IDS:
+        assert game_name not in page
 
 
-@pytest.mark.parametrize(
-    "game_name",
-    [
-        "bertrand_linear_o2",
-        "bertrand_logit_o3",
-        "bertrand_linear_o2_prime",
-        "bertrand_logit_o3_prime",
-    ],
-)
-def test_dashboard_serves_bertrand_equilibrium_heatmaps_with_readable_titles(
+@pytest.mark.parametrize("game_name", RETIRED_GAME_IDS)
+@pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
+def test_dashboard_rejects_retired_games_before_queueing(
     tmp_path: Path,
     game_name: str,
+    feedback_mode: str,
+) -> None:
+    app, service = create_test_app(tmp_path)
+    client = app.test_client()
+    algorithm = "hedge" if feedback_mode == "full_information" else "exp3_ix"
+    response = client.post(
+        "/",
+        data=VALID_FORM | {
+            "_csrf_token": csrf_token(client),
+            "game": game_name,
+            "feedback_mode": feedback_mode,
+            "algorithm_names": [algorithm, algorithm],
+        },
+    )
+    assert response.status_code == 400
+    assert f"unknown game: {game_name}" in response.get_data(as_text=True)
+    assert service.jobs.recent() == []
+    assert not list(service.raw_dir.glob("*.csv"))
+
+    # Direct callers cannot bypass the form boundary to launch a retired game.
+    with pytest.raises(ValueError, match=f"unknown game: {game_name}"):
+        service.submit_experiment(ExperimentForm(
+            game=game_name,
+            feedback_mode=feedback_mode,
+            algorithm_names=(algorithm, algorithm),
+            horizon=2,
+            seed=42,
+            replicates=1,
+        ))
+    assert service.jobs.recent() == []
+
+
+@pytest.mark.parametrize("game_name", RETIRED_GAME_IDS)
+@pytest.mark.parametrize("equilibrium", ["ce", "cce"])
+def test_dashboard_rejects_retired_game_equilibrium_heatmaps(
+    tmp_path: Path, game_name: str, equilibrium: str
 ) -> None:
     app, _ = create_test_app(tmp_path)
-
-    response, statuses = wait_for_http_response(
-        app.test_client(),
-        f"/games/{game_name}/equilibria/ce.png",
-    )
-
-    assert statuses == [200]
-    assert response.status_code == 200
-    assert response.content_type == "image/png"
+    response = app.test_client().get(f"/games/{game_name}/equilibria/{equilibrium}.png")
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize(

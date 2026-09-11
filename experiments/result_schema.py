@@ -1,4 +1,4 @@
-RESULT_IMPLEMENTATION_VERSION = 3
+RESULT_IMPLEMENTATION_VERSION = 5
 
 BASE_FIELDNAMES = [
     "run_id",
@@ -6,7 +6,6 @@ BASE_FIELDNAMES = [
     "runtime_environment",
     "runtime_fingerprint",
     "feedback_mode",
-    "regret_evaluation",
     "seed",
     "replicate",
     "stationary_method",
@@ -22,48 +21,22 @@ BASE_FIELDNAMES = [
 ]
 
 REGRET_NAMES = ("external", "internal", "swap")
-REGRET_EVALUATIONS = ("expected", "realized", "both")
+REGRET_FIELDNAMES = [
+    field for name in REGRET_NAMES
+    for field in (f"{name}_regret", f"average_{name}_regret")
+]
 
 
-def _regret_fieldnames(regret_type: str) -> list[str]:
-    return [field for name in REGRET_NAMES for field in (f"{regret_type}_{name}_regret", f"average_{regret_type}_{name}_regret")]
+def regret_fieldnames() -> list[str]:
+    return BASE_FIELDNAMES + REGRET_FIELDNAMES
 
 
-EXPECTED_REGRET_FIELDNAMES = _regret_fieldnames("expected")
-REALIZED_REGRET_FIELDNAMES = _regret_fieldnames("realized")
-REGRET_FIELDNAMES = {
-    "expected": EXPECTED_REGRET_FIELDNAMES,
-    "realized": REALIZED_REGRET_FIELDNAMES,
-}
-
-
-def default_regret_evaluation(feedback_mode: str) -> str:
-    if feedback_mode == "full_information":
-        return "expected"
-    if feedback_mode == "bandit":
-        return "realized"
-    raise ValueError(f"unknown feedback mode: {feedback_mode}")
-
-
-def resolve_regret_evaluation(feedback_mode: str, regret_evaluation: str) -> str:
-    if regret_evaluation == "feedback_aligned":
-        return default_regret_evaluation(feedback_mode)
-    if regret_evaluation not in REGRET_EVALUATIONS:
-        raise ValueError(f"unknown regret evaluation: {regret_evaluation}")
-    return regret_evaluation
-
-
-def regret_sources(regret_evaluation: str) -> tuple[str, ...]:
-    if regret_evaluation == "both":
-        return ("expected", "realized")
-    if regret_evaluation in REGRET_EVALUATIONS:
-        return (regret_evaluation,)
-    raise ValueError(f"unknown regret evaluation: {regret_evaluation}")
-
-
-def regret_fieldnames(regret_evaluation: str) -> list[str]:
-    return BASE_FIELDNAMES + [
-        field
-        for source in regret_sources(regret_evaluation)
-        for field in REGRET_FIELDNAMES[source]
-    ]
+def result_implementation_version(row: dict[str, str]) -> int:
+    version = int(row.get("implementation_version") or 0)
+    if version != RESULT_IMPLEMENTATION_VERSION:
+        raise ValueError(
+            f"incompatible result implementation_version {version}; "
+            f"expected {RESULT_IMPLEMENTATION_VERSION}. Re-run the experiment; "
+            "existing results are not migrated."
+        )
+    return version

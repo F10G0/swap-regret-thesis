@@ -52,7 +52,7 @@ def replicate_player_seeds(
 def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_names: list[str], horizon: int, seed: int, replicate: int,
                               environment_factory: Callable[[np.ndarray], FixedGameEnvironment], algorithm_registry: dict[str, AlgorithmFactory], output_dir: str | Path,
                               should_cancel: Callable[[], bool] | None = None, custom_game_dir: str | Path = CUSTOM_GAME_DIR,
-                              regret_evaluation: str = "feedback_aligned", max_recorded_points: int = MAX_RECORDED_POINTS) -> Path:
+                              max_recorded_points: int = MAX_RECORDED_POINTS) -> Path:
     for name in algorithm_names:
         if name not in algorithm_registry:
             raise ValueError(f"unknown algorithm: {name}")
@@ -67,7 +67,6 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
         horizon,
         seed,
         replicate,
-        regret_evaluation=regret_evaluation,
         game_payoff_digest=payoff_tensor_digest(payoff_tensor),
     )
     game = environment_factory(payoff_tensor)
@@ -81,13 +80,13 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
         raise FileExistsError(f"experiment {spec.run_id} already exists at {output_path}")
 
     checkpoints = recording_checkpoints(horizon, max_recorded_points)
-    fieldnames = regret_fieldnames(spec.regret_evaluation)
+    fieldnames = regret_fieldnames()
     if len(checkpoints) < horizon:
         fieldnames = fieldnames + ["action_history"]
     with CsvRecorder(fieldnames, output_path) as recorder:
         run_game(
             game_name=spec.game_name, feedback_mode=spec.feedback_mode, algorithm_name=spec.algorithm_profile_name, game=game, players=players, recorder=recorder, horizon=spec.horizon,
-            metadata=spec.metadata(), should_cancel=should_cancel, regret_evaluation=spec.regret_evaluation,
+            metadata=spec.metadata(), should_cancel=should_cancel,
             max_recorded_points=max_recorded_points,
         )
 

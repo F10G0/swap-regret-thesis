@@ -5,7 +5,8 @@ import subprocess
 import pytest
 
 
-def test_filtered_pdf_download_uses_visible_order_and_active_ci_links() -> None:
+@pytest.mark.parametrize("override", ["", "/adversarial/action-scaling"])
+def test_queue_experiment_submits_in_place_and_prevents_double_clicks(override) -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is unavailable")
@@ -13,92 +14,117 @@ def test_filtered_pdf_download_uses_visible_order_and_active_ci_links() -> None:
     script = r'''
 const assert = require("assert").strict;
 const source = require("fs").readFileSync(process.argv[1], "utf8");
-const start = source.indexOf("function visibleFigureDownloads");
-const end = source.indexOf("\nfunction selectAvailableFigureSource", start);
-const card = (filename, hidden = false) => ({hidden, filename, querySelector() {
-    return {getAttribute: () => this.filename};
-}});
-const cards = [card("third_without_ci.pdf"), card("hidden.pdf", true), card("first.pdf")];
-const button = {dataset: {}, disabled: false};
-const status = {hidden: true, textContent: ""};
-global.element = (id) => id === "download-filtered-figures" ? button : status;
-let clicked = false;
-global.document = {
-    querySelectorAll: () => cards,
-    createElement: () => ({click() {clicked = true;}, remove() {}}),
-    body: {append() {}},
+const start = source.indexOf("async function queueExperiment");
+const end = source.indexOf("\nfunction formFields", start);
+const status = {};
+const buttons = [{disabled: false}, {disabled: false}];
+const form = {dataset: {}, action: "/", querySelectorAll: () => buttons};
+const panel = {hidden: true, querySelector: () => ({insertAdjacentHTML: (position, html) => {
+    assert.equal(position, "afterbegin"); assert.equal(html, "<li>queued</li>");
+}})};
+let polled = 0;
+let saved = 0;
+let calls = 0;
+let complete;
+let submitted;
+global.dashboardData = {jobs: []};
+global.element = () => status;
+global.document = {querySelector: () => panel};
+global.FormData = class {constructor() {return [["_csrf_token", "token"], ["algorithm_names", "hedge"], ["algorithm_names", "bm"]];}};
+global.saveFormState = () => saved++;
+global.setBusy = () => {};
+global.pollActiveJobs = () => polled++;
+global.fetch = (url, options) => {
+    calls++; submitted = options;
+    assert.equal(url, process.argv[2] || "/");
+    return new Promise((resolve) => complete = resolve);
 };
-global.FormData = class {constructor() {return [["mode", "fixed"], ["_csrf_token", "token"]];}};
-global.window = {setTimeout() {}};
-URL.createObjectURL = () => "blob:export";
-let sent;
-global.fetch = async (url, options) => {
-    sent = options.body;
-    assert.equal(url, "/figures/download-filtered.pdf");
-    assert.equal(options.method, "POST");
-    assert.equal(button.disabled, true);
-    return {ok: true, blob: async () => ({})};
-};
+global.window = {location: {reload() {throw new Error("Unexpected navigation");}}};
+let prevented = 0;
+const event = {currentTarget: form, submitter: {getAttribute: () => process.argv[2]}, preventDefault: () => prevented++};
 eval(source.slice(start, end));
-const event = {preventDefault() {}, currentTarget: {action: "/figures/download-filtered.pdf"}};
 (async () => {
-    assert.deepEqual(visibleFigureDownloads(), ["third_without_ci.pdf", "first.pdf"]);
-    await downloadFilteredFigures(event);
-    assert.deepEqual(sent.getAll("filenames"), ["third_without_ci.pdf", "first.pdf"]);
-    assert.equal(sent.get("_csrf_token"), "token");
-    assert.equal(sent.get("mode"), "fixed");
-    assert.equal(clicked, true);
-    assert.equal(button.disabled, false);
-    // Changing the displayed variant or order is reflected immediately.
-    cards[0].filename = "third.pdf";
-    cards.reverse();
-    assert.deepEqual(visibleFigureDownloads(), ["first.pdf", "third.pdf"]);
-    global.fetch = async () => ({ok: false, json: async () => ({error: "Figure missing"})});
-    await downloadFilteredFigures(event);
-    assert.equal(status.textContent, "Figure missing");
-    assert.equal(button.disabled, false);
-    cards.forEach((card) => card.hidden = true);
-    global.fetch = () => {throw new Error("Empty selections must not be submitted");};
-    await downloadFilteredFigures(event);
+    const first = queueExperiment(event);
+    assert.equal(buttons.every((button) => button.disabled), true);
+    await queueExperiment(event);
+    assert.equal(calls, 1);
+    assert.equal(prevented, 2);
+    complete({ok: true, json: async () => ({job: {id: "new", url: "/jobs/new"}, job_html: "<li>queued</li>", message: "Queued"})});
+    await first;
+    assert.equal(submitted.method, "POST");
+    assert.equal(submitted.headers.Accept, "application/json");
+    assert.equal(submitted.body.get("_csrf_token"), "token");
+    assert.deepEqual(submitted.body.getAll("algorithm_names"), ["hedge", "bm"]);
+    assert.equal(dashboardData.jobs[0].id, "new");
+    assert.equal(panel.hidden, false);
+    assert.equal(polled, 1);
+    assert.equal(saved, 1);
+    assert.equal(status.textContent, "Queued");
+    assert.equal(buttons.some((button) => button.disabled), false);
+    global.fetch = async () => ({ok: false, json: async () => ({error: "already queued"})});
+    await queueExperiment(event);
+    assert.equal(status.textContent, "already queued");
+    assert.equal(dashboardData.jobs.length, 1);
+    assert.equal(form.dataset.submitting, "false");
+    global.fetch = async () => {throw new Error("Network unavailable");};
+    await queueExperiment(event);
+    assert.equal(status.textContent, "Network unavailable");
+    assert.equal(buttons.some((button) => button.disabled), false);
+})().catch((error) => {console.error(error); process.exit(1);});
+'''
+    result = subprocess.run([node, "-e", script, path, override], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_job_polling_does_not_overlap_and_keeps_new_jobs_running() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
+    script = r'''
+const assert = require("assert").strict;
+const source = require("fs").readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("async function pollActiveJobs");
+const end = source.indexOf("\nfunction updateJob", start);
+let jobPollInFlight = false;
+let jobPollTimer = null;
+let calls = 0;
+let complete;
+let timers = 0;
+let busy = false;
+const notice = {hidden: true};
+global.dashboardData = {jobs: [{id: "old", status: "running", url: "/jobs/old"}]};
+global.element = () => notice;
+global.setBusy = (value) => busy = value;
+global.updateJob = (job) => Object.assign(dashboardData.jobs.find((stored) => stored.id === job.id), job);
+global.fetch = () => {calls++; return new Promise((resolve) => complete = resolve);};
+global.window = {clearTimeout() {}, setTimeout() {timers++; return timers;}, location: {reload() {throw new Error("Unexpected reload");}}};
+eval(source.slice(start, end));
+(async () => {
+    const first = pollActiveJobs();
+    dashboardData.jobs.push({id: "new", status: "queued", url: "/jobs/new"});
+    await pollActiveJobs();
+    assert.equal(calls, 1);
+    complete({ok: true, json: async () => ({id: "old", status: "succeeded"})});
+    await first;
+    assert.equal(busy, true);
+    assert.equal(timers, 1);
+    assert.equal(jobPollInFlight, false);
+    assert.equal(notice.hidden, false);
+    global.fetch = async (url) => {
+        assert.equal(url, "/jobs/new");
+        return {ok: true, json: async () => ({id: "new", status: "succeeded"})};
+    };
+    await pollActiveJobs();
+    assert.equal(busy, false);
+    assert.equal(timers, 1);
 })().catch((error) => {console.error(error); process.exit(1);});
 '''
     result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
-def test_filtered_pdf_button_tracks_empty_filters_and_active_download() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is unavailable")
-    path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
-    script = r'''
-const assert = require("assert").strict;
-const source = require("fs").readFileSync(process.argv[1], "utf8");
-const start = source.indexOf("function applyFilters");
-const end = source.indexOf("\nfunction visibleFigureDownloads", start);
-const button = {dataset: {}};
-const counter = {};
-let matches = false;
-global.element = (id) => ({"download-filtered-figures": button, "figure-counter": counter}[id]);
-global.document = {querySelectorAll: (selector) => selector === "#figure-grid .figure-card" ? [{}] : []};
-global.matchesFilters = () => matches;
-global.updateSummarySourceColumns = global.updateSummaryRows = () => {};
-eval(source.slice(start, end));
-applyFilters();
-assert.equal(button.disabled, true);
-assert.equal(counter.textContent, "0 figures");
-matches = true;
-applyFilters();
-assert.equal(button.disabled, false);
-button.dataset.exporting = "true";
-applyFilters();
-assert.equal(button.disabled, true);
-'''
-    result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
-@pytest.mark.parametrize("filename", ["common.js", "dashboard.js", "custom_games.js", "experimental_trajectory.js"])
+@pytest.mark.parametrize("filename", ["common.js", "dashboard.js", "custom_games.js", "experimental_trajectory.js", "figure_builder.js"])
 def test_web_javascript_parses(filename: str) -> None:
     node = shutil.which("node")
     if node is None:
@@ -114,20 +140,19 @@ def test_dashboard_filter_matching() -> None:
     if node is None:
         pytest.skip("Node.js is unavailable")
     path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
-    script = r'''const source = require("fs").readFileSync(process.argv[1], "utf8");
-const start = source.indexOf("function matchesFilters");
+    script = r'''const assert = require("assert").strict;
+const source = require("fs").readFileSync(process.argv[1], "utf8");
+const start = source.indexOf("function matchesResultFilters");
 const end = source.indexOf("\n}\n", start) + 3;
-const controls = {
-    result: [{value: "rps", dataset: {resultFilter: "scope"}, hasAttribute: () => false}],
-    tokens: [{value: "exp3_ix", dataset: {summaryFilter: "algorithms"}, hasAttribute: () => true}],
-};
-global.document = {querySelectorAll: (selector) => controls[selector]};
 eval(source.slice(start, end));
-const record = {dataset: {scope: "rps", algorithms: "hedge exp3_ix"}};
-if (!matchesFilters(record, "result", "resultFilter")) process.exit(1);
-controls.result[0].value = "matching_pennies";
-if (matchesFilters(record, "result", "resultFilter")) process.exit(2);
-if (!matchesFilters(record, "tokens", "summaryFilter")) process.exit(3);'''
+const record = {dataset: {scope: "rps", feedback: "bandit", player: "0", profile: "auer_exp3_vs_bm"}};
+const state = {scope: "rps", feedback: "bandit", player: "0", profiles: ["auer_exp3_vs_bm"]};
+assert(matchesResultFilters(record, state));
+for (const change of [{scope: "rpsls"}, {feedback: "full_information"}, {player: "1"},
+                      {profiles: []}, {profiles: ["bm_vs_auer_exp3"]}]) {
+    assert(!matchesResultFilters(record, {...state, ...change}));
+}
+assert(!matchesResultFilters(record, null));'''
     result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr
@@ -181,36 +206,8 @@ if (!elements["equilibrium-panel"].hidden) process.exit(5);'''
     assert result.returncode == 0, result.stderr
 
 
-def test_dashboard_filters_apply_immediately() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is unavailable")
-    path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
-    script = r'''const source = require("fs").readFileSync(process.argv[1], "utf8");
-const start = source.indexOf("function installFilterPersistence");
-const end = source.indexOf("\n}\n", start) + 3;
-const listeners = {};
-global.resultFilterControls = () => [
-    {dataset: {}, matches: (selector) => selector === "input", addEventListener: (name, handler) => listeners.input = handler},
-    {dataset: {}, matches: () => false, addEventListener: (name, handler) => listeners.change = handler},
-];
-global.saveFilterState = () => listeners.saved = true;
-global.applyFilters = () => listeners.applied = true;
-eval(source.slice(start, end));
-installFilterPersistence();
-if (!listeners.input || !listeners.change) process.exit(1);
-listeners.input();
-if (!listeners.saved || !listeners.applied) process.exit(2);
-listeners.saved = false;
-listeners.applied = false;
-listeners.change();
-if (!listeners.saved || !listeners.applied) process.exit(3);'''
-    result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_completed_job_refreshes_dashboard() -> None:
+@pytest.mark.parametrize("terminal_status", ["succeeded", "failed", "cancelled"])
+def test_completed_job_offers_refresh_without_reloading_dashboard(terminal_status) -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is unavailable")
@@ -219,17 +216,20 @@ def test_completed_job_refreshes_dashboard() -> None:
 const start = source.indexOf("async function pollActiveJobs");
 const end = source.indexOf("\nfunction updateJob", start);
 let reloaded = false;
-let saved = false;
+let jobPollInFlight = false;
+let jobPollTimer = null;
+const notice = {hidden: true};
+let busy = true;
 global.dashboardData = {jobs: [{status: "running", url: "/jobs/1"}]};
-global.setBusy = () => {};
-global.updateJob = () => {};
-global.saveFormState = () => saved = true;
-global.fetch = async () => ({ok: true, json: async () => ({status: "succeeded"})});
-global.window = {location: {reload: () => reloaded = true}, setTimeout: () => {}};
+global.element = () => notice;
+global.setBusy = (value) => busy = value;
+global.updateJob = (job) => Object.assign(dashboardData.jobs[0], job);
+global.fetch = async () => ({ok: true, json: async () => ({status: process.argv[2]})});
+global.window = {location: {reload: () => reloaded = true}, clearTimeout() {}, setTimeout: () => {throw new Error("All jobs finished");}};
 eval(source.slice(start, end));
 pollActiveJobs().then(() => {
-    if (!saved || !reloaded) process.exit(1);
+    if (notice.hidden || reloaded || busy || jobPollInFlight) process.exit(1);
 });'''
-    result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
+    result = subprocess.run([node, "-e", script, path, terminal_status], capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr

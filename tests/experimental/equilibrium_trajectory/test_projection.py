@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 
+from tests.support import matching_pennies_payoffs
+
 from config import EQUILIBRIUM_LP_TOLERANCE
 from experiments.games import (
-    create_matching_pennies_payoffs,
     create_rock_paper_scissors_payoffs,
 )
 from metrics.empirical_distribution import (
@@ -804,7 +805,7 @@ def test_rps_relative_trajectory_adds_one_cce_distance_lp_per_checkpoint(
 
 
 def test_rank_deficient_constrained_projection_is_deterministic() -> None:
-    payoffs = create_matching_pennies_payoffs()
+    payoffs = matching_pennies_payoffs()
     geometry = analyze_equilibrium_projection_geometry(payoffs)
     samples = np.repeat(
         geometry.ce.reference.reshape(1, -1),
@@ -905,14 +906,6 @@ def test_equilibrium_distances_are_averaged_after_each_replicate_is_measured() -
 
     assert np.allclose(aggregate.ce_mean, [0.2, 0.3])
     assert np.allclose(aggregate.cce_mean, [0.1, 0.2])
-    assert np.allclose(
-        aggregate.ce_confidence,
-        [1.2706204736, 1.2706204736],
-    )
-    assert np.allclose(
-        aggregate.cce_confidence,
-        [1.2706204736, 1.2706204736],
-    )
 
 
 class _SyntheticPolygonOracle:

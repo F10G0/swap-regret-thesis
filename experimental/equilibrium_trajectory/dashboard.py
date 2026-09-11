@@ -15,6 +15,7 @@ from experiments.plots import (
     publish_figure_pair,
 )
 from experiments.scenarios.cross_play import replicate_player_seeds
+from experiments.plots.style import algorithm_style, profile_label, curve_labels
 from web.result_groups import result_group_id, result_group_key
 
 from experimental.equilibrium_trajectory.geometry import (
@@ -41,8 +42,6 @@ from experimental.equilibrium_trajectory.web_models import (
     TrajectoryComparisonMember,
     TrajectoryComparisonResult,
     comparison_artifact_id,
-    comparison_member_colors,
-    stable_member_color,
 )
 
 
@@ -119,15 +118,11 @@ class ExperimentalTrajectoryDashboard:
             self.dashboard._result_group_paths(group_id)
         )
         algorithm_profile = tuple(first["algorithm_profile"])
-        profile_label = " vs ".join(
-            self.dashboard.algorithm_labels.get(name, name)
-            for name in algorithm_profile
-        )
         stationary_method = str(first["stationary_method"])
         member = TrajectoryComparisonMember(
             group_id,
-            f"{profile_label} · {stationary_method}",
-            stable_member_color(group_id),
+            profile_label(algorithm_profile),
+            algorithm_style(algorithm_profile[0])["color"],
             algorithm_profile,
             stationary_method,
             replicate_indices,
@@ -138,7 +133,6 @@ class ExperimentalTrajectoryDashboard:
             first["game"],
             first.get("game_payoff_digest", ""),
             first["feedback_mode"],
-            first["regret_evaluation"],
             int(first["horizon"]),
             seed,
             len(replicate_indices),
@@ -151,7 +145,6 @@ class ExperimentalTrajectoryDashboard:
                 "game_payoff_digest", ""
             ),
             "feedback_mode": first["feedback_mode"],
-            "regret_evaluation": first["regret_evaluation"],
             "horizon": int(first["horizon"]),
             "seed": seed,
             "replicate_count": len(replicate_indices),
@@ -212,14 +205,12 @@ class ExperimentalTrajectoryDashboard:
         ):
             raise ValueError(
                 "trajectory-comparison members must match game, payoff, "
-                "feedback, regret evaluation, horizon, seed, replicate "
+                "feedback, horizon, seed, replicate "
                 "count, replicate indices, and derived player-seed schedule"
             )
-        colors = comparison_member_colors(canonical_ids)
-        members = tuple(
-            replace(member, color=colors[member.group_id])
-            for member in members
-        )
+        labels = curve_labels([dict(algorithm="_vs_".join(member.algorithm_profile),
+                                    stationary_method=member.stationary_method) for member in members])
+        members = tuple(replace(member, label=label) for member, label in zip(members, labels))
         artifact_id = comparison_artifact_id(
             compatibility_keys[0],
             members,
@@ -329,6 +320,7 @@ class ExperimentalTrajectoryDashboard:
                         member.label,
                         member.color,
                         member.input_paths,
+                        member.algorithm_profile,
                     )
                     for member in definition.members
                 ],
@@ -336,9 +328,6 @@ class ExperimentalTrajectoryDashboard:
                 final_interval_segments=(
                     definition.final_interval_segments
                 ),
-                game_label=self.dashboard.game_presentations[
-                    definition.compatibility_key[0]
-                ]["label"],
                 custom_game_dir=(
                     self.dashboard.game_catalog.custom_game_dir
                 ),

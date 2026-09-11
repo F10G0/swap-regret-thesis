@@ -22,12 +22,11 @@ from experiments.scenarios.full_information_cross_play import run_full_informati
       for name in ("exp3_ix", "bm", "lce_ix", "ito")],
     (run_bandit_cross_play_experiment, dict(game_name="rps", algorithm_names=["ito", "bm"])),
 ])
-@pytest.mark.parametrize("evaluation", ["expected", "realized", "both"])
-def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, runner, options, evaluation):
+def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, runner, options):
     results = []
     for workers in (1, 2):
         completions = []
-        tasks = [dict(**options, horizon=31, seed=7, replicate=r, regret_evaluation=evaluation,
+        tasks = [dict(**options, horizon=31, seed=7, replicate=r,
                       max_recorded_points=6, output_dir=tmp_path / str(workers)) for r in (2, 0, 1)]
         paths = run_replicates(runner, tasks, workers=workers, completed=lambda: completions.append(True))
         assert len(completions) == 3
@@ -37,7 +36,7 @@ def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, run
 
 def test_scaling_parallel_output_order_and_identity_are_deterministic(tmp_path):
     spec = AdversarialScalingSpec(
-        environment=RANDOM_WALK_ENVIRONMENT, initialization_mode="centered", feedback_mode="bandit",
+        environment=RANDOM_WALK_ENVIRONMENT, feedback_mode="bandit",
         algorithm_name="auer_exp3", action_counts=(2, 4), replicates=2, horizon=25,
         environment_seed=11, learner_seed=7,
     )
@@ -150,7 +149,7 @@ def test_six_worker_execution_preserves_serial_csv_bytes(tmp_path, monkeypatch):
     results = []
     for workers in (1, 6):
         tasks = [dict(algorithm_name="auer_exp3", feedback_mode="bandit", horizon=23, seed=7,
-                      replicate=r, regret_evaluation="both", output_dir=tmp_path / str(workers))
+                      replicate=r, output_dir=tmp_path / str(workers))
                  for r in range(6)]
         paths = run_replicates(run_adversarial_experiment, tasks, workers=workers)
         results.append([(path.name, path.read_bytes()) for path in paths])

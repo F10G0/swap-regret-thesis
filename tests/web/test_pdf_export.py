@@ -36,8 +36,8 @@ def test_export_merges_only_selected_figures_in_submitted_order(export_app, mode
     directory = service.figure_dir if mode == "fixed" else service.adversarial_figure_dir
     def stem(regret):
         if mode == "fixed":
-            return f"rps_average_expected_{regret}_regret_player_0"
-        return f"adversarial_lazy_random_walk_v1_full_information_9_actions_average_expected_{regret}_regret"
+            return f"rps_average_{regret}_regret_player_0"
+        return f"adversarial_lazy_random_walk_v1_full_information_9_actions_average_{regret}_regret"
 
     first = make_figure(directory, stem("external"), (201, 202))
     second = make_figure(directory, stem("internal"), (301,))
@@ -45,7 +45,7 @@ def test_export_merges_only_selected_figures_in_submitted_order(export_app, mode
     originals = {path: path.read_bytes() for path in directory.iterdir()}
     client = app.test_client()
     page = client.get("/", query_string={"mode": mode}).get_data(as_text=True)
-    assert 'id="download-filtered-figures"' in page
+    assert 'id="builder-generate"' in page
     assert f'name="mode" value="{mode}"' in page
 
     response = download(client, [second, first], mode)
@@ -60,14 +60,13 @@ def test_export_merges_only_selected_figures_in_submitted_order(export_app, mode
     assert {path: path.read_bytes() for path in directory.iterdir()} == originals
 
 
-def test_export_supports_confidence_free_pdf_and_png_only_results(export_app):
+def test_export_supports_pdf_and_png_only_results(export_app):
     app, service = export_app
-    stem = "rps_average_expected_external_regret_player_0"
-    make_figure(service.figure_dir, stem, (200,))
-    without_ci = make_figure(service.figure_dir, stem + "_without_ci", (350,))
-    legacy = make_figure(service.figure_dir, "rps_average_expected_swap_regret_player_0", ())
+    stem = "rps_average_external_regret_player_0"
+    current = make_figure(service.figure_dir, stem, (350,))
+    legacy = make_figure(service.figure_dir, "rps_average_swap_regret_player_0", ())
 
-    response = download(app.test_client(), [without_ci, legacy])
+    response = download(app.test_client(), [current, legacy])
 
     assert response.status_code == 200
     pages = PdfReader(BytesIO(response.data)).pages
@@ -96,14 +95,14 @@ def test_export_rejects_empty_or_invalid_selection(export_app, filenames, mode, 
 
 def test_export_does_not_silently_skip_missing_figure(export_app):
     app, service = export_app
-    filename = make_figure(service.figure_dir, "rps_average_expected_external_regret_player_0")
+    filename = make_figure(service.figure_dir, "rps_average_external_regret_player_0")
     response = download(app.test_client(), [filename, "missing.pdf"])
     assert response.status_code == 404
 
 
 def test_export_rejects_symlink_outside_figure_directory(export_app, tmp_path):
     app, service = export_app
-    filename = make_figure(service.figure_dir, "rps_average_expected_external_regret_player_0", ())
+    filename = make_figure(service.figure_dir, "rps_average_external_regret_player_0", ())
     pdf_path = (service.figure_dir / filename).with_suffix(".pdf")
     outside = tmp_path / make_figure(tmp_path, "outside")
     pdf_path.symlink_to(outside)
@@ -113,7 +112,7 @@ def test_export_rejects_symlink_outside_figure_directory(export_app, tmp_path):
 
 def test_export_reports_unreadable_pdf(export_app):
     app, service = export_app
-    filename = make_figure(service.figure_dir, "rps_average_expected_external_regret_player_0")
+    filename = make_figure(service.figure_dir, "rps_average_external_regret_player_0")
     (service.figure_dir / filename).write_bytes(b"not a PDF")
     response = download(app.test_client(), [filename])
     assert response.status_code == 422

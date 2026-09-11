@@ -14,46 +14,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from config import ADVERSARIAL_FIGURE_DIR, ADVERSARIAL_RAW_DIR
-from experiments.algorithm_labels import algorithm_label
-from experiments.plots import confidence_free_figure_path, remove_stale_figure_pairs, save_figure_pair
-from experiments.result_schema import regret_sources
+from experiments.plots import remove_stale_figure_pairs, save_figure_pair
+from experiments.plots.style import publication_plot, curve_labels, algorithm_style, regret_axis_label, finish_line_figure
 from experiments.scenarios.adversarial import (
     ADVERSARIAL_BASE_FIELDNAMES,
-    ENVIRONMENT_LABELS,
-    FEEDBACK_MODE_LABELS,
-    TARGET_REGRET_BY_ALGORITHM,
     load_adversarial_rows,
 )
-from metrics.confidence import mean_confidence_interval_half_width
 
 
 logger = logging.getLogger(__name__)
 MAX_PLOT_POINTS = 2_000
-PLOT_ROW_CACHE_VERSION = 1
-ALGORITHM_COLORS = {
-    "hedge": "#0072B2",
-    "exp3": "#56B4E9",  # Retained for historical results only.
-    "auer_exp3": "#AA4499",
-    "exp3_ix": "#332288",
-    "bm": "#D55E00",
-    "ito": "#009E73",
-    "lce_ix": "#882255",
-    "regret_matching": "#CC79A7",
-    "stationary_regret_matching": "#E69F00",
-}
-LINE_STYLES = ("-", "--", "-.", ":")
+PLOT_ROW_CACHE_VERSION = 3
 
 
 def _group_key(rows: list[dict[str, str]]) -> tuple:
     first = rows[0]
-    replicate = int(first["replicate"])
     environment_seed = first["environment_seed"]
     return (
         first["environment"],
-        first["initialization_mode"],
         first["reward_step"],
         first["feedback_mode"],
-        first["regret_evaluation"],
         first["implementation_version"],
         first["runtime_fingerprint"],
         first["n_actions"],
@@ -80,7 +60,7 @@ def aggregate_adversarial_regret(
     trajectories: list[list[dict[str, str]]],
     column: str,
     scale_by_sqrt_time: bool = False,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     rows_by_time = [{int(row["t"]): row for row in trajectory} for trajectory in trajectories]
     # Use exactly observed, shared timestamps when recording budgets differ.
     times = np.asarray(sorted(set.intersection(*(set(rows) for rows in rows_by_time))), dtype=int)
@@ -92,7 +72,6 @@ def aggregate_adversarial_regret(
     return (
         times,
         np.mean(values, axis=0),
-        mean_confidence_interval_half_width(values, axis=0),
     )
 
 
@@ -178,86 +157,56 @@ def collect_adversarial_results(
     return results
 
 
+@publication_plot
 def _plot_regret(
     results: list[tuple[Path, list[dict[str, str]]]],
     environment: str,
     feedback_mode: str,
     n_actions: int,
-    source: str,
     regret_name: str,
     average: bool,
     output_path: Path,
 ) -> None:
-    figure, axes = plt.subplots(figsize=(10, 5.2))
-    algorithm_occurrences = defaultdict(int)
-    confidence_bands = []
+    figure, axes = plt.subplots()
     selected = [
         group
         for group in group_adversarial_results(results)
         if group[0][0]["environment"] == environment
         and group[0][0]["feedback_mode"] == feedback_mode
         and int(group[0][0]["n_actions"]) == n_actions
-        and source in regret_sources(group[0][0]["regret_evaluation"])
     ]
     sort_fields = (
         "algorithm",
         "horizon",
         "learner_seed",
     )
-    for trajectories in sorted(
-        selected,
-        key=lambda group: tuple(group[0][0][field] for field in sort_fields),
-    ):
+    selected = sorted(selected, key=lambda group: tuple(group[0][0][field] for field in sort_fields))
+    labels = curve_labels([group[0][0] | {"replicate_count": len(group)} for group in selected])
+    for trajectories, label in zip(selected, labels):
         first = trajectories[0][0]
         algorithm = first["algorithm"]
         if average:
-            column = f"average_{source}_{regret_name}_regret"
+            column = f"average_{regret_name}_regret"
         else:
-            column = f"{source}_{regret_name}_regret"
-        times, values, confidence = aggregate_adversarial_regret(
+            column = f"{regret_name}_regret"
+        times, values = aggregate_adversarial_regret(
             trajectories,
             column,
             scale_by_sqrt_time=not average,
         )
-        color = ALGORITHM_COLORS[algorithm]
-        occurrence = algorithm_occurrences[algorithm]
-        algorithm_occurrences[algorithm] += 1
-        target = TARGET_REGRET_BY_ALGORITHM.get(algorithm) == regret_name
-        replicate_count = len(trajectories)
         axes.plot(
             times,
             values,
-            color=color,
-            linestyle=LINE_STYLES[occurrence % len(LINE_STYLES)],
-            linewidth=2.4 if target else 1.5,
-            label=algorithm_label(algorithm) if occurrence == 0 else "_nolegend_",
+            **algorithm_style(algorithm),
+            label=label,
         )
-        if replicate_count > 1:
-            confidence_bands.append((times, values, confidence, color))
 
     axes.set_xscale("log")
     axes.axhline(0.0, color="#7b8580", linewidth=0.8, linestyle="--")
-    axes.set_xlabel("Round")
-    view_label = "Average" if average else "Scaled"
-    ylabel = (
-        f"Average {source} {regret_name} regret"
-        if average
-        else f"{source.title()} {regret_name} regret / sqrt(t)"
-    )
-    axes.set_ylabel(ylabel)
-    axes.set_title(
-        f"{ENVIRONMENT_LABELS[environment]} · {FEEDBACK_MODE_LABELS[feedback_mode]} · "
-        f"{n_actions} actions · "
-        f"{view_label.lower()} {source} {regret_name} regret"
-    )
-    axes.grid(True)
-    axes.legend(loc="best", fontsize="small", frameon=False)
-    figure.tight_layout()
-    if confidence_bands:
-        save_figure_pair(figure, confidence_free_figure_path(output_path), png_dpi=150, bbox_inches="tight")
-        for times, values, confidence, color in confidence_bands:
-            axes.fill_between(times, values - confidence, values + confidence, color=color, alpha=0.14)
-    save_figure_pair(figure, output_path, png_dpi=150, bbox_inches="tight")
+    axes.set_xlabel(r"Round $T$")
+    axes.set_ylabel(regret_axis_label(regret_name, "average" if average else "sqrt_scaling"))
+    finish_line_figure(figure, axes)
+    save_figure_pair(figure, output_path)
     plt.close(figure)
 
 
@@ -281,48 +230,31 @@ def plot_adversarial_results(
         for _, rows in results
     }
     for environment, feedback_mode, n_actions in sorted(environment_feedback_action_counts):
-        sources = {
-            source
-            for _, rows in results
-            if rows[0]["environment"] == environment
-            and rows[0]["feedback_mode"] == feedback_mode
-            and int(rows[0]["n_actions"]) == n_actions
-            for source in regret_sources(rows[0]["regret_evaluation"])
-        }
-        for source in (
-            source for source in ("expected", "realized") if source in sources
-        ):
-            for regret_name in ("external", "internal", "swap"):
-                for average in (True, False):
-                    if average:
-                        filename = (
-                            f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_average_"
-                            f"{source}_{regret_name}_regret.png"
-                        )
-                    else:
-                        filename = (
-                            f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_{source}_"
-                            f"{regret_name}_regret_over_sqrt_t.png"
-                        )
-                    output_path = output_dir / filename
-                    _plot_regret(
-                        results,
-                        environment,
-                        feedback_mode,
-                        n_actions,
-                        source,
-                        regret_name,
-                        average,
-                        output_path,
+        for regret_name in ("external", "internal", "swap"):
+            for average in (True, False):
+                if average:
+                    filename = (
+                        f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_average_"
+                        f"{regret_name}_regret.png"
                     )
-                    generated.append(output_path)
+                else:
+                    filename = (
+                        f"adversarial_{environment}_{feedback_mode}_{n_actions}_actions_"
+                        f"{regret_name}_regret_over_sqrt_t.png"
+                    )
+                output_path = output_dir / filename
+                _plot_regret(
+                    results,
+                    environment,
+                    feedback_mode,
+                    n_actions,
+                    regret_name,
+                    average,
+                    output_path,
+                )
+                generated.append(output_path)
 
-    generated_paths = generated + [
-        confidence_free_figure_path(path)
-        for path in generated
-        if confidence_free_figure_path(path).is_file()
-    ]
-    remove_stale_figure_pairs(output_dir, generated_paths,
+    remove_stale_figure_pairs(output_dir, generated,
                              filename_prefix=adversarial_figure_prefix(scope) if scope is not None else None)
     return generated
 

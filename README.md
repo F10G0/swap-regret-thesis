@@ -21,7 +21,7 @@ The experimental trajectory comparison is excluded by default. Use `make install
 | Full information | Hedge, Regret Matching, SRM, Blum–Mansour, Ito |
 | Bandit | AuerExp3, Exp3-IX, Blum–Mansour, Ito, LCE-IX |
 
-Built-in games include RPS, RPSLS, Matching Pennies, and five Bertrand variants. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary, an action-independent lazy reward walk, and replicated action-space sweeps over configurable K values.
+Built-in games are RPS and RPSLS, defined locally as fixed payoff matrices. Matching Pennies is a local test-only fixture. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary, an action-independent lazy reward walk, and replicated action-space sweeps over configurable K values.
 
 Feedback and regret evaluation are independent. Fixed-game and one-player experiments can record expected regret, realized regret, or both; the two sources are plotted separately. Both support configurable replicates with pointwise Student-t 95% confidence intervals and per-figure interval toggles. Equilibrium convergence uses full-space L1 distance to CE and CCE; optional 2-D trajectories are interpretive views only.
 

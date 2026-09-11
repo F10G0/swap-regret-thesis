@@ -1,5 +1,5 @@
 {% extends "_experiment_page.html" %}
-{% from "_experiment_ui.html" import file_list, learning_configuration, regret_figure_panel, result_controls, summary_filters with context %}
+{% from "_experiment_ui.html" import file_list, learning_configuration, regret_figure_panel, result_controls, regret_headers, regret_cells with context %}
 {% from "_one_player_experiment.html" import one_player_main, one_player_sidebar with context %}
 
 {% set sidebar_label = "Experiment configuration" %}
@@ -13,14 +13,6 @@
     {% set selected_definition = game_definitions[selected_game] %}
     {% set equilibrium_presentation = game_presentations[selected_game] %}
     {% set equilibrium_urls = equilibrium_figures.get(selected_game) %}
-    {% set regret_summary_columns = [
-        ("expected", "External", "average_expected_external_regret"),
-        ("expected", "Internal", "average_expected_internal_regret"),
-        ("expected", "Swap", "average_expected_swap_regret"),
-        ("realized", "External", "average_realized_external_regret"),
-        ("realized", "Internal", "average_realized_internal_regret"),
-        ("realized", "Swap", "average_realized_swap_regret"),
-    ] %}
 {% endif %}
 
 {% block title %}Experiments · Swap Regret{% endblock %}
@@ -54,7 +46,7 @@
                     <span id="game-description" class="hint">{{ equilibrium_presentation.description }}</span>
                 </div>
 
-                {{ learning_configuration(form_state, feedback_modes, regret_evaluations, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates, "Base seed used to derive reproducible random streams for every player and replicate.") }}
+                {{ learning_configuration(form_state, feedback_modes, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates, "Base seed used to derive reproducible random streams for every player and replicate.") }}
 
                 <div class="button-stack">
                     <button id="queue-experiment" class="button-primary" type="submit">
@@ -93,9 +85,7 @@
         {% if experiment_mode == "adversarial" %}
             {{ one_player_main() }}
         {% else %}
-            {% if figures or summaries %}
-                {{ result_controls(result_filters) }}
-            {% endif %}
+            {{ result_controls() }}
 
             <details id="equilibrium-panel" class="panel disclosure-panel equilibrium-panel" hidden>
                 <summary>
@@ -151,8 +141,8 @@
                 </div>
             </details>
 
-            {% if figures or summaries %}
-            {{ regret_figure_panel(figures, "No figures available. Run an experiment first.") }}
+            {{ regret_figure_panel() }}
+            {% if summaries %}
 
             <section class="panel summary-panel" aria-labelledby="summary-heading">
                 <div class="section-heading">
@@ -163,20 +153,17 @@
                     <span>{{ summaries | length }} replicate-group player records</span>
                 </div>
 
-                {% if summaries %}
-                    {{ summary_filters(include_feedback=true, include_co_player=true) }}
                     <div class="table-scroll">
                         <table id="summary-table">
                             <thead>
                                 <tr>
                                     <th>Game</th>
                                     <th>Feedback</th>
-                                    <th>Evaluation</th>
                                     <th>Seed / replicates</th>
                                     <th>Player</th>
                                     <th>Profile</th>
                                     <th>Horizon</th>
-                                    {% for source, label, field in regret_summary_columns %}<th data-regret-source="{{ source }}" {% if source == "realized" %}hidden{% endif %}>{{ label }}</th>{% endfor %}
+                                    {{ regret_headers() }}
                                 </tr>
                             </thead>
                             <tbody>
@@ -186,34 +173,21 @@
                                         tabindex="0"
                                         data-summary-index="{{ loop.index0 }}"
                                         data-scope="{{ row.game }}"
-                                        data-secondary="{{ row.player }}"
+                                        data-player="{{ row.player }}"
+                                        data-profile="{{ row.algorithm_profile | join('_vs_') }}"
+                                        data-result-key="{{ row.group_id }}"
                                         data-feedback="{{ row.feedback_mode }}"
-                                        data-regret-evaluation="{{ row.regret_evaluation }}"
-                                        data-player-algorithm="{{ row.player_algorithm }}"
-                                        data-co-player-algorithms="{{ row.co_player_algorithms | join(' ') }}"
                                         data-horizon="{{ row.horizon }}"
                                         data-seed="{{ row.seed }}"
                                         data-stationary-method="{{ row.stationary_method }}"
                                     >
                                         <td>{{ game_presentations[row.game].label }}</td>
                                         <td>{{ row.feedback_mode }}</td>
-                                        <td>{{ regret_evaluations[row.regret_evaluation] }}</td>
                                         <td>{{ row.seed }} / {{ row.replicate_label }}{% if row.replicate_count > 1 %} (n={{ row.replicate_count }}){% endif %}</td>
                                         <td>{{ row.player }}</td>
                                         <td>{{ row.profile_label }}</td>
                                         <td>{{ row.horizon }}</td>
-                                        {% for source, label, field in regret_summary_columns %}
-                                            <td data-regret-source="{{ source }}" data-metric="{{ field }}" {% if source == "realized" %}hidden{% endif %} {% if field in row %}data-value="{{ row[field] }}"{% endif %}>
-                                                {% if field in row %}
-                                                    {{ "%.6f" | format(row[field]) }}
-                                                    {% if row.replicate_count > 1 %}
-                                                        <span class="metric-confidence">± {{ "%.6f" | format(row.confidence_intervals[field]) }}</span>
-                                                    {% endif %}
-                                                {% else %}
-                                                    &mdash;
-                                                {% endif %}
-                                            </td>
-                                        {% endfor %}
+                                        {{ regret_cells(row) }}
                                     </tr>
                                 {% endfor %}
                             </tbody>
@@ -245,7 +219,7 @@
                             <div class="detail-subheading">
                                 <div>
                                     <h3 id="detail-convergence-heading">Equilibrium Convergence</h3>
-                                    <p>Distances are computed per replicate and then averaged with 95% confidence intervals. Shared trajectory analysis is available in the comparison workspace below.</p>
+                                    <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace below.</p>
                                 </div>
                             </div>
                             <div class="detail-figure-grid">
@@ -260,9 +234,6 @@
                             </div>
                         </section>
                     </section>
-                {% else %}
-                    <p class="empty">No valid summary rows are available.</p>
-                {% endif %}
             </section>
             {% else %}
                 <section class="panel empty-results" aria-labelledby="empty-results-heading">
@@ -280,7 +251,6 @@
         {% if experiment_mode == "fixed" %}
             {{ {
                 "mode": experiment_mode,
-                "figures": figures,
                 "equilibriumFigures": equilibrium_figures,
                 "gameDefinitions": game_definitions,
                 "gamePresentations": game_presentations,
@@ -292,7 +262,6 @@
         {% else %}
             {{ {
                 "mode": experiment_mode,
-                "figures": figures,
                 "jobs": jobs,
                 "summaries": summaries,
                 "algorithms": algorithms_by_feedback_mode,
@@ -302,4 +271,5 @@
         {% endif %}
     </script>
     <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='figure_builder.js') }}" defer></script>
 {% endblock %}

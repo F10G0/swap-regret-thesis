@@ -13,7 +13,7 @@ dependencies = [
     "matplotlib==3.10.8",
     "numpy==2.2.6",
     # games_learning's pinned editable checkout is installed by the Makefile
-    # because its wheel omits the game and utils subpackages used here.
+    # because its wheel omits the utils subpackage used by the CE/CCE LP adapter.
     "PuLP==2.9.0",
     "pypdf==6.18.0",
     "scipy==1.15.3",

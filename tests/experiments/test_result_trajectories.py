@@ -7,7 +7,7 @@ from experiments.plots.plot_joint_actions import (
     joint_action_distribution,
     mean_joint_action_distribution,
 )
-from experiments.result_schema import regret_fieldnames
+from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
 from experiments.result_trajectories import load_result_action_profiles
 from experiments.results import iter_result_rows, load_final_result_rows
 from experiments.scenarios.full_information_cross_play import (
@@ -19,12 +19,12 @@ def test_result_loader_keeps_three_player_profiles_and_final_rows(
     tmp_path,
 ) -> None:
     output_path = tmp_path / "three-player.csv"
-    fieldnames = regret_fieldnames("expected")
+    fieldnames = regret_fieldnames()
     base = {field: 0 for field in fieldnames}
     base.update({
         "run_id": "three-player",
         "feedback_mode": "full_information",
-        "regret_evaluation": "expected",
+        "implementation_version": RESULT_IMPLEMENTATION_VERSION,
         "seed": 42,
         "replicate": 0,
         "stationary_method": "solve",

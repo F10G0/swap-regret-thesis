@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from metrics.confidence import mean_confidence_interval_half_width
 from metrics.empirical_distribution import EmpiricalDistributionTrajectory
 from metrics.equilibrium_distance import _PreparedDistanceLP
 
@@ -26,8 +25,6 @@ class ReplicateEquilibriumDistanceTrajectory:
     horizons: np.ndarray
     ce_mean: np.ndarray
     cce_mean: np.ndarray
-    ce_confidence: np.ndarray
-    cce_confidence: np.ndarray
     n_replicates: int
 
 
@@ -71,7 +68,5 @@ def aggregate_equilibrium_distance_trajectories(
         horizons.copy(),
         np.mean(ce, axis=0),
         np.mean(cce, axis=0),
-        mean_confidence_interval_half_width(ce),
-        mean_confidence_interval_half_width(cce),
         len(trajectories),
     )

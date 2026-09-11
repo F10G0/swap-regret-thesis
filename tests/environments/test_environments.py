@@ -162,7 +162,7 @@ def test_historical_frequency_adversary_punishes_half_rounded_up(n_actions: int,
 
 
 def test_random_walk_rewards_stay_on_the_fixed_grid() -> None:
-    environment = LazyRandomWalkEnvironment(8, 1_000, 7, "uniform_grid")
+    environment = LazyRandomWalkEnvironment(8, 1_000, 7)
     rewards = environment.reward_states * RANDOM_WALK_STEP
 
     assert np.all((0 <= environment.reward_states) & (environment.reward_states <= 10))
@@ -187,18 +187,33 @@ def test_random_walk_transition_rule(state, draw, expected) -> None:
     assert LazyRandomWalkEnvironment._next_state(state, draw) == expected
 
 
-def test_random_walk_initialization_modes() -> None:
-    centered = LazyRandomWalkEnvironment(4, 3, 7)
-    uniform = LazyRandomWalkEnvironment(4, 3, 7, "uniform_grid")
-    expected_uniform = np.random.default_rng(7).integers(0, 11, size=4)
+@pytest.mark.parametrize("n_actions", [2, 3, 9])
+@pytest.mark.parametrize("seed", [0, 7, 42])
+def test_random_walk_has_centered_start_and_preserves_random_draw_order(n_actions, seed) -> None:
+    environment = LazyRandomWalkEnvironment(n_actions, 100, seed)
+    random = np.random.default_rng(seed)
+    expected = np.full((100, n_actions), 5, dtype=np.int8)
+    for time in range(1, 100):
+        for action in range(n_actions):
+            state = expected[time - 1, action]
+            draw = random.random()
+            if state == 0:
+                next_state = 0 if draw < 0.5 else 1
+            elif state == 10:
+                next_state = 10 if draw < 0.5 else 9
+            else:
+                next_state = state + (-1 if draw < 1 / 3 else 0 if draw < 2 / 3 else 1)
+            expected[time, action] = next_state
 
-    np.testing.assert_array_equal(centered.reward_states[0], [5, 5, 5, 5])
-    np.testing.assert_array_equal(uniform.reward_states[0], expected_uniform)
+    np.testing.assert_array_equal(environment.reward_states[0] * RANDOM_WALK_STEP, np.full(n_actions, 0.5))
+    np.testing.assert_array_equal(environment.reward_states, expected)
+    other = LazyRandomWalkEnvironment(n_actions, 100, seed + 1)
+    assert not np.array_equal(environment.reward_states, other.reward_states)
 
 
 def test_random_walk_seed_is_reproducible_and_action_independent() -> None:
-    first = LazyRandomWalkEnvironment(4, 20, 7, "uniform_grid")
-    second = LazyRandomWalkEnvironment(4, 20, 7, "uniform_grid")
+    first = LazyRandomWalkEnvironment(4, 20, 7)
+    second = LazyRandomWalkEnvironment(4, 20, 7)
 
     np.testing.assert_array_equal(first.reward_states, second.reward_states)
     with pytest.raises(TypeError):

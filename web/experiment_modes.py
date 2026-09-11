@@ -29,9 +29,3 @@ FEEDBACK_MODES = {
         runner=run_bandit_cross_play_experiment,
     ),
 }
-
-REGRET_EVALUATION_LABELS = {
-    "expected": "Expected",
-    "realized": "Realized",
-    "both": "Both",
-}

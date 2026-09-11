@@ -18,6 +18,45 @@ def create_result(directory, replicate=0):
     )
 
 
+@pytest.mark.parametrize("replicate_count", [1, 2])
+def test_distance_figures_use_caption_free_publication_layout(tmp_path, monkeypatch, replicate_count):
+    from pypdf import PdfReader
+
+    paths = [create_result(tmp_path / "raw", replicate=index) for index in range(replicate_count)]
+    saved = []
+    original_save = plotting.save_figure_pair
+
+    def capture(figure, output_path):
+        axes = figure.axes[0]
+        saved.append((figure._suptitle, axes.get_title(), axes.get_legend_handles_labels()[1]))
+        original_save(figure, output_path)
+
+    monkeypatch.setattr(plotting, "save_figure_pair", capture)
+    output = tmp_path / "distance.png"
+    plotting.plot_result_equilibrium_distance(paths, output)
+
+    title, annotation, legend = saved[0]
+    assert title is None
+    assert annotation == ""
+    assert legend == ["CE", "CCE"]
+    assert output.is_file()
+    pdf_text = PdfReader(output.with_suffix(".pdf")).pages[0].extract_text()
+    assert "seed" not in pdf_text and "solver" not in pdf_text
+    assert "CE" in pdf_text and "CCE" in pdf_text
+
+
+def test_style_redraw_reuses_cached_distance_values(tmp_path, monkeypatch):
+    path = create_result(tmp_path / "raw")
+    calls = count_solves(monkeypatch)
+    kwargs = dict(cache_dir=tmp_path / "cache")
+    plotting.plot_result_equilibrium_distance(path, tmp_path / "first.png", **kwargs)
+    assert calls == Counter(ce=3, cce=3)
+    monkeypatch.setattr(plotting, "load_result_action_profiles", lambda *args: pytest.fail("redraw decoded history"))
+    monkeypatch.setattr(plotting, "EQUILIBRIUM_DISTANCE_FIGURE_VERSION", plotting.EQUILIBRIUM_DISTANCE_FIGURE_VERSION + 1)
+    plotting.plot_result_equilibrium_distance(path, tmp_path / "redrawn.png", **kwargs)
+    assert calls == Counter(ce=3, cce=3)
+
+
 @pytest.mark.parametrize("count", [1, 3, 159, 160, 161, 2000, 100_000])
 def test_distance_points_are_bounded_existing_unique_and_include_endpoints(count):
     horizons = np.arange(1, count + 1) * 3
@@ -130,7 +169,7 @@ def test_cleanup_removes_only_distance_figure_files(tmp_path):
     remove = {"foo_equilibrium_distance.png", "foo_equilibrium_distance.pdf",
               "group_replicate_mean_equilibrium_distance.png", "group_replicate_mean_equilibrium_distance.PDF"}
     keep = {"foo_joint_actions_blue_lower_origin.png", "unrelated.png", "foo_equilibrium_distance.csv",
-            "foo_equilibrium_distance_without_ci.png", "payoffs.pdf"}
+            "foo_equilibrium_distance_detail.png", "payoffs.pdf"}
     for name in remove | keep:
         (tmp_path / name).write_bytes(b"unchanged")
     (tmp_path / "directory_equilibrium_distance.png").mkdir()

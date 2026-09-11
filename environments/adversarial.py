@@ -3,7 +3,6 @@ import numpy as np
 
 RANDOM_WALK_GRID_MAX = 10
 RANDOM_WALK_STEP = 1.0 / RANDOM_WALK_GRID_MAX
-RANDOM_WALK_INITIALIZATIONS = ("centered", "uniform_grid")
 
 
 class HistoricalFrequencyAdversary:
@@ -37,21 +36,16 @@ class HistoricalFrequencyAdversary:
 class LazyRandomWalkEnvironment:
     """Action-independent fixed-grid reward random walks."""
 
-    def __init__(self, n_actions: int, horizon: int, seed: int, initialization: str = "centered") -> None:
+    def __init__(self, n_actions: int, horizon: int, seed: int) -> None:
         if n_actions <= 0:
             raise ValueError("n_actions must be positive")
         if horizon <= 0:
             raise ValueError("horizon must be positive")
         if seed < 0:
             raise ValueError("seed must be non-negative")
-        if initialization not in RANDOM_WALK_INITIALIZATIONS:
-            raise ValueError(f"unknown random-walk initialization: {initialization}")
 
         random = np.random.default_rng(seed)
-        if initialization == "centered":
-            states = np.full(n_actions, RANDOM_WALK_GRID_MAX // 2, dtype=int)
-        else:
-            states = random.integers(0, RANDOM_WALK_GRID_MAX + 1, size=n_actions)
+        states = np.full(n_actions, RANDOM_WALK_GRID_MAX // 2, dtype=int)
 
         self.n_players = 1
         self.n_actions = (n_actions,)

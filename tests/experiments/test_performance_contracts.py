@@ -19,7 +19,7 @@ from experiments.scenarios.adversarial import (
 )
 from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT, run_bandit_cross_play_experiment
 from experiments.scenarios.full_information_cross_play import ALGORITHMS as FULL, run_full_information_cross_play_experiment
-from metrics.regret import BaseReplacementRegretBundle, ExpectedRegretBundle, RealizedRegretBundle, RegretBundles
+from metrics.regret import RegretBundle
 from tests.support import read_csv_rows
 
 
@@ -40,8 +40,7 @@ def test_recording_budget_and_endpoints(horizon):
 
 
 @pytest.mark.parametrize("mode,name", [*(('full_information', name) for name in FULL), *(('bandit', name) for name in BANDIT)])
-@pytest.mark.parametrize("evaluation", ["expected", "realized", "both"])
-def test_sparse_runner_matches_original_dense_loop(mode, name, evaluation):
+def test_sparse_runner_matches_original_dense_loop(mode, name):
     horizon = 23
     factory = (FULL if mode == "full_information" else BANDIT)[name]
     game_type = RepeatedGame if mode == "full_information" else BanditRepeatedGame
@@ -50,13 +49,12 @@ def test_sparse_runner_matches_original_dense_loop(mode, name, evaluation):
     def players():
         return [factory.create(3, horizon, seed) for seed in (7, 8)]
 
-    # Reference the original loop: both trackers, every round, every summary.
+    # Reference the dense loop, extracting the mathematical summaries every round.
     reference_players = players()
     game = game_type(payoff_tensor)
-    regrets = [RegretBundles(3) for _ in reference_players]
+    gains = [np.zeros((3, 3)) for _ in reference_players]
     reference_rows = {}
     history = []
-    sources = ("expected", "realized") if evaluation == "both" else (evaluation,)
     for t in range(1, horizon + 1):
         actions = tuple(player.sample_action() for player in reference_players)
         history.append(actions)
@@ -65,16 +63,24 @@ def test_sparse_runner_matches_original_dense_loop(mode, name, evaluation):
             strategy = player.strategy()
             feedback = game.feedback(i)
             deviations = feedback if mode == "full_information" else game.deviation_payoffs(i)
-            regrets[i].update(strategy, action, deviations)
+            gains[i] += strategy[:, None] * (deviations[None, :] - deviations[:, None])
             player.update(feedback)
-            summary = {key: value for source in sources for key, value in getattr(regrets[i], source).summary(t).items()}
+            values = {
+                "external": float(np.max(np.sum(gains[i], axis=0))),
+                "internal": float(np.max(gains[i])),
+                "swap": float(np.sum(np.max(gains[i], axis=1))),
+            }
+            summary = {
+                field: value for name, regret in values.items()
+                for field, value in ((f"{name}_regret", regret), (f"average_{name}_regret", regret / t))
+            }
             reference_rows[t, i] = dict(game="rps", algorithm=name, t=t, player=i, action=action,
                                        payoff=float(deviations[action]), **summary)
 
     actual_players = players()
     recorder = MemoryRecorder()
     run_game("rps", mode, game_type(payoff_tensor), name, actual_players, recorder, horizon,
-             regret_evaluation=evaluation, max_recorded_points=6)
+             max_recorded_points=6)
     blocks = [[], []]
     previous = [0, 0]
     for stored in recorder.rows:
@@ -90,33 +96,27 @@ def test_sparse_runner_matches_original_dense_loop(mode, name, evaluation):
         assert np.array_equal(actual.strategy(), reference.strategy())
 
 
-@pytest.mark.parametrize("evaluation", ["expected", "realized", "both"])
-def test_only_selected_trackers_update_and_only_checkpoints_are_summarized(monkeypatch, evaluation):
-    updates, summaries = Counter(), Counter()
-    for cls in (ExpectedRegretBundle, RealizedRegretBundle):
-        original = cls.update
+def test_tracker_updates_every_round_and_summarizes_only_checkpoints(monkeypatch):
+    updates, summaries = [], Counter()
+    original_update = RegretBundle.update
+    original_summary = RegretBundle.summary
 
-        def update(self, *args, _original=original):
-            updates[self.regret_type] += 1
-            return _original(self, *args)
-
-        monkeypatch.setattr(cls, "update", update)
-    original_summary = BaseReplacementRegretBundle.summary
+    def update(self, *args):
+        updates.append(id(self))
+        return original_update(self, *args)
 
     def summary(self, time):
-        summaries[self.regret_type, time] += 1
+        summaries[time] += 1
         return original_summary(self, time)
 
-    monkeypatch.setattr(BaseReplacementRegretBundle, "summary", summary)
-    bundles = RegretBundles(3, evaluation)
-    assert (bundles.expected is None) == (evaluation == "realized")
-    assert (bundles.realized is None) == (evaluation == "expected")
+    monkeypatch.setattr(RegretBundle, "update", update)
+    monkeypatch.setattr(RegretBundle, "summary", summary)
     run_game("rps", "bandit", BanditRepeatedGame(load_game_payoffs("rps")), "auer_exp3",
              [BANDIT["auer_exp3"].create(3, 100, i) for i in range(2)], MemoryRecorder(), 100,
-             regret_evaluation=evaluation, max_recorded_points=6)
-    selected = {"expected", "realized"} if evaluation == "both" else {evaluation}
-    assert updates == Counter({source: 200 for source in selected})
-    assert summaries == Counter({(source, t): 2 for source in selected for t in recording_checkpoints(100, 6)})
+             max_recorded_points=6)
+    assert len(updates) == 200
+    assert len(set(updates)) == 2
+    assert summaries == Counter({t: 2 for t in recording_checkpoints(100, 6)})
 
 
 @pytest.mark.parametrize("runner,names", [
@@ -124,7 +124,7 @@ def test_only_selected_trackers_update_and_only_checkpoints_are_summarized(monke
     (run_bandit_cross_play_experiment, ["auer_exp3", "ito"]),
 ])
 def test_sparse_csv_preserves_all_actions_regrets_and_joint_distribution(tmp_path, runner, names):
-    kwargs = dict(game_name="rps", algorithm_names=names, horizon=101, seed=7, regret_evaluation="both")
+    kwargs = dict(game_name="rps", algorithm_names=names, horizon=101, seed=7)
     dense = runner(**kwargs, output_dir=tmp_path / "dense", max_recorded_points=200)
     sparse = runner(**kwargs, output_dir=tmp_path / "sparse", max_recorded_points=8)
     assert dense.name == sparse.name
@@ -140,10 +140,9 @@ def test_sparse_csv_preserves_all_actions_regrets_and_joint_distribution(tmp_pat
 
 
 @pytest.mark.parametrize("environment", [RANDOM_WALK_ENVIRONMENT, HISTORICAL_FREQUENCY_ENVIRONMENT])
-@pytest.mark.parametrize("evaluation", ["expected", "realized", "both"])
-def test_adversarial_sparse_rows_equal_dense_checkpoints(tmp_path, environment, evaluation):
+def test_adversarial_sparse_rows_equal_dense_checkpoints(tmp_path, environment):
     kwargs = dict(algorithm_name="auer_exp3", feedback_mode="bandit", horizon=101, seed=17,
-                  environment=environment, regret_evaluation=evaluation)
+                  environment=environment)
     dense = run_adversarial_experiment(**kwargs, output_dir=tmp_path / "dense", max_recorded_points=200)
     sparse = run_adversarial_experiment(**kwargs, output_dir=tmp_path / "sparse", max_recorded_points=8)
     dense_rows = {row["t"]: row for row in load_adversarial_rows(dense)}
@@ -154,20 +153,18 @@ def test_adversarial_sparse_rows_equal_dense_checkpoints(tmp_path, environment, 
     assert sparse_rows[-1] == dense_rows["101"]
 
 
-@pytest.mark.parametrize("evaluation", ["expected", "realized", "both"])
-def test_adversarial_summaries_are_only_extracted_at_checkpoints(tmp_path, monkeypatch, evaluation):
+def test_adversarial_summaries_are_only_extracted_at_checkpoints(tmp_path, monkeypatch):
     calls = Counter()
-    original = BaseReplacementRegretBundle.summary
+    original = RegretBundle.summary
 
     def summary(self, time):
-        calls[self.regret_type, time] += 1
+        calls[time] += 1
         return original(self, time)
 
-    monkeypatch.setattr(BaseReplacementRegretBundle, "summary", summary)
+    monkeypatch.setattr(RegretBundle, "summary", summary)
     run_adversarial_experiment("auer_exp3", feedback_mode="bandit", horizon=51, output_dir=tmp_path,
-                              regret_evaluation=evaluation, max_recorded_points=6)
-    selected = {"expected", "realized"} if evaluation == "both" else {evaluation}
-    assert calls == Counter({(source, t): 1 for source in selected for t in recording_checkpoints(51, 6)})
+                              max_recorded_points=6)
+    assert calls == Counter({t: 1 for t in recording_checkpoints(51, 6)})
 
 
 @pytest.mark.parametrize("mutate", ["missing_first", "missing_last", "duplicate", "reverse", "missing_player", "missing_block"])
@@ -208,13 +205,13 @@ def test_plot_loaders_align_legacy_dense_and_default_sparse_checkpoints(tmp_path
 
 def test_replicate_aggregation_uses_only_shared_observed_times():
     trajectories = [
-        [dict(t=str(t), player="0", expected_external_regret=str(t)) for t in (1, 2, 3, 10)],
-        [dict(t=str(t), player="0", expected_external_regret=str(2 * t)) for t in (1, 4, 10)],
+        [dict(t=str(t), player="0", external_regret=str(t)) for t in (1, 2, 3, 10)],
+        [dict(t=str(t), player="0", external_regret=str(2 * t)) for t in (1, 4, 10)],
     ]
     for aggregate in (
-        lambda: aggregate_metric_curve(trajectories, 0, "expected_external_regret"),
-        lambda: aggregate_adversarial_regret(trajectories, "expected_external_regret"),
+        lambda: aggregate_metric_curve(trajectories, 0, "external_regret"),
+        lambda: aggregate_adversarial_regret(trajectories, "external_regret"),
     ):
-        times, means, _ = aggregate()
+        times, means = aggregate()
         assert times.tolist() == [1, 10]
         assert means.tolist() == [1.5, 15.0]

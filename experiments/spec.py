@@ -4,7 +4,7 @@ import json
 import re
 
 from config import STATIONARY_METHOD
-from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, resolve_regret_evaluation
+from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
     runtime_environment_json,
@@ -30,7 +30,6 @@ class ExperimentSpec:
     seed: int
     replicate: int = 0
     stationary_method: str = STATIONARY_METHOD
-    regret_evaluation: str = "feedback_aligned"
     game_payoff_digest: str = ""
     implementation_version: int = RESULT_IMPLEMENTATION_VERSION
     runtime_environment: str = field(default_factory=runtime_environment_json)
@@ -52,7 +51,6 @@ class ExperimentSpec:
             raise ValueError("implementation_version must be positive")
         canonical_runtime = validate_runtime_environment(self.runtime_environment)
         object.__setattr__(self, "runtime_environment", canonical_runtime)
-        object.__setattr__(self, "regret_evaluation", resolve_regret_evaluation(self.feedback_mode, self.regret_evaluation))
         if not self.stationary_method:
             raise ValueError("stationary_method must not be empty")
         if self.game_payoff_digest and not PAYOFF_DIGEST_PATTERN.fullmatch(self.game_payoff_digest):
@@ -89,7 +87,6 @@ class ExperimentSpec:
             "horizon": self.horizon,
             "seed": self.seed,
             "replicate": self.replicate,
-            "regret_evaluation": self.regret_evaluation,
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
             "implementation_version": self.implementation_version,
@@ -104,7 +101,6 @@ class ExperimentSpec:
         return {
             "run_id": self.run_id,
             "feedback_mode": self.feedback_mode,
-            "regret_evaluation": self.regret_evaluation,
             "seed": self.seed,
             "replicate": self.replicate,
             "stationary_method": self.stationary_method,

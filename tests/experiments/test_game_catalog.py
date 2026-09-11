@@ -164,11 +164,11 @@ def test_three_player_custom_game_runs_and_plots_regret_for_every_player(tmp_pat
     assert {int(row["player"]) for row in rows} == {0, 1, 2}
     assert json.loads(rows[0]["algorithm_profile"]) == ["hedge", "hedge", "hedge"]
     assert "player_algorithm" not in rows[0]
-    assert "average_expected_swap_regret" in rows[0]
+    assert "average_swap_regret" in rows[0]
 
     plot_selected_results(definition.id, raw_dir, figure_dir)
 
-    assert (figure_dir / f"{definition.id}_average_expected_external_regret_player_2.png").is_file()
+    assert (figure_dir / f"{definition.id}_average_external_regret_player_2.png").is_file()
 
 
 def test_custom_game_requires_one_algorithm_per_player(tmp_path) -> None:

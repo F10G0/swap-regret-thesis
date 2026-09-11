@@ -4,7 +4,7 @@ Experiment construction, execution, CSV recording, and standard plots. Configure
 
 ## Games and Runs
 
-Built-ins are RPS, RPSLS, Matching Pennies, and five normalized 21 × 21 Bertrand games. `GameCatalog` also reads compressed custom games from `data/custom_games/`. The dashboard creates reproducible general-sum games or symmetric two-player zero-sum games whose centered matrix satisfies `A = -A.T`.
+Built-ins are RPS and RPSLS, defined locally with per-player normalization to [0, 1]. Matching Pennies is a local test-only fixture. `GameCatalog` also reads compressed custom games from `data/custom_games/`. The dashboard creates reproducible general-sum games or symmetric two-player zero-sum games whose centered matrix satisfies `A = -A.T`.
 
 A fixed-game run is identified by the game and payoff digest, feedback, regret evaluation, ordered learner profile, horizon, base seed, replicate, stationary solver, implementation version, and runtime-environment fingerprint. Older CSVs remain readable as legacy version 0. Player `i` in replicate `r` of a `p`-player game receives seed:
 

@@ -3,6 +3,17 @@ import pytest
 from experiments.runner import ExperimentCancelled
 from experiments.scenarios import bandit_cross_play, full_information_cross_play
 from tests.support import read_csv_rows as _read_rows
+
+
+RETIRED_GAME_IDS = (
+    "bertrand_standard_o1",
+    "bertrand_linear_o2",
+    "bertrand_logit_o3",
+    "bertrand_linear_o2_prime",
+    "bertrand_logit_o3_prime",
+)
+
+
 def test_full_information_experiment_smoke(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(full_information_cross_play, "RAW_DIR", tmp_path)
 
@@ -17,8 +28,7 @@ def test_full_information_experiment_smoke(tmp_path, monkeypatch) -> None:
     assert len(rows) == 6
     assert {row["feedback_mode"] for row in rows} == {"full_information"}
     assert {row["stationary_method"] for row in rows} == {"solve"}
-    assert "expected_swap_regret" in rows[0]
-    assert "realized_swap_regret" not in rows[0]
+    assert "swap_regret" in rows[0]
 
     with pytest.raises(FileExistsError, match="already exists"):
         full_information_cross_play.run_full_information_cross_play_experiment(
@@ -79,65 +89,23 @@ def test_bandit_experiment_smoke(tmp_path, monkeypatch) -> None:
     rows = _read_rows(output_path)
     assert len(rows) == 6
     assert {row["feedback_mode"] for row in rows} == {"bandit"}
-    assert "realized_swap_regret" in rows[0]
-    assert "expected_swap_regret" not in rows[0]
+    assert "swap_regret" in rows[0]
 
 
-@pytest.mark.parametrize(
-    ("feedback_mode", "regret_evaluation", "expected_sources"),
-    [
-        ("full_information", "expected", {"expected"}),
-        ("full_information", "realized", {"realized"}),
-        ("full_information", "both", {"expected", "realized"}),
-        ("bandit", "expected", {"expected"}),
-        ("bandit", "realized", {"realized"}),
-        ("bandit", "both", {"expected", "realized"}),
-    ],
-)
-def test_regret_evaluation_is_independent_of_feedback_mode(
-    tmp_path,
-    feedback_mode: str,
-    regret_evaluation: str,
-    expected_sources: set[str],
-) -> None:
+@pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
+def test_all_feedback_modes_record_the_canonical_schema(tmp_path, feedback_mode):
+    from experiments.result_schema import REGRET_FIELDNAMES, RESULT_IMPLEMENTATION_VERSION
     if feedback_mode == "full_information":
-        output_path = full_information_cross_play.run_full_information_cross_play_experiment(
-            game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, seed=7,
-            output_dir=tmp_path, regret_evaluation=regret_evaluation,
-        )
+        runner = full_information_cross_play.run_full_information_cross_play_experiment
+        names = ["hedge", "bm"]
     else:
-        output_path = bandit_cross_play.run_bandit_cross_play_experiment(
-            game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=2, seed=7,
-            output_dir=tmp_path, regret_evaluation=regret_evaluation,
-        )
-
-    rows = _read_rows(output_path)
-    assert {row["regret_evaluation"] for row in rows} == {regret_evaluation}
-    for source in ("expected", "realized"):
-        assert (f"{source}_swap_regret" in rows[0]) == (source in expected_sources)
-
-
-def test_regret_evaluation_does_not_change_bandit_play(tmp_path) -> None:
-    expected_path = bandit_cross_play.run_bandit_cross_play_experiment(
-        game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=10, seed=7,
-        output_dir=tmp_path, regret_evaluation="expected",
-    )
-    both_path = bandit_cross_play.run_bandit_cross_play_experiment(
-        game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=10, seed=7,
-        output_dir=tmp_path, regret_evaluation="both",
-    )
-
-    expected_rows = _read_rows(expected_path)
-    both_rows = _read_rows(both_path)
-    behavior_fields = ("t", "player", "action", "payoff")
-    assert expected_path != both_path
-    assert [
-        tuple(row[field] for field in behavior_fields)
-        for row in expected_rows
-    ] == [
-        tuple(row[field] for field in behavior_fields)
-        for row in both_rows
-    ]
+        runner = bandit_cross_play.run_bandit_cross_play_experiment
+        names = ["exp3_ix", "bm"]
+    rows = _read_rows(runner("rps", names, horizon=4, seed=7, output_dir=tmp_path))
+    for row in rows:
+        assert {key for key in row if key.endswith("_regret")} == set(REGRET_FIELDNAMES)
+        assert "regret_evaluation" not in row
+        assert int(row["implementation_version"]) == RESULT_IMPLEMENTATION_VERSION == 5
 
 
 def test_cancelled_experiment_does_not_publish_partial_result(tmp_path) -> None:
@@ -163,23 +131,26 @@ def test_exp3_ix_and_bm_experiment_smoke(tmp_path) -> None:
     assert "learning_rate_player_0" not in rows[0]
 
 
-def test_o1_stationary_regret_matching_handles_solver_roundoff(tmp_path) -> None:
-    output_path = (
-        full_information_cross_play.run_full_information_cross_play_experiment(
-            game_name="bertrand_standard_o1",
-            algorithm_names=[
-                "stationary_regret_matching",
-                "stationary_regret_matching",
-            ],
-            horizon=1300,
-            seed=42,
-            output_dir=tmp_path,
+@pytest.mark.parametrize("game_name", RETIRED_GAME_IDS)
+@pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
+def test_retired_games_are_rejected_for_new_cross_play_runs(
+    tmp_path, game_name, feedback_mode
+) -> None:
+    if feedback_mode == "full_information":
+        runner = full_information_cross_play.run_full_information_cross_play_experiment
+        algorithm = "hedge"
+    else:
+        runner = bandit_cross_play.run_bandit_cross_play_experiment
+        algorithm = "exp3_ix"
+    with pytest.raises(ValueError, match=f"unknown game: {game_name}"):
+        runner(
+            game_name=game_name,
+            algorithm_names=[algorithm, algorithm],
+            horizon=3,
+            output_dir=tmp_path / "raw",
+            custom_game_dir=tmp_path / "custom-games",
         )
-    )
-
-    rows = _read_rows(output_path)
-
-    assert len(rows) == 2600
+    assert not (tmp_path / "raw").exists()
 
 
 def test_lce_ix_experiment_uses_theoretical_default_schedule(tmp_path) -> None:

@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 from experiments.game_catalog import GameCatalog, payoff_tensor_digest
-from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret, run_label
+from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret
+from experiments.plots.style import curve_labels
 from experiments.scenarios.cross_play import player_seed
 from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
@@ -31,7 +32,6 @@ def make_spec(
     feedback_mode: str = "full_information",
     seed: int = 7,
     replicate: int = 0,
-    regret_evaluation: str = "feedback_aligned",
 ) -> ExperimentSpec:
     return ExperimentSpec(
         game_name="rps",
@@ -40,12 +40,11 @@ def make_spec(
         horizon=10,
         seed=seed,
         replicate=replicate,
-        regret_evaluation=regret_evaluation,
     )
 
 
 def write_result(path, spec: ExperimentSpec) -> None:
-    fieldnames = regret_fieldnames(spec.regret_evaluation)
+    fieldnames = regret_fieldnames()
     row = {field: 0 for field in fieldnames}
     row.update(spec.metadata())
     row.update(
@@ -74,7 +73,6 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     baseline = make_spec()
 
     assert baseline.run_id != make_spec(feedback_mode="bandit").run_id
-    assert baseline.run_id != make_spec(regret_evaluation="both").run_id
     assert baseline.run_id != make_spec(seed=8).run_id
     changed_horizon = ExperimentSpec(
         game_name="rps",
@@ -88,10 +86,11 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=2).run_id
 
 
-def test_v3_identity_and_loader_preserve_legacy_v2_results(tmp_path) -> None:
+@pytest.mark.parametrize("version", [2, 3, 4])
+def test_v5_identity_rejects_but_does_not_modify_legacy_results(tmp_path, version) -> None:
     current = make_spec()
-    legacy = replace(current, implementation_version=2)
-    assert RESULT_IMPLEMENTATION_VERSION == current.implementation_version == 3
+    legacy = replace(current, implementation_version=version)
+    assert RESULT_IMPLEMENTATION_VERSION == current.implementation_version == 5
     assert current.run_id != legacy.run_id
     legacy_path = tmp_path / f"{legacy.run_id}.csv"
     current_path = tmp_path / f"{current.run_id}.csv"
@@ -99,8 +98,9 @@ def test_v3_identity_and_loader_preserve_legacy_v2_results(tmp_path) -> None:
     legacy_bytes = legacy_path.read_bytes()
     write_result(current_path, current)
 
-    assert {result_implementation_version(row) for row in iter_result_rows(legacy_path)} == {2}
-    assert {result_implementation_version(row) for row in iter_result_rows(current_path)} == {3}
+    with pytest.raises(ValueError, match=f"incompatible result implementation_version {version}"):
+        list(iter_result_rows(legacy_path))
+    assert {result_implementation_version(row) for row in iter_result_rows(current_path)} == {5}
     assert legacy_path.read_bytes() == legacy_bytes
 
 
@@ -140,7 +140,7 @@ def test_experiment_spec_preserves_positional_stationary_method_compatibility() 
     spec = ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, 0, "pinv")
 
     assert spec.stationary_method == "pinv"
-    assert spec.regret_evaluation == "expected"
+    assert "regret_evaluation" not in spec.metadata()
 
 
 def test_long_srm_profile_uses_readable_abbreviated_run_id() -> None:
@@ -223,7 +223,7 @@ def test_metric_curves_are_averaged_across_replicates() -> None:
         ],
     ]
 
-    times, means, confidence = aggregate_metric_curve(
+    times, means = aggregate_metric_curve(
         replicate_runs,
         player=0,
         column="regret",
@@ -231,7 +231,6 @@ def test_metric_curves_are_averaged_across_replicates() -> None:
 
     assert np.array_equal(times, [1, 2])
     assert np.array_equal(means, [2.0, 3.0])
-    assert np.allclose(confidence, [12.706204736, 12.706204736])
 
 
 def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:
@@ -245,7 +244,7 @@ def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:
     assert set(results["rps"]) == {full_spec.run_id, bandit_spec.run_id}
 
 
-def test_fixed_game_loader_treats_missing_runtime_identity_as_legacy(tmp_path) -> None:
+def test_fixed_game_loader_rejects_missing_version(tmp_path) -> None:
     spec = make_spec()
     result_path = tmp_path / f"{spec.run_id}.csv"
     write_result(result_path, spec)
@@ -263,10 +262,8 @@ def test_fixed_game_loader_treats_missing_runtime_identity_as_legacy(tmp_path) -
         writer.writeheader()
         writer.writerows({field: row[field] for field in fieldnames} for row in rows)
 
-    loaded = list(iter_result_rows(result_path))
-    assert {result_implementation_version(row) for row in loaded} == {0}
-    assert {result_runtime_environment(row) for row in loaded} == {""}
-    assert {result_runtime_fingerprint(row) for row in loaded} == {""}
+    with pytest.raises(ValueError, match="incompatible result implementation_version 0"):
+        list(iter_result_rows(result_path))
 
 
 def test_plot_collection_reuses_validated_sample_cache(tmp_path, monkeypatch) -> None:
@@ -301,20 +298,22 @@ def test_plot_collection_invalidates_cache_when_source_changes(tmp_path, monkeyp
 def test_plot_legend_uses_algorithm_abbreviations() -> None:
     rows = [{"algorithm": "regret_matching_vs_stationary_regret_matching_vs_hedge", "seed": "7"}]
 
-    assert run_label(rows, 1) == "RM vs SRM vs Hedge · seed 7"
+    assert curve_labels(rows) == ["RM vs SRM vs Hedge"]
 
 
 @pytest.mark.parametrize("algorithm,label", [("exp3_ix", "EXP3-IX"), ("exp3", "EXP3")])
-def test_plot_legend_can_distinguish_feedback_and_evaluation(algorithm, label) -> None:
+def test_plot_legend_can_distinguish_feedback(algorithm, label) -> None:
     # Retired algorithms must keep their own labels when reading old results.
     rows = [{
         "algorithm": f"{algorithm}_vs_{algorithm}",
         "seed": "7",
         "feedback_mode": "bandit",
-        "regret_evaluation": "expected",
     }]
 
-    assert run_label(rows, 1, include_feedback=True, include_evaluation=True) == f"{label} vs {label} · seed 7 · bandit · evaluation expected"
+    assert curve_labels(rows) == [label]
+    assert curve_labels([rows[0], rows[0] | {"feedback_mode": "full_information"}]) == [
+        f"{label} · bandit", f"{label} · full info",
+    ]
 
 
 def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
@@ -323,9 +322,8 @@ def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
         row = {
             "player": "0",
             "t": "1",
-            "average_expected_external_regret": str(index),
+            "average_external_regret": str(index),
             "feedback_mode": "full_information",
-            "regret_evaluation": "expected",
             "algorithm": f"stationary_regret_matching_{index}_vs_stationary_regret_matching_{index}",
             "seed": "7",
             "stationary_method": "solve",
@@ -334,7 +332,7 @@ def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
 
     close_figure = plt.close
     monkeypatch.setattr(plt, "close", lambda figure: None)
-    plot_regret("rps", replicate_groups, "expected", "external", player=0, average=True, output_dir=tmp_path)
+    plot_regret("rps", replicate_groups, "external", player=0, average=True, output_dir=tmp_path)
     figure = plt.gcf()
     figure.canvas.draw()
     renderer = figure.canvas.get_renderer()
@@ -344,5 +342,5 @@ def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
     assert legend_box.y1 < axes_box.y0
     assert 0.0 <= legend_box.x0 < legend_box.x1 <= figure.bbox.width
     assert figure.get_figheight() > 4.4
-    assert (tmp_path / "rps_average_expected_external_regret_player_0.png").is_file()
+    assert (tmp_path / "rps_average_external_regret_player_0.png").is_file()
     close_figure(figure)

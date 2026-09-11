@@ -737,9 +737,7 @@ fieldset {
 }
 
 .results-toolbar {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
+    display: grid;
     gap: 18px;
     padding: 4px 0 14px;
     border-bottom: 1px solid var(--border);
@@ -756,7 +754,7 @@ fieldset {
 
 .shared-result-filters {
     display: grid;
-    grid-template-columns: repeat(2, minmax(150px, 220px));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 12px;
 }
 
@@ -912,12 +910,6 @@ fieldset {
     background: var(--surface);
 }
 
-.figure-card > a {
-    display: inline-block;
-    margin-top: 7px;
-    font-size: 0.75rem;
-}
-
 .figure-actions {
     display: flex;
     align-items: center;
@@ -934,14 +926,8 @@ fieldset {
     gap: 8px;
 }
 
-.figure-actions a,
-.confidence-toggle {
+.figure-actions a {
     font-size: 0.75rem;
-}
-
-.confidence-toggle {
-    min-height: 30px;
-    padding: 4px 8px;
 }
 
 .environment-rule {
@@ -989,24 +975,8 @@ fieldset {
     object-fit: contain;
 }
 
-.counter {
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-}
-
 .summary-panel .section-heading {
     margin-bottom: 16px;
-}
-
-.summary-filters {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
-}
-
-.summary-filters .field {
-    margin: 0;
 }
 
 .table-scroll {
@@ -1062,13 +1032,6 @@ tbody tr:hover {
     background: var(--accent-soft);
     color: var(--accent-dark);
     font-weight: 800;
-}
-
-.metric-confidence {
-    display: block;
-    color: var(--muted);
-    font-size: 0.72rem;
-    font-weight: 500;
 }
 
 .experiment-detail {
@@ -1321,7 +1284,6 @@ tbody tr:hover {
     .field-grid-two,
     .players,
     .filter-grid,
-    .summary-filters,
     .shared-result-filters,
     .equilibrium-grid,
     .figure-grid,

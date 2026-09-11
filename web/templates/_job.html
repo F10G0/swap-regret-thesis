@@ -1,0 +1,16 @@
+<li class="job job-{{ job.status }}" data-job-id="{{ job.id }}" data-status-url="{{ job.url }}" data-status="{{ job.status }}">
+    <div>
+        <strong>{{ job.description }}</strong>
+        <p data-job-message>{{ job.message }}</p>
+    </div>
+    <div class="job-actions">
+        <span class="status" data-job-status>{{ job.status }}</span>
+        {% if job.status in ["queued", "running"] %}
+            <form method="post" action="{{ url_for('dashboard.cancel_job', job_id=job.id) }}">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
+                <button class="button-link" type="submit">Cancel</button>
+            </form>
+        {% endif %}
+    </div>
+</li>

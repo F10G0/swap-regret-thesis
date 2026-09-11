@@ -154,7 +154,7 @@ def test_scoped_plot_generation_preserves_other_figures(tmp_path, monkeypatch):
     stale = output / f"{prefix}obsolete.pdf"
     stale.write_bytes(b"stale")
 
-    def plot(results, environment, feedback_mode, n_actions, source, regret_name, average, output_path):
+    def plot(results, environment, feedback_mode, n_actions, regret_name, average, output_path):
         assert (environment, feedback_mode, n_actions) == scope
         assert all(int(rows[0]["n_actions"]) == 7 for _, rows in results)
         output_path.write_bytes(b"new")
@@ -162,6 +162,6 @@ def test_scoped_plot_generation_preserves_other_figures(tmp_path, monkeypatch):
 
     monkeypatch.setattr(plots, "_plot_regret", plot)
     generated = plots.plot_adversarial_results(raw, output, scope=scope)
-    assert len(generated) == 12
+    assert len(generated) == 6
     assert unrelated.read_bytes() == b"preserve"
     assert not stale.exists()

@@ -4,7 +4,6 @@ import json
 
 import numpy as np
 
-from metrics.confidence import mean_confidence_interval_half_width
 from web.result_index import SUMMARY_REGRET_FIELDS
 
 
@@ -12,7 +11,6 @@ RESULT_GROUP_FIELDS = (
     "game",
     "game_payoff_digest",
     "feedback_mode",
-    "regret_evaluation",
     "horizon",
     "seed",
     "stationary_method",
@@ -59,14 +57,12 @@ def aggregate_result_summaries(summaries: list[dict]) -> list[dict]:
                 rows_by_replicate.setdefault(row["replicate"], row)
             rows = [rows_by_replicate[replicate] for replicate in sorted(rows_by_replicate)]
             replicates = [row["replicate"] for row in rows]
-            confidence_intervals = {}
             result = dict(rows[0])
             for field in SUMMARY_REGRET_FIELDS:
                 values = [row[field] for row in rows if field in row]
                 if len(values) != len(rows):
                     continue
                 result[field] = float(np.mean(values))
-                confidence_intervals[field] = float(mean_confidence_interval_half_width(values))
 
             result.update({
                 "group_id": group_id,
@@ -74,7 +70,6 @@ def aggregate_result_summaries(summaries: list[dict]) -> list[dict]:
                 "replicates": replicates,
                 "replicate_count": len(replicates),
                 "replicate_label": _replicate_label(replicates),
-                "confidence_intervals": confidence_intervals,
                 "runs": rows,
             })
             aggregated.append(result)

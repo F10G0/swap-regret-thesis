@@ -1,10 +1,11 @@
 from flask import current_app, url_for
+from math import sqrt
 
 from config import SEED
+from experiments.result_schema import REGRET_NAMES
 from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
     FEEDBACK_MODE_LABELS,
-    INITIALIZATION_LABELS,
     MAX_ADVERSARIAL_ACTIONS,
     RANDOM_WALK_ENVIRONMENT,
 )
@@ -16,15 +17,25 @@ from experiments.game_catalog import (
 )
 from web.result_groups import aggregate_result_summaries
 from web.services import DashboardService
-from web.experiment_modes import REGRET_EVALUATION_LABELS
 
 
 FIGURE_URL_FIELDS = {
     "filename": "url",
     "pdf_filename": "pdf_url",
-    "confidence_free_filename": "confidence_free_url",
-    "confidence_free_pdf_filename": "confidence_free_pdf_url",
 }
+
+REGRET_COLUMNS = [
+    {"key": f"{view}_{metric}", "metric": metric, "view": view,
+     "label": f"{metric.title()} · {'R/T' if view == 'average' else 'R/√T'}"}
+    for metric in REGRET_NAMES for view in ("average", "sqrt_scaling")
+]
+
+
+def _display_regrets(summary):
+    # Change display normalization only, using the already aggregated final values.
+    return {column["key"]: summary[f"average_{column['metric']}_regret"] *
+            (1 if column["view"] == "average" else sqrt(summary["horizon"]))
+            for column in REGRET_COLUMNS}
 
 
 def _figure_data(records: list[dict], endpoint: str) -> list[dict]:
@@ -58,7 +69,6 @@ def _experiment_page_context(
 ) -> dict:
     return {
         "feedback_modes": feedback_modes,
-        "regret_evaluations": REGRET_EVALUATION_LABELS,
         "algorithms_by_feedback_mode": algorithms_by_feedback_mode,
         "algorithm_labels": service.algorithm_labels,
         "form_state": form_state or default_form_state,
@@ -67,6 +77,7 @@ def _experiment_page_context(
         "busy": service.jobs.is_busy(),
         "max_horizon": current_app.config["MAX_HORIZON"],
         "max_replicates": current_app.config["MAX_REPLICATES"],
+        "regret_columns": REGRET_COLUMNS,
     }
 
 
@@ -97,7 +108,6 @@ def dashboard_context(
     games = list(game_definitions)
     game_presentations = service.game_presentations
     results = service.result_snapshot()
-    figures = _figure_data(service.figure_records(), "dashboard.serve_figure")
     summaries = []
     for summary in aggregate_result_summaries(results.summaries):
         profile_label = " vs ".join(service.algorithm_labels.get(name, name) for name in summary["algorithm_profile"])
@@ -106,11 +116,7 @@ def dashboard_context(
         summaries.append({
             **summary,
             "profile_label": profile_label,
-            "regret_sources": [
-                source
-                for source in ("expected", "realized")
-                if any(name.startswith(f"average_{source}_") and name.endswith("_regret") for name in summary)
-            ],
+            "display_regrets": _display_regrets(summary),
             "runs": [
                 {
                     **run,
@@ -140,16 +146,6 @@ def dashboard_context(
             ),
         })
 
-    for figure in figures:
-        game_label = game_presentations[figure["game"]]["label"]
-        figure.update(
-            scope=figure["game"],
-            secondary=str(figure["player"]),
-            title=f"{game_label} · {figure['source'].title()} · Player {figure['player']} · {figure['regret'].title()}",
-            alt=f"{game_label}, {figure['source']} {figure['regret']} regret for player {figure['player']}",
-        )
-    players = sorted({summary["player"] for summary in summaries} | {figure["player"] for figure in figures})
-
     return {
         **_experiment_page_context(
             service,
@@ -172,25 +168,9 @@ def dashboard_context(
             }
             for filename in results.filenames
         ],
-        "figures": figures,
         "equilibrium_figures": _equilibrium_figure_data(service),
         "summaries": summaries,
         "warnings": results.warnings,
-        "players": players,
-        "result_filters": [
-            {
-                "key": "scope",
-                "label": "Game",
-                "all_label": "All games",
-                "options": [(game, game_presentations[game]["label"]) for game in games],
-            },
-            {
-                "key": "secondary",
-                "label": "Player",
-                "all_label": "All players",
-                "options": [(str(player), f"Player {player}") for player in players],
-            },
-        ],
     }
 
 
@@ -200,25 +180,16 @@ def one_player_context(
     inline_error: str | None = None,
 ) -> dict:
     summaries, warnings = service.adversarial_result_summaries()
-    figures = _figure_data(service.adversarial_figure_records(), "dashboard.adversarial_figure")
     scaling_summaries, scaling_warnings = service.adversarial_scaling_summaries()
     scaling_figures = _figure_data(
         service.adversarial_scaling_figure_records(scaling_summaries),
         "dashboard.adversarial_scaling_figure",
     )
     for summary in summaries:
-        summary["regret_sources"] = [source for source in ("expected", "realized") if summary[f"{source}_regret"] is not None]
         summary["download_url"] = url_for("dashboard.download_adversarial_experiment", filename=summary["filename"])
+        summary["display_regrets"] = _display_regrets(summary)
     for summary in scaling_summaries:
         summary["download_url"] = url_for("dashboard.download_adversarial_scaling_experiment", filename=summary["filename"])
-    for figure in figures:
-        view_label = f"Average {figure['regret'].title()}" if figure["view"] == "average" else f"{figure['regret'].title()} / sqrt(t)"
-        figure.update(
-            scope=figure["environment"],
-            secondary=figure["feedback_mode"],
-            title=f"{figure['environment_label']} · {figure['feedback_label']} · {figure['source'].title()} · {view_label} · {figure['n_actions']} actions",
-            alt=f"{figure['environment_label']}, {figure['feedback_label']}, {figure['source']} {figure['regret']} regret",
-        )
     return {
         **_experiment_page_context(
             service,
@@ -230,28 +201,12 @@ def one_player_context(
         ),
         "experiment_mode": "adversarial",
         "adversarial_environments": ENVIRONMENT_LABELS,
-        "initialization_modes": INITIALIZATION_LABELS,
         "random_walk_environment": RANDOM_WALK_ENVIRONMENT,
         "summaries": summaries,
-        "figures": figures,
         "scaling_summaries": scaling_summaries,
         "scaling_figures": scaling_figures,
         "warnings": warnings + scaling_warnings,
         "max_actions": MAX_ADVERSARIAL_ACTIONS,
-        "result_filters": [
-            {
-                "key": "scope",
-                "label": "Environment",
-                "all_label": "All environments",
-                "options": list(ENVIRONMENT_LABELS.items()),
-            },
-            {
-                "key": "secondary",
-                "label": "Feedback",
-                "all_label": "All feedback",
-                "options": list(FEEDBACK_MODE_LABELS.items()),
-            },
-        ],
     }
 
 

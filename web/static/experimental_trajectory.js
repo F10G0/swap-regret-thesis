@@ -194,7 +194,7 @@ function renderPendingTrajectoryComparisonMembers() {
     if (context) {
         if (members.length) {
             const first = members[0];
-            context.textContent = `${gamePresentation(first.game).label} · ${first.feedback_mode} · ${first.regret_evaluation} · horizon ${first.horizon} · base seed ${first.seed} · replicate indices ${first.replicate_indices.join(", ")}`;
+            context.textContent = `${gamePresentation(first.game).label} · ${first.feedback_mode} · horizon ${first.horizon} · base seed ${first.seed} · replicate indices ${first.replicate_indices.join(", ")}`;
         } else {
             context.textContent =
                 "Add an experiment to establish the compatibility context.";

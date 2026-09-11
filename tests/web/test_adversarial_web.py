@@ -26,9 +26,7 @@ from experiments.seeding import (
 VALID_FORM = {
     "experiment_type": "adversarial",
     "environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
-    "initialization_mode": "centered",
     "feedback_mode": "full_information",
-    "regret_evaluation": "both",
     "algorithm_names": ["hedge"],
     "n_actions": "3",
     "horizon": "4",
@@ -37,7 +35,6 @@ VALID_FORM = {
     "replicates": "1",
 }
 ENVIRONMENTS = {HISTORICAL_FREQUENCY_ENVIRONMENT, RANDOM_WALK_ENVIRONMENT}
-INITIALIZATION_MODES = {"centered", "uniform_grid"}
 
 
 def _app(tmp_path: Path):
@@ -57,7 +54,6 @@ def test_adversarial_form_validation() -> None:
             "bandit": ["exp3_ix"],
         },
         environments=ENVIRONMENTS,
-        initialization_modes=INITIALIZATION_MODES,
         max_actions=100,
         max_horizon=100,
     )
@@ -66,14 +62,13 @@ def test_adversarial_form_validation() -> None:
     assert form.feedback_mode == "full_information"
     assert form.n_actions == 3
     assert form.replicates == 1
-    assert form.regret_evaluation == "both"
+    assert not hasattr(form, "regret_evaluation")
 
     with pytest.raises(ValueError, match="replicates must not exceed 10"):
         parse_adversarial_experiment_form(
             VALID_FORM | {"replicates": "11"},
             algorithms_by_feedback_mode={"full_information": ["hedge"]},
             environments=ENVIRONMENTS,
-            initialization_modes=INITIALIZATION_MODES,
             max_actions=100,
             max_horizon=100,
             max_replicates=10,
@@ -88,7 +83,6 @@ def test_adversarial_scaling_form_validation() -> None:
         },
         algorithms_by_feedback_mode={"full_information": ["hedge"]},
         environments=ENVIRONMENTS,
-        initialization_modes=INITIALIZATION_MODES,
         max_actions=100,
         max_horizon=100,
         max_replicates=10,
@@ -96,7 +90,7 @@ def test_adversarial_scaling_form_validation() -> None:
 
     assert form.action_counts == (2, 5, 10)
     assert form.replicates == 4
-    assert form.regret_evaluation == "both"
+    assert not hasattr(form, "regret_evaluation")
     assert form.horizon == 4
 
 
@@ -115,19 +109,6 @@ def test_adversarial_algorithm_must_match_feedback_mode() -> None:
                 "bandit": ["exp3_ix"],
             },
             environments=ENVIRONMENTS,
-            initialization_modes=INITIALIZATION_MODES,
-            max_actions=100,
-            max_horizon=100,
-        )
-
-
-def test_adversarial_form_rejects_unknown_regret_evaluation() -> None:
-    with pytest.raises(ValueError, match="unknown regret evaluation"):
-        parse_adversarial_experiment_form(
-            VALID_FORM | {"regret_evaluation": "unknown"},
-            algorithms_by_feedback_mode={"full_information": ["hedge"]},
-            environments=ENVIRONMENTS,
-            initialization_modes=INITIALIZATION_MODES,
             max_actions=100,
             max_horizon=100,
         )
@@ -156,12 +137,12 @@ def test_experiments_page_switches_to_one_player_controls(tmp_path) -> None:
         assert f'<option value="{algorithm}"' in page
     assert 'name="environment"' in page
     assert 'class="control-card control-card-environment"' in page
-    assert 'name="initialization_mode"' in page
+    assert 'name="initialization_mode"' not in page
     assert 'name="feedback_mode"' in page
-    assert 'name="regret_evaluation"' in page
-    assert '<option value="expected"' in page
-    assert '<option value="realized"' in page
-    assert '<option value="both"' in page
+    assert 'name="regret_evaluation"' not in page
+    assert '<option value="expected"' not in page
+    assert '<option value="realized"' not in page
+    assert '<option value="both"' not in page
     assert 'name="n_actions"' in page
     assert 'name="memory_window"' not in page
     assert 'name="environment_seed"' in page
@@ -184,7 +165,6 @@ def test_experiments_page_switches_to_one_player_controls(tmp_path) -> None:
     assert json.loads(payload)["mode"] == "adversarial"
     for name in (
         "feedback_mode",
-        "regret_evaluation",
         "horizon",
         "seed",
         "algorithm_names",
@@ -201,7 +181,6 @@ def test_adversarial_form_controls_match_the_rendered_environment(tmp_path) -> N
     client = app.test_client()
 
     historical_page = client.get("/?mode=adversarial").get_data(as_text=True)
-    assert "hidden" in _opening_tag(historical_page, "adversarial-initialization-field")
     assert "hidden" in _opening_tag(historical_page, "adversarial-environment-seed-field")
     assert "hidden" in _opening_tag(historical_page, "environment-panel")
     assert "hidden" in _opening_tag(historical_page, "historical-frequency-rule")
@@ -217,7 +196,6 @@ def test_adversarial_form_controls_match_the_rendered_environment(tmp_path) -> N
     )
     assert response.status_code == 400
     random_walk_page = response.get_data(as_text=True)
-    assert "hidden" not in _opening_tag(random_walk_page, "adversarial-initialization-field")
     assert "hidden" not in _opening_tag(random_walk_page, "adversarial-environment-seed-field")
     assert "hidden" in _opening_tag(random_walk_page, "environment-panel")
     assert "hidden" in _opening_tag(random_walk_page, "historical-frequency-rule")
@@ -272,16 +250,13 @@ def test_adversarial_page_runs_action_space_scaling_batch(tmp_path) -> None:
     result = next(service.adversarial_scaling_raw_dir.glob("*.csv"))
     assert len(result.read_text(encoding="utf-8").splitlines()) == 5
     figures = service.adversarial_scaling_figure_records()
-    assert {figure["source"] for figure in figures} == {"expected", "realized"}
+    assert len(figures) == 1
+    assert "source" not in figures[0]
 
     page = client.get("/?mode=adversarial").get_data(as_text=True)
     assert "Regret by action-space size" in page
     assert "K=2, 4 · 2 replicates" in page
-    assert page.count('class="confidence-toggle"') == len(figures)
-    assert 'id="confidence-intervals"' not in page
-    assert "Hide 95% CI" in page
-    assert "data-without-confidence-src" in page
-    assert "data-without-confidence-download" in page
+    assert "confidence-toggle" not in page
     assert "data-result-card" in page
     assert "data-result-section" in page
     assert page.count('class="figure-open"') == len(figures)
@@ -294,7 +269,7 @@ def test_adversarial_page_runs_action_space_scaling_batch(tmp_path) -> None:
             f"/adversarial/action-scaling/figures/{figure['filename']}"
         ).status_code == 200
         assert client.get(
-            f"/adversarial/action-scaling/figures/{figure['confidence_free_filename']}"
+            f"/adversarial/action-scaling/figures/{figure['pdf_filename']}"
         ).status_code == 200
 
 
@@ -319,8 +294,7 @@ def test_adversarial_page_queues_one_run_and_renders_results(tmp_path) -> None:
     page = client.get("/?mode=adversarial").get_data(as_text=True)
     assert "Final regret summary" in page
     assert page.count("Download</a>") == 1
-    assert ">Expected</th>" in page
-    assert ">Realized</th>" in page
+    assert "External · R/T</th>" in page
     assert "Full history · top half punished" in page
 
 
@@ -336,7 +310,6 @@ def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> N
         VALID_FORM | {
             "environment": RANDOM_WALK_ENVIRONMENT,
             "feedback_mode": "bandit",
-            "regret_evaluation": "realized",
             "algorithm_names": ["exp3_ix"],
             "horizon": "5",
             "seed": "9",
@@ -345,31 +318,22 @@ def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> N
         client.post("/", data=form | {"_csrf_token": token})
         assert _wait_for_job(service, service.jobs.recent()[0].id) == "succeeded"
 
-    service.adversarial_figure_dir.mkdir(parents=True, exist_ok=True)
-    for environment, feedback in (
-        (HISTORICAL_FREQUENCY_ENVIRONMENT, "full_information"),
-        (RANDOM_WALK_ENVIRONMENT, "bandit"),
-    ):
-        for source in ("expected", "realized"):
-            for regret in ("external", "internal"):
-                for suffix in (f"average_{source}_{regret}_regret", f"{source}_{regret}_regret_over_sqrt_t"):
-                    name = f"adversarial_{environment}_{feedback}_3_actions_{suffix}.png"
-                    (service.adversarial_figure_dir / name).write_bytes(b"png")
-
     static_dir = Path(__file__).parents[2] / "web" / "static"
     payload = {
         "page": client.get("/?mode=adversarial").get_data(as_text=True),
         "common": (static_dir / "common.js").read_text(encoding="utf-8"),
         "dashboard": (static_dir / "dashboard.js").read_text(encoding="utf-8"),
+        "builder": (static_dir / "figure_builder.js").read_text(),
+        "catalog": service.figure_builder.catalog("adversarial"),
     }
     script = r'''const fs = require("fs");
 const {JSDOM} = require("jsdom");
 const payload = JSON.parse(fs.readFileSync(0, "utf8"));
 const dom = new JSDOM(payload.page, {url: "http://localhost/?mode=adversarial", runScripts: "outside-only"});
 const window = dom.window;
-window.fetch = async () => ({ok: true, json: async () => ({})});
+window.fetch = async () => ({ok: true, json: async () => payload.catalog});
 window.HTMLElement.prototype.scrollIntoView = () => {};
-window.eval(payload.common + "\n" + payload.dashboard);
+window.eval(payload.common + "\n" + payload.dashboard + "\n" + payload.builder);
 const document = window.document;
 const visible = (selector) => [...document.querySelectorAll(selector)].filter((node) => !node.hidden);
 const filteredTo = (selector, key, value) => {
@@ -382,50 +346,34 @@ const select = (id, value) => {
     control.value = value;
     control.dispatchEvent(new window.Event("change", {bubbles: true}));
 };
-const input = (id, value) => {
-    const control = document.getElementById(id);
-    control.value = value;
-    control.dispatchEvent(new window.Event("input", {bubbles: true}));
-};
-if (!document.getElementById("environment-panel").hidden) process.exit(1);
+(async () => {
+await new Promise(resolve => setImmediate(resolve));
 select("filter-scope", "lazy_random_walk_v1");
+document.getElementById("filter-select-all").click();
 if (!filteredTo(".summary-row", "scope", "lazy_random_walk_v1")) process.exit(2);
 if (document.getElementById("environment-panel").hidden) process.exit(3);
 if (document.getElementById("random-walk-rule").hidden) process.exit(4);
 if (!document.getElementById("historical-frequency-rule").hidden) process.exit(5);
-select("filter-scope", "all");
-if (!document.getElementById("environment-panel").hidden) process.exit(6);
-select("filter-secondary", "bandit");
-if (!filteredTo("#figure-grid .figure-card", "secondary", "bandit")) process.exit(7);
-select("filter-secondary", "all");
-select("filter-source", "realized");
-if (!filteredTo("#figure-grid .figure-card", "source", "realized")) process.exit(8);
-select("filter-source", "expected");
-select("filter-regret", "internal");
-if (!filteredTo("#figure-grid .figure-card", "regret", "internal")) process.exit(9);
-select("filter-regret", "all");
+if (document.getElementById("filter-feedback").value !== "bandit") process.exit(7);
+if (!filteredTo(".summary-row", "profile", "exp3_ix")) process.exit(11);
+select("filter-metric", "internal");
 select("filter-view", "sqrt_scaling");
-if (!filteredTo("#figure-grid .figure-card", "view", "sqrt_scaling")) process.exit(10);
-select("filter-player-algorithm", "exp3_ix");
-if (!filteredTo(".summary-row", "playerAlgorithm", "exp3_ix")) process.exit(11);
-select("filter-player-algorithm", "all");
-input("filter-horizon", "5");
-if (!filteredTo(".summary-row", "horizon", "5")) process.exit(12);
-input("filter-horizon", "");
-input("filter-seed", "9");
-if (!filteredTo(".summary-row", "seed", "9")) process.exit(13);
-input("filter-seed", "");
-select("filter-regret-evaluation", "realized");
-if (!filteredTo(".summary-row", "regretEvaluation", "realized")) process.exit(14);
-select("filter-summary-source", "realized");
-if (visible('[data-regret-source="realized"]').length === 0) process.exit(15);
-if (visible('[data-regret-source="expected"]').length !== 0) process.exit(16);'''
+const row = visible(".summary-row")[0];
+const cells = [...row.querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
+if (cells.length !== 1 || cells[0].dataset.metric !== "sqrt_scaling_internal") process.exit(12);
+document.getElementById("filter-clear-all").click();
+if (visible(".summary-row").length) process.exit(13);
+for (const id of ["filter-horizon", "filter-seed", "filter-player-algorithm", "filter-secondary"]) {
+    if (document.getElementById(id)) process.exit(14);
+}
+dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});'''
     result = subprocess.run([node, "-e", script], input=json.dumps(payload), capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr
 
 
-def test_adversarial_page_records_only_selected_regret_source(tmp_path) -> None:
+def test_adversarial_page_records_and_summarizes_canonical_regret(tmp_path) -> None:
     app, service = _app(tmp_path)
     client = app.test_client()
 
@@ -433,7 +381,6 @@ def test_adversarial_page_records_only_selected_regret_source(tmp_path) -> None:
         "/",
         data=VALID_FORM
         | {
-            "regret_evaluation": "expected",
             "_csrf_token": _csrf_token(client),
         },
     )
@@ -443,12 +390,11 @@ def test_adversarial_page_records_only_selected_regret_source(tmp_path) -> None:
     assert _wait_for_job(service, job.id) == "succeeded"
     result = next(service.adversarial_raw_dir.glob("*.csv"))
     header = result.read_text(encoding="utf-8").splitlines()[0]
-    assert "expected_external_regret" in header
-    assert "realized_external_regret" not in header
+    assert "external_regret" in header
+    assert "expected_" not in header and "realized_" not in header
     summary = service.adversarial_result_summaries()[0][0]
-    assert summary["regret_evaluation"] == "expected"
-    assert summary["expected_regret"] is not None
-    assert summary["realized_regret"] is None
+    assert "regret_evaluation" not in summary
+    assert summary["average_regret"] is not None
 
 
 @pytest.mark.parametrize("workers", [1, 2])
@@ -522,7 +468,6 @@ def test_adversarial_page_queues_random_walk_run(tmp_path) -> None:
         data=VALID_FORM
         | {
             "environment": RANDOM_WALK_ENVIRONMENT,
-            "initialization_mode": "uniform_grid",
             "environment_seed": "23",
             "seed": "29",
             "_csrf_token": _csrf_token(client),
@@ -536,7 +481,7 @@ def test_adversarial_page_queues_random_walk_run(tmp_path) -> None:
     with result.open(encoding="utf-8", newline="") as file:
         row = next(csv.DictReader(file))
     assert row["environment"] == RANDOM_WALK_ENVIRONMENT
-    assert row["initialization_mode"] == "uniform_grid"
+    assert "initialization_mode" not in row
     assert row["base_environment_seed"] == "23"
     assert row["base_learner_seed"] == "29"
     assert row["environment_seed"] == str(
@@ -546,7 +491,7 @@ def test_adversarial_page_queues_random_walk_run(tmp_path) -> None:
         domain_separated_seed(29, 0, LEARNER_SEED_DOMAIN)
     )
     page = client.get("/?mode=adversarial").get_data(as_text=True)
-    assert "Uniform over the reward grid" in page
+    assert "Centered at 0.5" in page
     assert "Independent lazy random walk" in page
 
 
@@ -570,10 +515,10 @@ def test_adversarial_download_and_figure_routes_are_scoped(tmp_path) -> None:
 
     service.adversarial_figure_dir.mkdir(parents=True, exist_ok=True)
     figure_names = (
-        f"adversarial_{HISTORICAL_FREQUENCY_ENVIRONMENT}_full_information_3_actions_average_expected_external_regret.png",
-        f"adversarial_{HISTORICAL_FREQUENCY_ENVIRONMENT}_full_information_3_actions_expected_external_regret_over_sqrt_t.png",
-        f"adversarial_{RANDOM_WALK_ENVIRONMENT}_bandit_3_actions_average_expected_external_regret.png",
-        f"adversarial_{RANDOM_WALK_ENVIRONMENT}_bandit_3_actions_expected_external_regret_over_sqrt_t.png",
+        f"adversarial_{HISTORICAL_FREQUENCY_ENVIRONMENT}_full_information_3_actions_average_external_regret.png",
+        f"adversarial_{HISTORICAL_FREQUENCY_ENVIRONMENT}_full_information_3_actions_external_regret_over_sqrt_t.png",
+        f"adversarial_{RANDOM_WALK_ENVIRONMENT}_bandit_3_actions_average_external_regret.png",
+        f"adversarial_{RANDOM_WALK_ENVIRONMENT}_bandit_3_actions_external_regret_over_sqrt_t.png",
     )
     for figure_name in figure_names:
         pdf_name = Path(figure_name).with_suffix(".pdf").name
@@ -586,23 +531,23 @@ def test_adversarial_download_and_figure_routes_are_scoped(tmp_path) -> None:
         )
 
     page = client.get("/?mode=adversarial").get_data(as_text=True)
-    assert "Average External" in page
-    assert "External / sqrt(t)" in page
+    assert "Figure builder" in page
+    assert "Algorithm profiles" in page
     assert 'id="results-controls-heading"' in page
     assert "Filter results" in page
     assert "Recorded output" not in page
-    assert 'id="figure-filters"' in page
-    assert 'id="figure-grid"' in page
-    assert page.count('class="figure-open"') == len(service.adversarial_figure_records())
+    assert 'id="filter-metric"' in page
+    assert 'id="builder-figure"' in page
+    assert page.count('class="figure-open"') == 0
     assert 'id="figure-dialog"' in page
     assert 'id="close-figure-dialog"' in page
     assert 'id="summary-table"' in page
     assert 'id="filter-scope"' in page
-    assert 'id="filter-secondary"' in page
-    assert 'data-result-filter="scope"' in page
-    assert 'data-result-filter="secondary"' in page
+    assert 'id="filter-feedback"' in page
+    assert 'id="result-filters"' in page
+    assert 'id="filter-player"' in page
     assert f'data-scope="{HISTORICAL_FREQUENCY_ENVIRONMENT}"' in page
-    assert 'data-secondary="full_information"' in page
+    assert 'data-feedback="full_information"' in page
     assert "Download PDF" in page
 
 

@@ -8,7 +8,6 @@ from experiments.games import PAYOFF_FACTORIES
 from experiments.plots import figure_paths, publish_figure_pair
 from experiments.plots.plot_equilibrium_weights import plot_equilibrium_profile_weights
 from web.equilibrium_figures import PRECOMPUTED_EQUILIBRIUM_DIR, equilibrium_figure_filename
-from web.presentations import GAME_PRESENTATIONS
 
 
 def _precompute_equilibrium_figure(game_name: str, equilibrium: str, output_path: Path, overwrite: bool = False) -> Path:
@@ -19,7 +18,6 @@ def _precompute_equilibrium_figure(game_name: str, equilibrium: str, output_path
             payoff_tensor,
             equilibrium,
             temporary_path,
-            game_name=GAME_PRESENTATIONS.get(game_name, {}).get("label", game_name),
         )
         publish_figure_pair(temporary_path, output_path, overwrite)
     return output_path

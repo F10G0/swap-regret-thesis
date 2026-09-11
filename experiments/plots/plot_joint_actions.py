@@ -10,7 +10,8 @@ import numpy as np
 
 from config import CUSTOM_GAME_DIR
 from experiments.game_catalog import load_game_payoffs
-from experiments.plots import HEATMAP_COLORMAP, save_figure_pair
+from experiments.plots import save_figure_pair
+from experiments.plots.style import publication_plot, HEATMAP_FIGURE_SIZE, heatmap
 from experiments.results import iter_result_rows
 from experiments.result_trajectories import load_result_action_profiles
 
@@ -42,27 +43,18 @@ def mean_joint_action_distribution(input_paths: Iterable[str | Path], custom_gam
     return game_name, np.mean([distribution for _, distribution in distributions], axis=0), len(distributions)
 
 
+@publication_plot
 def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_path: str | Path, custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> None:
     paths = [input_paths] if isinstance(input_paths, (str, Path)) else list(input_paths)
-    game_name, frequencies, n_replicates = mean_joint_action_distribution(paths, custom_game_dir)
-    action_counts = frequencies.shape
+    _, frequencies, _ = mean_joint_action_distribution(paths, custom_game_dir)
     output_path = Path(output_path)
-    figure, axes = plt.subplots(figsize=(6.5, 5.5))
-    image = axes.imshow(frequencies, cmap=HEATMAP_COLORMAP, origin="lower", vmin=0.0, vmax=max(float(np.max(frequencies)), 1.0 / frequencies.size))
+    figure, axes = plt.subplots(figsize=HEATMAP_FIGURE_SIZE)
+    image = heatmap(axes, frequencies, vmax=max(float(np.max(frequencies)), 1.0 / frequencies.size),
+                    label_format=lambda value: f"{100.0 * value:.1f}%")
     axes.set_xlabel("Player 1 action")
     axes.set_ylabel("Player 0 action")
-    title = "empirical joint-action distribution" if n_replicates == 1 else f"mean empirical joint-action distribution ({n_replicates} replicates)"
-    axes.set_title(f"{game_name}: {title}")
-    axes.set_xticks(range(action_counts[1]))
-    axes.set_yticks(range(action_counts[0]))
-
-    if frequencies.size <= 100:
-        for action_0 in range(action_counts[0]):
-            for action_1 in range(action_counts[1]):
-                value = frequencies[action_0, action_1]
-                axes.text(action_1, action_0, f"{100.0 * value:.1f}%", ha="center", va="center", fontsize=7)
-
-    figure.colorbar(image, ax=axes, label="Empirical frequency")
+    colorbar = figure.colorbar(image, ax=axes, label="Empirical frequency")
+    colorbar.solids.set_rasterized(False)
     figure.tight_layout()
     save_figure_pair(figure, output_path)
     plt.close(figure)

@@ -75,23 +75,13 @@ def test_bandit_dashboard_exposes_lce_ix() -> None:
     assert service.algorithm_labels["stationary_regret_matching"] == "SRM"
 
 
-def test_dashboard_exposes_presentations_for_all_bertrand_benchmarks() -> None:
-    service = DashboardService(
-        results_dir="results",
-        raw_dir="results/raw",
-        figure_dir="results/figures",
-    )
-    bertrand_games = {
-        "bertrand_standard_o1",
-        "bertrand_linear_o2",
-        "bertrand_logit_o3",
-        "bertrand_linear_o2_prime",
-        "bertrand_logit_o3_prime",
-    }
+def test_dashboard_exposes_presentations_for_surviving_benchmarks(tmp_path: Path) -> None:
+    service = create_service(tmp_path)
 
-    assert bertrand_games <= set(service.games)
+    assert set(service.games) == {"rps", "rpsls"}
+    assert "matching_pennies" not in service.games
     assert set(service.game_presentations) == set(service.games)
-    for game_name in bertrand_games:
+    for game_name in ("rps", "rpsls"):
         assert service.game_presentations[game_name] == GAME_PRESENTATIONS[game_name]
 
 
@@ -429,21 +419,19 @@ def test_plot_publication_creates_structured_figure_metadata(tmp_path: Path) -> 
     figures = service.figure_records()
 
     assert len(figures) == 12
-    assert {figure["source"] for figure in figures} == {"expected"}
+    assert all("source" not in figure for figure in figures)
     assert {figure["regret"] for figure in figures} == {"external", "internal", "swap"}
     assert {figure["player"] for figure in figures} == {0, 1}
     assert {figure["view"] for figure in figures} == {"average", "sqrt_scaling"}
     assert all((service.figure_dir / figure["pdf_filename"]).is_file() for figure in figures)
-    assert all(figure["confidence_free_filename"] != figure["filename"] for figure in figures)
-    assert all((service.figure_dir / figure["confidence_free_filename"]).is_file() for figure in figures)
-    assert all((service.figure_dir / figure["confidence_free_pdf_filename"]).is_file() for figure in figures)
-    assert service.validate_figure_filename(figures[0]["confidence_free_filename"])
+    assert len(list(service.figure_dir.glob("*.png"))) == len(figures)
+    assert len(list(service.figure_dir.glob("*.pdf"))) == len(figures)
 
 
 def test_failed_plot_update_preserves_existing_figures(tmp_path: Path) -> None:
     service = create_service(tmp_path)
     service.figure_dir.mkdir(parents=True)
-    existing_figure = service.figure_dir / "rps_average_expected_external_regret_player_0.png"
+    existing_figure = service.figure_dir / "rps_average_external_regret_player_0.png"
     existing_figure.write_bytes(b"existing")
 
     def fail_plot_update(game_name=None) -> None:
@@ -464,8 +452,8 @@ def test_adversarial_job_rebuilds_only_its_own_scope(tmp_path, monkeypatch):
     service = create_service(tmp_path)
     scopes = []
     monkeypatch.setattr(service, "_publish_adversarial_plots", scopes.append)
-    form = AdversarialExperimentForm(RANDOM_WALK_ENVIRONMENT, "centered", "bandit", "auer_exp3",
-                                    7, 3, 11, 7, 2, "both")
+    form = AdversarialExperimentForm(RANDOM_WALK_ENVIRONMENT, "bandit", "auer_exp3",
+                                    7, 3, 11, 7, 2)
     job = service.submit_adversarial_experiment(form)
     assert wait_for_job(service, job.id) == "succeeded"
     assert scopes == [(RANDOM_WALK_ENVIRONMENT, "bandit", 7)]
@@ -553,7 +541,7 @@ def test_selected_game_plotting_ignores_unrelated_malformed_results(tmp_path: Pa
     assert len(service.figure_records()) == 12
 
 
-def test_bandit_results_contain_only_realized_regret(tmp_path: Path) -> None:
+def test_bandit_results_contain_canonical_regret(tmp_path: Path) -> None:
     service = DashboardService(
         results_dir=tmp_path,
         raw_dir=tmp_path / "raw",
@@ -572,13 +560,12 @@ def test_bandit_results_contain_only_realized_regret(tmp_path: Path) -> None:
 
     assert snapshot.warnings == []
     assert len(snapshot.summaries) == 2
-    assert all("average_realized_swap_regret" in summary for summary in snapshot.summaries)
-    assert all("average_expected_swap_regret" not in summary for summary in snapshot.summaries)
+    assert all("average_swap_regret" in summary for summary in snapshot.summaries)
     assert len(figures) == 12
-    assert {figure["source"] for figure in figures} == {"realized"}
+    assert all("source" not in figure for figure in figures)
 
 
-def test_plotting_keeps_expected_and_realized_results_for_the_same_game(tmp_path: Path) -> None:
+def test_plotting_combines_feedback_curves_in_the_same_canonical_figures(tmp_path: Path) -> None:
     service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
     run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
     run_bandit_cross_play_experiment(game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=2, output_dir=service.raw_dir)
@@ -586,30 +573,8 @@ def test_plotting_keeps_expected_and_realized_results_for_the_same_game(tmp_path
     service._publish_plots("rps")
     figures = service.figure_records()
 
-    assert len(figures) == 24
-    assert {figure["source"] for figure in figures} == {"expected", "realized"}
-
-
-def test_both_regret_evaluations_are_summarized_and_plotted(tmp_path: Path) -> None:
-    service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
-    run_full_information_cross_play_experiment(
-        game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2,
-        output_dir=service.raw_dir, regret_evaluation="both",
-    )
-
-    snapshot = service.result_snapshot()
-    service._publish_plots("rps")
-    figures = service.figure_records()
-
-    assert snapshot.warnings == []
-    assert {summary["regret_evaluation"] for summary in snapshot.summaries} == {"both"}
-    assert all("average_expected_swap_regret" in summary for summary in snapshot.summaries)
-    assert all("average_realized_swap_regret" in summary for summary in snapshot.summaries)
-    assert len(figures) == 24
-    assert {figure["source"] for figure in figures} == {"expected", "realized"}
-    assert sum(figure["source"] == "expected" for figure in figures) == 12
-    assert sum(figure["source"] == "realized" for figure in figures) == 12
-    assert all("both" not in figure["filename"] for figure in figures)
+    assert len(figures) == 12
+    assert all("source" not in figure for figure in figures)
 
 
 def test_joint_action_heatmap_is_generated_and_cached(
@@ -620,16 +585,17 @@ def test_joint_action_heatmap_is_generated_and_cached(
 
     service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
     result_path = run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=3, output_dir=service.raw_dir)
-    original_imshow = Axes.imshow
+    original_pcolormesh = Axes.pcolormesh
     colormaps = []
-    origins = []
+    rasterized = []
 
     def capture_colormap(axes, *args, **kwargs):
-        colormaps.append(kwargs.get("cmap"))
-        origins.append(kwargs.get("origin"))
-        return original_imshow(axes, *args, **kwargs)
+        if kwargs.get("cmap") == "Blues":
+            colormaps.append(kwargs["cmap"])
+            rasterized.append(kwargs.get("rasterized"))
+        return original_pcolormesh(axes, *args, **kwargs)
 
-    monkeypatch.setattr(Axes, "imshow", capture_colormap)
+    monkeypatch.setattr(Axes, "pcolormesh", capture_colormap)
 
     first = service.joint_action_figure(result_path.name)
     first_timestamp = first.stat().st_mtime_ns
@@ -641,7 +607,7 @@ def test_joint_action_heatmap_is_generated_and_cached(
     assert second.stat().st_size > 0
     assert second.with_suffix(".pdf").is_file()
     assert colormaps == ["Blues"]
-    assert origins == ["lower"]
+    assert rasterized == [False]
 
 
 def test_replicate_group_joint_action_heatmap_is_generated_and_cached(tmp_path: Path) -> None:
@@ -779,6 +745,42 @@ def test_core_distance_generation_does_not_load_experimental_trajectory(
     assert error is None
     assert generated is not None
     assert service._experimental_trajectory_dashboard is None
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_annotated_equilibrium_figures_bypass_old_render_cache_without_deleting_it(tmp_path, monkeypatch, grouped):
+    from experiments.plots import plot_equilibrium_convergence
+
+    service = create_service(tmp_path)
+    result_path = run_full_information_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
+    )
+    if grouped:
+        group_id = aggregate_result_summaries(service.result_snapshot().summaries)[0]["group_id"]
+        _, output_path, stem = service._group_convergence_figure_path(group_id)
+        legacy_path = service.detail_figure_dir / f"{stem}_replicate_mean_equilibrium_distance.png"
+        request_figure = lambda: service.request_group_equilibrium_convergence_figure(group_id)
+    else:
+        _, output_path = service._convergence_figure_path(result_path.name)
+        legacy_path = service.detail_figure_dir / f"{result_path.stem}_equilibrium_distance.png"
+        request_figure = lambda: service.request_equilibrium_convergence_figure(result_path.name)
+    service.detail_figure_dir.mkdir(parents=True, exist_ok=True)
+    write_figure_pair(legacy_path, b"old unannotated figure")
+    calls = []
+
+    def fake_plot(input_paths, path, **kwargs):
+        calls.append(input_paths)
+        write_figure_pair(path, b"annotated figure")
+
+    monkeypatch.setattr(plot_equilibrium_convergence, "plot_result_equilibrium_distance", fake_plot)
+    generated, error = wait_for_equilibrium_figure(request_figure)
+    assert error is None and generated == output_path
+    assert generated != legacy_path
+    assert generated.read_bytes() == b"annotated figure"
+    assert generated.with_suffix(".pdf").read_bytes() == b"annotated figure"
+    assert legacy_path.read_bytes() == legacy_path.with_suffix(".pdf").read_bytes() == b"old unannotated figure"
+    assert wait_for_equilibrium_figure(request_figure) == (generated, None)
+    assert len(calls) == 1
 
 
 def test_trajectory_comparison_candidates_expose_exact_replicate_seed_protocol(
@@ -926,9 +928,9 @@ def test_trajectory_comparison_cache_is_order_independent_and_colors_are_authori
     assert forward.artifact_id == reverse.artifact_id
     assert [member.group_id for member in forward.members] == sorted(group_ids)
     assert [member.member_id for member in captured_members] == sorted(group_ids)
+    from experiments.plots.style import algorithm_style
     assert [member.color for member in captured_members] == [
-        "#1f77b4",
-        "#ff7f0e",
+        algorithm_style(member.algorithm_profile[0])["color"] for member in captured_members
     ]
     response_members = result.public_data("/comparison.png")["members"]
     assert [member["group_id"] for member in response_members] == sorted(group_ids)
@@ -1116,8 +1118,8 @@ def test_custom_zero_sum_equilibrium_heatmap_is_cached_with_game(
     )
     calls = []
 
-    def fake_plot(payoff_tensor, equilibrium, output_path, game_name=None):
-        calls.append((payoff_tensor.copy(), equilibrium, game_name))
+    def fake_plot(payoff_tensor, equilibrium, output_path):
+        calls.append((payoff_tensor.copy(), equilibrium))
         write_figure_pair(output_path, b"cached heatmap")
 
     monkeypatch.setattr(
@@ -1139,7 +1141,7 @@ def test_custom_zero_sum_equilibrium_heatmap_is_cached_with_game(
     assert first.parent == tmp_path / "custom-games" / ".equilibria"
     assert first.read_bytes() == b"cached heatmap"
     assert len(calls) == 1
-    assert calls[0][1:] == ("ce", "Cached Zero Sum")
+    assert calls[0][1] == "ce"
 
     service.clear_results()
     assert first.exists()

@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from experiments.plots import save_figure_pair
+from experiments.plots.style import publication_plot, HEATMAP_FIGURE_SIZE, ANNOTATION_SIZE, algorithm_style, finish_line_figure
 
 from config import CUSTOM_GAME_DIR
 from experiments.game_catalog import payoff_tensor_digest
@@ -51,6 +52,7 @@ class TrajectoryComparisonPlotMember:
     label: str
     color: str
     input_paths: tuple[str | Path, ...]
+    algorithm_profile: tuple[str, ...] = ()
 
 
 def _draw_region(
@@ -364,10 +366,11 @@ def _informative_horizon_positions(
     return positions
 
 
-def _plot_equilibrium_trajectory(analysis: EquilibriumTrajectoryProjection, output_path: str | Path, game_name: str,
+@publication_plot
+def _plot_equilibrium_trajectory(analysis: EquilibriumTrajectoryProjection, output_path: str | Path,
                                  n_replicates: int, focus_from_checkpoint: int = 0) -> None:
     output_path = Path(output_path)
-    figure, axes = plt.subplots(figsize=(7.2, 5.8))
+    figure, axes = plt.subplots(figsize=HEATMAP_FIGURE_SIZE)
     view_kind = getattr(analysis, "view_kind", "geometry")
     equilibrium_relative = view_kind == "equilibrium_relative"
     _draw_region(
@@ -399,6 +402,7 @@ def _plot_equilibrium_trajectory(analysis: EquilibriumTrajectoryProjection, outp
         rendered_trajectory[:, 1],
         color="#4b5563",
         marker="o",
+        markevery=0.12,
         markerfacecolor="#6b7280",
         markeredgecolor="#ffffff",
         markersize=4.5,
@@ -469,8 +473,8 @@ def _plot_equilibrium_trajectory(analysis: EquilibriumTrajectoryProjection, outp
             point,
             xytext=offset,
             textcoords="offset points",
-            fontsize=11,
-            fontweight="semibold",
+            fontsize=ANNOTATION_SIZE,
+            fontweight="normal",
             bbox={
                 "boxstyle": "round,pad=0.16",
                 "facecolor": "white",
@@ -486,33 +490,22 @@ def _plot_equilibrium_trajectory(analysis: EquilibriumTrajectoryProjection, outp
         ("Projected component 1", "Projected component 2"),
     )
     axes.set_xlabel(axis_labels[0])
-    axes.set_ylabel(axis_labels[1])
-    axes.grid(alpha=0.2)
-    axes.legend()
-    if equilibrium_relative:
-        title = (
-            "Equilibrium-Relative Trajectory"
-            if n_replicates == 1
-            else f"Equilibrium-Relative Mean Trajectory ({n_replicates} replicates)"
-        )
-    else:
-        title = "Projected Joint-Distribution Trajectory" if n_replicates == 1 else f"Projected Mean Joint-Distribution Trajectory ({n_replicates} replicates)"
-    axes.set_title(f"{game_name}: {title}")
-    figure.tight_layout()
+    axes.set_ylabel(axis_labels[1].replace("L1 distance to CCE", r"$L^1$ distance to CCE"))
+    finish_line_figure(figure, axes)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_figure_pair(figure, output_path, bbox_inches="tight")
+    save_figure_pair(figure, output_path)
     plt.close(figure)
 
 
+@publication_plot
 def _plot_equilibrium_trajectory_comparison(
     analysis: EquilibriumTrajectoryComparison,
     plot_members: list[TrajectoryComparisonPlotMember],
     output_path: str | Path,
-    game_name: str,
     focus_from_checkpoint: int,
 ) -> None:
     output_path = Path(output_path)
-    figure, axes = plt.subplots(figsize=(7.8, 5.8))
+    figure, axes = plt.subplots(figsize=HEATMAP_FIGURE_SIZE)
     equilibrium_relative = analysis.view_kind in {
         "equilibrium_relative",
         "unified_equilibrium_relative",
@@ -561,8 +554,9 @@ def _plot_equilibrium_trajectory_comparison(
         axes.plot(
             rendered[:, 0],
             rendered[:, 1],
-            color=member.color,
-            marker="o",
+            **(algorithm_style(member.algorithm_profile[0]) if member.algorithm_profile else
+               dict(color=member.color, marker="o", markevery=0.12)),
+            label=member.label,
             markerfacecolor=member.color,
             markeredgecolor="#ffffff",
             markersize=4.5,
@@ -624,22 +618,10 @@ def _plot_equilibrium_trajectory_comparison(
     axes.set_xlim(lower_limits[0], upper_limits[0])
     axes.set_ylim(lower_limits[1], upper_limits[1])
     axes.set_xlabel(analysis.axis_labels[0])
-    axes.set_ylabel(analysis.axis_labels[1])
-    axes.grid(alpha=0.2)
-    handles, labels = axes.get_legend_handles_labels()
-    if handles:
-        axes.legend(handles, labels)
-    title = (
-        "Unified Equilibrium-Relative Comparison"
-        if unified
-        else "Equilibrium-Relative Trajectory Comparison"
-        if equilibrium_relative
-        else "Equilibrium Geometry Trajectory Comparison"
-    )
-    axes.set_title(f"{game_name}: {title}")
-    figure.tight_layout()
+    axes.set_ylabel(analysis.axis_labels[1].replace("L1 distance to CCE", r"$L^1$ distance to CCE"))
+    finish_line_figure(figure, axes)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_figure_pair(figure, output_path, bbox_inches="tight")
+    save_figure_pair(figure, output_path)
     plt.close(figure)
 
 
@@ -696,7 +678,6 @@ def plot_result_equilibrium_trajectory_comparison(
     final_interval_segments: int = 10,
     support_query_cap: int = DEFAULT_SUPPORT_QUERY_CAP,
     relative_render_tolerance: float | None = DEFAULT_RELATIVE_RENDER_TOLERANCE,
-    game_label: str | None = None,
     custom_game_dir: str | Path = CUSTOM_GAME_DIR,
     focus_final_interval: bool = False,
     geometry_cache: EquilibriumGeometryCache | None = None,
@@ -718,7 +699,6 @@ def plot_result_equilibrium_trajectory_comparison(
     game_names = {game_name for game_name, _, _ in loaded}
     if len(game_names) != 1:
         raise ValueError("trajectory-comparison members must use the same game")
-    game_name = game_names.pop()
     payoff_tensor = loaded[0][1]
     if any(
         not np.array_equal(member_payoffs, payoff_tensor)
@@ -784,7 +764,6 @@ def plot_result_equilibrium_trajectory_comparison(
         analysis,
         ordered_members,
         output_path,
-        game_label or game_name,
         focus_from_checkpoint,
     )
     return analysis
@@ -794,11 +773,10 @@ def plot_result_equilibrium_trajectory(input_paths: str | Path | Iterable[str | 
                                        final_interval_segments: int = 10,
                                        support_query_cap: int = DEFAULT_SUPPORT_QUERY_CAP,
                                        relative_render_tolerance: float | None = DEFAULT_RELATIVE_RENDER_TOLERANCE,
-                                       game_label: str | None = None,
                                        custom_game_dir: str | Path = CUSTOM_GAME_DIR,
                                        focus_final_interval: bool = False,
                                        geometry_cache: EquilibriumGeometryCache | None = None) -> None:
-    game_name, payoff_tensor, profiles = load_equilibrium_result_inputs(
+    _, payoff_tensor, profiles = load_equilibrium_result_inputs(
         input_paths,
         custom_game_dir,
     )
@@ -828,7 +806,6 @@ def plot_result_equilibrium_trajectory(input_paths: str | Path | Iterable[str | 
     _plot_equilibrium_trajectory(
         analysis,
         output_path,
-        game_label or game_name,
         len(profiles),
         focus_from_checkpoint,
     )

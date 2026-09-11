@@ -30,7 +30,6 @@ from experiments.game_catalog import (
 from experiments.games import PAYOFF_FACTORIES
 from experiments.plots import (
     FIGURE_SUFFIXES,
-    confidence_free_figure_path,
     figure_pair_is_current,
     figure_path,
     figure_paths,
@@ -50,7 +49,6 @@ from experiments.scenarios.adversarial import (
     load_final_adversarial_row,
     run_adversarial_experiment,
 )
-from experiments.result_schema import regret_sources
 from experiments.scenarios.adversarial_scaling import (
     AdversarialScalingSpec,
     adversarial_scaling_environment_detail,
@@ -76,7 +74,7 @@ from web.validation import (
 logger = logging.getLogger(__name__)
 
 
-def _publish_figure_files(source_paths: list[Path], output_dir: Path, filename_prefix: str | None = None) -> None:
+def _publish_figure_files(source_paths: list[Path], output_dir: Path, filename_prefix: str | tuple[str, ...] | None = None) -> None:
     generated_names = {path.name for path in source_paths}
     for path in source_paths:
         os.replace(path, output_dir / path.name)
@@ -86,20 +84,12 @@ def _publish_figure_files(source_paths: list[Path], output_dir: Path, filename_p
             path.unlink()
 
 
-def _figure_file_record(path: Path, confidence_intervals: bool = False) -> dict:
+def _figure_file_record(path: Path) -> dict:
     pdf_path = path.with_suffix(".pdf")
     record = {
         "filename": path.name,
         "pdf_filename": pdf_path.name if pdf_path.is_file() else None,
     }
-    if confidence_intervals:
-        confidence_free_path = confidence_free_figure_path(path)
-        if confidence_free_path.is_file():
-            confidence_free_pdf_path = confidence_free_path.with_suffix(".pdf")
-            record.update(
-                confidence_free_filename=confidence_free_path.name,
-                confidence_free_pdf_filename=(confidence_free_pdf_path.name if confidence_free_pdf_path.is_file() else record["pdf_filename"]),
-            )
     return record
 
 
@@ -117,7 +107,7 @@ def _validate_result_figure(directory: Path, filename: str, records: list[dict])
     filename = validate_leaf_filename(filename, suffix)
     preview_name = Path(filename).with_suffix(".png").name
     known = any(
-        preview_name in {record["filename"], record.get("confidence_free_filename")}
+        preview_name == record["filename"]
         for record in records
     )
     if not known or not (directory / filename).is_file():
@@ -177,6 +167,9 @@ class DashboardService:
         self.jobs = job_manager or JobManager()
         self.replicate_workers = replicate_workers
         self.result_index = ResultIndex(self.raw_dir)
+        from web.figure_builder import FigureBuilder
+
+        self.figure_builder = FigureBuilder(self)
         self._experimental_trajectory_dashboard = None
         self._detail_figure_lock = Lock()
         self._equilibrium_figure_lock = Lock()
@@ -354,7 +347,6 @@ class DashboardService:
         return {
             "game": game,
             "feedback_mode": feedback_mode,
-            "regret_evaluation": "expected",
             "algorithm_names": [first_algorithm] * self.game_player_counts[game],
             "horizon": HORIZON,
             "seed": SEED,
@@ -366,9 +358,7 @@ class DashboardService:
         first_algorithm = self.adversarial_algorithms_by_feedback_mode[feedback_mode][0]
         return {
             "environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
-            "initialization_mode": "centered",
             "feedback_mode": feedback_mode,
-            "regret_evaluation": "both",
             "algorithm_names": [first_algorithm],
             "n_actions": ADVERSARIAL_ACTIONS,
             "horizon": HORIZON,
@@ -427,7 +417,6 @@ class DashboardService:
         specs = [
             AdversarialExperimentSpec(
                 environment=form.environment,
-                initialization_mode=form.initialization_mode,
                 environment_seed=form.environment_seed,
                 feedback_mode=form.feedback_mode,
                 algorithm_name=form.algorithm_name,
@@ -435,14 +424,12 @@ class DashboardService:
                 horizon=form.horizon,
                 seed=form.learner_seed,
                 replicate=replicate,
-                regret_evaluation=form.regret_evaluation,
             )
             for replicate in range(form.replicates)
         ]
         def task_kwargs(spec):
             return dict(
                 environment=spec.environment,
-                initialization_mode=spec.initialization_mode,
                 environment_seed=spec.environment_seed,
                 feedback_mode=spec.feedback_mode,
                 algorithm_name=spec.algorithm_name,
@@ -450,7 +437,6 @@ class DashboardService:
                 horizon=spec.horizon,
                 seed=spec.seed,
                 replicate=spec.replicate,
-                regret_evaluation=spec.regret_evaluation,
                 output_dir=self.adversarial_raw_dir,
             )
 
@@ -462,7 +448,6 @@ class DashboardService:
                 f"Adversarial: {algorithm_label(form.algorithm_name)} · "
                 f"{ENVIRONMENT_LABELS[form.environment]} · "
                 f"{FEEDBACK_MODE_LABELS[form.feedback_mode]} · "
-                f"{form.regret_evaluation} regret · "
                 f"{form.n_actions} actions · "
                 f"{form.replicates} replicates · base learner seed {form.learner_seed}"
             ),
@@ -479,7 +464,6 @@ class DashboardService:
     ) -> Job:
         spec = AdversarialScalingSpec(
             environment=form.environment,
-            initialization_mode=form.initialization_mode,
             feedback_mode=form.feedback_mode,
             algorithm_name=form.algorithm_name,
             action_counts=form.action_counts,
@@ -487,7 +471,6 @@ class DashboardService:
             horizon=form.horizon,
             environment_seed=form.environment_seed,
             learner_seed=form.learner_seed,
-            regret_evaluation=form.regret_evaluation,
         )
         resource_key = f"adversarial-scaling:{spec.run_id}"
         if resource_key in self.jobs.reserved_resources() or (
@@ -559,7 +542,7 @@ class DashboardService:
         figure_dir: Path,
         prefix: str,
         plotter: Callable[..., object],
-        filename_prefix: str | None = None,
+        filename_prefix: str | tuple[str, ...] | None = None,
     ) -> None:
         parent_dir = figure_dir.parent
         parent_dir.mkdir(parents=True, exist_ok=True)
@@ -645,9 +628,10 @@ class DashboardService:
                 "environment_label": ENVIRONMENT_LABELS[first["environment"]],
                 "environment_detail": adversarial_scaling_environment_detail(first),
                 "feedback_label": FEEDBACK_MODE_LABELS[first["feedback_mode"]],
-                "regret_evaluation": first["regret_evaluation"],
                 "implementation_version": int(first.get("implementation_version", 0)),
                 "algorithm_label": algorithm_label(first["algorithm"]),
+                "algorithm": first["algorithm"],
+                "feedback_mode": first["feedback_mode"],
                 "action_counts": [int(value) for value in first["action_counts"].split(",")],
                 "replicates": int(first["replicates"]),
                 "horizon": int(first["horizon"]),
@@ -662,19 +646,17 @@ class DashboardService:
             summaries, _ = self.adversarial_scaling_summaries()
         records = []
         for summary in summaries:
-            for source in regret_sources(summary["regret_evaluation"]):
-                path = self.adversarial_scaling_figure_dir / (
-                    f"{summary['run_id']}_{source}_regret_by_actions.png"
-                )
-                if not path.is_file():
-                    continue
-                records.append(
-                    {
-                        **summary,
-                        **_figure_file_record(path, confidence_intervals=True),
-                        "source": source,
-                    }
-                )
+            path = self.adversarial_scaling_figure_dir / (
+                f"{summary['run_id']}_regret_by_actions.png"
+            )
+            if not path.is_file():
+                continue
+            records.append(
+                {
+                    **summary,
+                    **_figure_file_record(path),
+                }
+            )
         return records
 
     def validate_adversarial_scaling_csv_filename(self, filename: str) -> str:
@@ -700,14 +682,12 @@ class DashboardService:
             row = load_final_adversarial_row(path)
             algorithm = row["algorithm"]
             target_regret = TARGET_REGRET_BY_ALGORITHM.get(algorithm, "external")
-            sources = regret_sources(row["regret_evaluation"])
             return {
                 "filename": path.name,
                 "algorithm": algorithm,
                 "algorithm_label": algorithm_label(algorithm),
                 "feedback_mode": row["feedback_mode"],
                 "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
-                "regret_evaluation": row["regret_evaluation"],
                 "implementation_version": int(row["implementation_version"]),
                 "environment": row["environment"],
                 "environment_label": ENVIRONMENT_LABELS[row["environment"]],
@@ -725,8 +705,9 @@ class DashboardService:
                 "runtime_fingerprint": row["runtime_fingerprint"],
                 "replicate": int(row["replicate"]),
                 "target_regret": target_regret,
-                "expected_regret": float(row[f"average_expected_{target_regret}_regret"]) if "expected" in sources else None,
-                "realized_regret": float(row[f"average_realized_{target_regret}_regret"]) if "realized" in sources else None,
+                "average_regret": float(row[f"average_{target_regret}_regret"]),
+                **{f"average_{name}_regret": float(row[f"average_{name}_regret"])
+                   for name in ("external", "internal", "swap")},
             }
 
         return _load_summaries(self.adversarial_raw_dir, summarize)
@@ -735,7 +716,7 @@ class DashboardService:
         records = []
         regret_pattern = re.compile(
             r"adversarial_(.+?)_(full_information|bandit)_(\d+)_actions_(average_)?"
-            r"(expected|realized)_(external|internal|swap)_regret"
+            r"(external|internal|swap)_regret"
             r"(_over_sqrt_t)?\.png"
         )
         for path in sorted(self.adversarial_figure_dir.glob("*.png")):
@@ -746,18 +727,17 @@ class DashboardService:
             if environment not in ENVIRONMENT_LABELS:
                 continue
             average = match.group(4) is not None
-            scaled = match.group(7) is not None
+            scaled = match.group(6) is not None
             if average == scaled:
                 continue
             records.append({
-                **_figure_file_record(path, confidence_intervals=True),
+                **_figure_file_record(path),
                 "environment": environment,
                 "environment_label": ENVIRONMENT_LABELS[environment],
                 "feedback_mode": match.group(2),
                 "feedback_label": FEEDBACK_MODE_LABELS[match.group(2)],
                 "n_actions": int(match.group(3)),
-                "source": match.group(5),
-                "regret": match.group(6),
+                "regret": match.group(5),
                 "view": "average" if average else "sqrt_scaling",
             })
         regret_order = {"external": 0, "internal": 1, "swap": 2}
@@ -775,7 +755,6 @@ class DashboardService:
             key=lambda record: (
                 environment_order[record["environment"]],
                 feedback_order[record["feedback_mode"]],
-                record["source"],
                 view_order[record["view"]],
                 record["n_actions"],
                 regret_order[record["regret"]],
@@ -817,7 +796,6 @@ class DashboardService:
             horizon=form.horizon,
             seed=form.seed,
             replicate=replicate,
-            regret_evaluation=form.regret_evaluation,
             game_payoff_digest=payoff_tensor_digest(self.game_catalog.load(form.game)),
         )
 
@@ -834,7 +812,6 @@ class DashboardService:
                 replicate=spec.replicate,
                 output_dir=self.raw_dir,
                 custom_game_dir=self.game_catalog.custom_game_dir,
-                regret_evaluation=spec.regret_evaluation,
             )
 
         return self._submit_replicates(
@@ -875,7 +852,7 @@ class DashboardService:
             self.figure_dir,
             ".figures-",
             plotter,
-            None if game_name is None else f"{game_name}_",
+            tuple(f"{game}_" for game in self.games) if game_name is None else f"{game_name}_",
         )
 
     def _clear_figure_files(self, game_name: str | None = None) -> None:
@@ -920,7 +897,7 @@ class DashboardService:
         self,
         game_name: str,
         equilibrium: str,
-    ) -> tuple[Path, np.ndarray | None, str]:
+    ) -> tuple[Path, np.ndarray | None]:
         if not self.supports_matrix_figures(game_name):
             raise ValueError(f"unknown game: {game_name}")
         if equilibrium not in {"ce", "cce"}:
@@ -930,7 +907,7 @@ class DashboardService:
                 PRECOMPUTED_EQUILIBRIUM_DIR
                 / equilibrium_figure_filename(game_name, equilibrium)
             )
-            return output_path, None, self.game_presentations[game_name]["label"]
+            return output_path, None
 
         payoff_tensor = self.game_catalog.load(game_name)
         digest = payoff_tensor_digest(payoff_tensor)
@@ -939,10 +916,10 @@ class DashboardService:
             f"{slug}_{digest}",
             equilibrium,
         )
-        return output_path, payoff_tensor, self.game_definitions[game_name].label
+        return output_path, payoff_tensor
 
     def equilibrium_figure(self, game_name: str, equilibrium: str, figure_format: str = "png") -> Path:
-        output_path, payoff_tensor, game_label = self._equilibrium_figure_path(
+        output_path, payoff_tensor = self._equilibrium_figure_path(
             game_name,
             equilibrium,
         )
@@ -973,7 +950,6 @@ class DashboardService:
                     payoff_tensor,
                     equilibrium,
                     temporary_path,
-                    game_name=game_label,
                 )
                 publish_figure_pair(temporary_path, output_path, overwrite=False)
         return requested_path
@@ -1018,6 +994,8 @@ class DashboardService:
         self,
         filename: str,
     ) -> tuple[Path, Path]:
+        from experiments.plots.plot_equilibrium_convergence import EQUILIBRIUM_DISTANCE_FIGURE_VERSION
+
         filename = validate_leaf_filename(filename, ".csv")
         input_path = self.raw_dir / filename
         if not input_path.is_file():
@@ -1028,13 +1006,15 @@ class DashboardService:
         return (
             input_path,
             self.detail_figure_dir
-            / f"{input_path.stem}_equilibrium_distance.png",
+            / f"{input_path.stem}_v{EQUILIBRIUM_DISTANCE_FIGURE_VERSION}_equilibrium_distance.png",
         )
 
     def _group_convergence_figure_path(
         self,
         group_id: str,
     ) -> tuple[list[Path], Path, str]:
+        from experiments.plots.plot_equilibrium_convergence import EQUILIBRIUM_DISTANCE_FIGURE_VERSION
+
         input_paths = self._result_group_paths(group_id)
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_equilibrium_distance(game_name):
@@ -1043,7 +1023,7 @@ class DashboardService:
         return (
             input_paths,
             self.detail_figure_dir
-            / f"{cache_stem}_replicate_mean_equilibrium_distance.png",
+            / f"{cache_stem}_v{EQUILIBRIUM_DISTANCE_FIGURE_VERSION}_replicate_mean_equilibrium_distance.png",
             cache_stem,
         )
 
@@ -1140,11 +1120,9 @@ class DashboardService:
             dir=self.detail_figure_dir,
         ) as temporary_directory:
             temporary_path = Path(temporary_directory) / output_path.name
-            game_name = next(iter_result_rows(input_paths[0]))["game"]
             plot_result_equilibrium_distance(
                 input_paths,
                 temporary_path,
-                game_label=self.game_presentations[game_name]["label"],
                 custom_game_dir=self.game_catalog.custom_game_dir,
                 cache_dir=self.results_dir / "cache" / "equilibrium_distance",
             )
@@ -1202,7 +1180,15 @@ class DashboardService:
         self.jobs.run_maintenance(operation)
 
     def result_snapshot(self) -> ResultSnapshot:
-        return self.result_index.snapshot()
+        snapshot = self.result_index.snapshot()
+        supported_games = self.game_definitions
+        summaries = [summary for summary in snapshot.summaries if summary["game"] in supported_games]
+        unsupported = {summary["experiment"]: summary["game"] for summary in snapshot.summaries
+                       if summary["game"] not in supported_games}
+        warnings = snapshot.warnings + [f"Skipped {filename}: unsupported game {game}"
+                                        for filename, game in sorted(unsupported.items())]
+        # Keep historical CSVs downloadable, but do not present them as active benchmarks.
+        return ResultSnapshot(snapshot.filenames, summaries, warnings)
 
     def figure_records(self) -> list[dict]:
         if not self.figure_dir.exists():
@@ -1212,9 +1198,9 @@ class DashboardService:
         for path in sorted(self.figure_dir.glob("*.png")):
             metadata = self._parse_figure_filename(path.name)
             if metadata is not None:
-                records.append({**_figure_file_record(path, confidence_intervals=True), **metadata})
+                records.append({**_figure_file_record(path), **metadata})
         regret_order = {"external": 0, "internal": 1, "swap": 2}
-        return sorted(records, key=lambda record: (record["source"], record["view"], record["player"], regret_order[record["regret"]]))
+        return sorted(records, key=lambda record: (record["view"], record["player"], regret_order[record["regret"]]))
 
     def _parse_figure_filename(self, filename: str) -> dict | None:
         for game_name in sorted(self.games, key=len, reverse=True):
@@ -1224,12 +1210,12 @@ class DashboardService:
 
             remainder = filename[len(prefix):]
             average_match = re.fullmatch(
-                r"average_(expected|realized)_(external|internal|swap)_"
+                r"average_(external|internal|swap)_"
                 r"regret_player_(\d+)\.(?:png|pdf)",
                 remainder,
             )
             scaling_match = re.fullmatch(
-                r"(expected|realized)_(external|internal|swap)_"
+                r"(external|internal|swap)_"
                 r"regret_over_sqrt_t_player_(\d+)\.(?:png|pdf)",
                 remainder,
             )
@@ -1238,9 +1224,8 @@ class DashboardService:
                 return None
             return {
                 "game": game_name,
-                "source": match.group(1),
-                "regret": match.group(2),
-                "player": int(match.group(3)),
+                "regret": match.group(1),
+                "player": int(match.group(2)),
                 "view": "average" if average_match else "sqrt_scaling",
             }
         return None

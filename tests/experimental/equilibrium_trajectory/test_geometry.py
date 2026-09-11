@@ -14,7 +14,7 @@ from experimental.equilibrium_trajectory.geometry import (
     _simplex_tangent_basis,
     analyze_equilibrium_projection_geometry,
 )
-from tests.support import coordination_game_payoffs
+from tests.support import coordination_game_payoffs, matching_pennies_payoffs
 
 
 def test_rps_affine_dimensions_and_projection_family_are_generic() -> None:
@@ -35,9 +35,9 @@ def test_rps_affine_dimensions_and_projection_family_are_generic() -> None:
 def test_ce_direction_space_is_contained_in_cce_direction_space() -> None:
     geometries = [
         analyze_equilibrium_projection_geometry(
-            load_game_payoffs(game)
+            payoffs
         )
-        for game in ("rps", "matching_pennies")
+        for payoffs in (load_game_payoffs("rps"), matching_pennies_payoffs())
     ]
     geometries.append(
         analyze_equilibrium_projection_geometry(coordination_game_payoffs())
@@ -58,7 +58,7 @@ def test_ce_direction_space_is_contained_in_cce_direction_space() -> None:
 
 def test_equal_dimension_point_fallback_for_matching_pennies() -> None:
     geometry = analyze_equilibrium_projection_geometry(
-        load_game_payoffs("matching_pennies")
+        matching_pennies_payoffs()
     )
 
     assert geometry.simplex_dimension == 3

@@ -17,7 +17,6 @@ from experiments.game_catalog import MAX_CUSTOM_ACTIONS_PER_PLAYER, MAX_CUSTOM_P
 from experiments.plots import FIGURE_FORMATS, figure_path
 from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
-    INITIALIZATION_LABELS,
     MAX_ADVERSARIAL_ACTIONS,
 )
 from web.jobs import ServiceBusyError
@@ -28,6 +27,8 @@ from web.validation import (
     parse_adversarial_experiment_form,
     parse_adversarial_scaling_form,
     parse_experiment_form,
+    parse_figure_selection,
+    parse_profile_selection,
     parse_non_negative_integer,
     parse_positive_integer,
 )
@@ -66,7 +67,6 @@ def _parse_one_player_form(parser, service: DashboardService):
         request.form,
         algorithms_by_feedback_mode=service.adversarial_algorithms_by_feedback_mode,
         environments=set(ENVIRONMENT_LABELS),
-        initialization_modes=set(INITIALIZATION_LABELS),
         max_actions=MAX_ADVERSARIAL_ACTIONS,
         max_horizon=current_app.config["MAX_HORIZON"],
         max_replicates=current_app.config["MAX_REPLICATES"],
@@ -86,8 +86,22 @@ def _custom_games_context(form_state: dict | None = None, inline_error: str | No
 
 
 def _form_error(mode: str, default_state: dict, error: Exception):
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(error=str(error)), 400
     context = _experiment_context(mode, _submitted_form_state(default_state), str(error))
     return render_template("index.html", **context), 400
+
+
+def _queued_experiment_response(job, mode: str, message: str):
+    if request.accept_mimetypes.best == "application/json":
+        data = job.public_data() | {"url": url_for("dashboard.job_status", job_id=job.id)}
+        return jsonify(
+            job=data,
+            job_html=render_template("_job.html", job=data, return_to=mode),
+            message=message,
+        ), 202
+    flash(message, "success")
+    return redirect(url_for("dashboard.index", **({"mode": mode} if mode != "fixed" else {})))
 
 
 def _send_result(filename: str, validator, directory, as_attachment: bool = False):
@@ -126,8 +140,7 @@ def index():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("fixed", get_service().default_form_state(), error)
 
-    flash(f"Queued experiment job {job.id[:8]}.", "success")
-    return redirect(url_for("dashboard.index"))
+    return _queued_experiment_response(job, "fixed", f"Queued experiment job {job.id[:8]}.")
 
 
 def _submit_one_player():
@@ -138,8 +151,7 @@ def _submit_one_player():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("adversarial", service.default_adversarial_form_state(), error)
 
-    flash(f"Queued adversarial job {job.id[:8]}.", "success")
-    return redirect(url_for("dashboard.index", mode="adversarial"))
+    return _queued_experiment_response(job, "adversarial", f"Queued adversarial job {job.id[:8]}.")
 
 
 @dashboard.post("/adversarial/action-scaling")
@@ -151,8 +163,7 @@ def adversarial_action_scaling():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("adversarial", service.default_adversarial_form_state(), error)
 
-    flash(f"Queued action-space scaling job {job.id[:8]}.", "success")
-    return redirect(url_for("dashboard.index", mode="adversarial"))
+    return _queued_experiment_response(job, "adversarial", f"Queued action-space scaling job {job.id[:8]}.")
 
 
 @dashboard.get("/adversarial/experiments/<filename>")
@@ -332,6 +343,46 @@ def serve_figure(filename: str):
     return _send_result(filename, service.validate_figure_filename, service.figure_dir)
 
 
+@dashboard.get("/figure-builder/options")
+def figure_builder_options():
+    try:
+        return jsonify(get_service().figure_builder.catalog(request.args.get("mode", "fixed")))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+
+
+@dashboard.post("/figure-builder")
+def build_selected_figure():
+    try:
+        result = get_service().figure_builder.build(parse_figure_selection(request.form))
+    except (ValueError, FileNotFoundError) as error:
+        return jsonify(error=str(error)), 400
+    result["url"] = url_for("dashboard.selected_figure", filename=result["filename"])
+    result["pdf_url"] = url_for("dashboard.selected_figure", filename=result["pdf_filename"])
+    return jsonify(result)
+
+
+@dashboard.post("/figure-builder/collection")
+def build_figure_collection():
+    try:
+        result = get_service().figure_builder.build_collection(parse_profile_selection(request.form))
+    except (ValueError, FileNotFoundError) as error:
+        return jsonify(error=str(error)), 400
+    for figure in result["figures"]:
+        figure["url"] = url_for("dashboard.selected_figure", filename=figure["filename"])
+        figure["pdf_url"] = url_for("dashboard.selected_figure", filename=figure["pdf_filename"])
+    return jsonify(result)
+
+
+@dashboard.get("/figure-builder/files/<filename>")
+def selected_figure(filename: str):
+    try:
+        path = get_service().figure_builder.artifact_path(filename)
+    except (ValueError, FileNotFoundError):
+        abort(404)
+    return send_file(path, as_attachment=path.suffix == ".pdf", download_name=path.name)
+
+
 @dashboard.post("/figures/download-filtered.pdf")
 def download_filtered_figures():
     service = get_service()
@@ -340,6 +391,9 @@ def download_filtered_figures():
         directory, validator = service.figure_dir, service.validate_figure_filename
     elif mode == "adversarial":
         directory, validator = service.adversarial_figure_dir, service.validate_adversarial_figure_filename
+    elif mode == "figure_builder":
+        directory = service.figure_builder.output_dir
+        validator = lambda filename: service.figure_builder.artifact_path(filename).name
     else:
         return jsonify(error="Unknown experiment mode."), 400
     filenames = request.form.getlist("filenames")

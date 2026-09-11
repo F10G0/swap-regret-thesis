@@ -16,13 +16,17 @@
                     <option value="adversarial" {% if experiment_mode == "adversarial" %}selected{% endif %}>One-player environment</option>
                 </select>
             </form>
-            {% if inline_error %}<div class="notice notice-error" role="alert">{{ inline_error }}</div>{% endif %}
+            <div id="experiment-submit-status" class="notice notice-error" role="status" {% if not inline_error %}hidden{% endif %}>{{ inline_error or "" }}</div>
             {% block experiment_sidebar %}{% endblock %}
         </aside>
 
         <main id="main-content" class="content">
             {{ warning_panel(warnings, warning_heading_id) }}
             {{ jobs_panel(jobs, busy, job_heading_id, job_return_to, busy_id=job_busy_id) }}
+            <div id="refresh-results-notice" class="notice" role="status" hidden>
+                Job status updated. Refresh when you’re ready to load the latest results.
+                <button id="refresh-results" type="button">Refresh results</button>
+            </div>
             {% block experiment_main %}{% endblock %}
             {{ figure_dialog() }}
         </main>

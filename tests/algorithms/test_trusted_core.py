@@ -11,7 +11,7 @@ from environments import BanditRepeatedGame, HistoricalFrequencyAdversary, LazyR
 from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT
 from experiments.scenarios.cross_play import AlgorithmFactory
 from experiments.scenarios.full_information_cross_play import ALGORITHMS as FULL
-from metrics.regret import RegretBundles
+from metrics.regret import RegretBundle
 
 
 CASES = [
@@ -58,14 +58,14 @@ def test_valid_runs_preserve_trusted_core_invariants(monkeypatch, mode, name, fa
 
     monkeypatch.setattr(Algorithm, "update", checked_update)
     learner = factory.create(n_actions, 100, seed=7)
-    regrets = RegretBundles(n_actions, "both")
+    regrets = RegretBundle(n_actions)
     if environment == "fixed":
         payoff_tensor = np.random.default_rng(17).random((2, n_actions, n_actions))
         game = (RepeatedGame if mode == "full_information" else BanditRepeatedGame)(payoff_tensor)
     elif environment == "historical":
         game = HistoricalFrequencyAdversary(n_actions)
     else:
-        game = LazyRandomWalkEnvironment(n_actions, 100, seed=17, initialization="uniform_grid")
+        game = LazyRandomWalkEnvironment(n_actions, 100, seed=17)
 
     for time in range(100):
         action = learner.sample_action()
@@ -77,17 +77,15 @@ def test_valid_runs_preserve_trusted_core_invariants(monkeypatch, mode, name, fa
             game.step((action,)) if environment == "historical" else game.step()
             payoffs = game.feedback()
             feedback = payoffs if mode == "full_information" else float(payoffs[action])
-        regrets.update(learner.strategy(), action, payoffs)
+        regrets.update(learner.strategy(), payoffs)
         learner.update(feedback)
-        for bundle in (regrets.expected, regrets.realized):
-            assert np.all(np.isfinite(bundle.cumulative_replacement_gains))
+        assert np.all(np.isfinite(regrets.cumulative_replacement_gains))
     assert learner.t == 100
     if isinstance(learner, (FullIto, BanditIto)):
         assert sum(child.t for child in learner.learners) == 100
     if environment == "fixed":
         np.testing.assert_array_equal(game.payoff_tensor, payoff_tensor)
-    for bundle in (regrets.expected, regrets.realized):
-        assert all(np.isfinite(value) for value in bundle.summary(100).values())
+    assert all(np.isfinite(value) for value in regrets.summary(100).values())
 
 
 @pytest.mark.parametrize("learner_class", [BanditBM, LCEIX])

@@ -24,7 +24,7 @@ The queue has one worker and reserves run IDs on submission. Fixed-game and one-
 
 One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Ordinary and action-scaling batches derive learner and environment seeds from distinct domains and the replicate index, while retaining the configured base seeds in their CSVs. Every experiment figure opens in the same viewer. Eligible figures have independent controls for switching between Student-t 95% confidence bands and cached mean-only figures; previews and PDF downloads always use the same selection.
 
-The sidebar configures the next run. The global result filters control saved figures, summaries, and analysis: choosing one game shows its CE/CCE analysis, choosing one environment shows its rule, and choosing **All** hides the analysis panel. Completed jobs refresh the page automatically.
+The sidebar configures the next run. The global result filters control saved figures, summaries, and analysis: choosing one game shows its CE/CCE analysis, choosing one environment shows its rule, and choosing **All** hides the analysis panel. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
 
 ## Figures and Data
 

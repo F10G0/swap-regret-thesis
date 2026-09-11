@@ -4,20 +4,19 @@ import math
 from pathlib import Path
 from threading import Lock
 
-from experiments.result_schema import EXPECTED_REGRET_FIELDNAMES, REALIZED_REGRET_FIELDNAMES
+from experiments.result_schema import REGRET_FIELDNAMES
 from experiments.results import (
     load_final_result_rows,
     result_algorithm_profile,
     result_game_payoff_digest,
     result_implementation_version,
     result_player_algorithm,
-    result_regret_evaluation,
     result_runtime_environment,
     result_runtime_fingerprint,
 )
 
 
-SUMMARY_REGRET_FIELDS = tuple(field for field in EXPECTED_REGRET_FIELDNAMES + REALIZED_REGRET_FIELDNAMES if field.startswith("average_"))
+SUMMARY_REGRET_FIELDS = tuple(field for field in REGRET_FIELDNAMES if field.startswith("average_"))
 
 
 @dataclass(frozen=True)
@@ -91,7 +90,6 @@ class ResultIndex:
             "game": row["game"],
             "run_id": row["run_id"],
             "feedback_mode": row["feedback_mode"],
-            "regret_evaluation": result_regret_evaluation(row),
             "seed": int(row["seed"]),
             "replicate": int(row["replicate"]),
             "stationary_method": row["stationary_method"],
