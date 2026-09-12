@@ -81,24 +81,6 @@ def _experiment_page_context(
     }
 
 
-def _equilibrium_urls(game_name: str) -> dict[str, dict[str, str]]:
-    return {
-        equilibrium: {
-            figure_format: url_for("dashboard.equilibrium_figure", game_name=game_name, equilibrium=equilibrium, figure_format=figure_format)
-            for figure_format in ("png", "pdf")
-        }
-        for equilibrium in ("ce", "cce")
-    }
-
-
-def _equilibrium_figure_data(service: DashboardService) -> dict[str, dict[str, dict[str, str]]]:
-    return {
-        game_name: _equilibrium_urls(game_name)
-        for game_name in service.games
-        if service.supports_matrix_figures(game_name)
-    }
-
-
 def dashboard_context(
     service: DashboardService,
     form_state: dict | None = None,
@@ -168,7 +150,6 @@ def dashboard_context(
             }
             for filename in results.filenames
         ],
-        "equilibrium_figures": _equilibrium_figure_data(service),
         "summaries": summaries,
         "warnings": results.warnings,
     }
@@ -217,10 +198,6 @@ def custom_games_context(
     inspection: dict | None = None,
 ) -> dict:
     definitions, warnings = service.custom_games()
-    equilibrium_figures = None
-    if inspection and service.supports_matrix_figures(inspection["definition"]["id"]):
-        game_name = inspection["definition"]["id"]
-        equilibrium_figures = _equilibrium_urls(game_name)
     return {
         "custom_games": definitions,
         "warnings": warnings,
@@ -232,7 +209,6 @@ def custom_games_context(
             "payoff_structure": "general_sum",
         },
         "inspection": inspection,
-        "equilibrium_figures": equilibrium_figures,
         "payoff_structures": CUSTOM_PAYOFF_STRUCTURES,
         "max_players": MAX_CUSTOM_PLAYERS,
         "max_actions": MAX_CUSTOM_ACTIONS_PER_PLAYER,

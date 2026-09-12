@@ -70,12 +70,12 @@ def fixed_results(directory, bandit=False):
             for name in algorithms for replicate in (0, 1)]
 
 
-@pytest.mark.parametrize("family", ["rps", "bandit", "ilrw", "scaling", "distance", "joint", "weights"])
+@pytest.mark.parametrize("family", ["rps", "bandit", "ilrw", "scaling", "distance", "joint"])
 def test_publication_figure_families(tmp_path, monkeypatch, family):
     module_name = {
         "rps": "plot_regret", "bandit": "plot_regret", "ilrw": "plot_adversarial",
         "scaling": "plot_adversarial_scaling", "distance": "plot_equilibrium_convergence",
-        "joint": "plot_joint_actions", "weights": "plot_equilibrium_weights",
+        "joint": "plot_joint_actions",
     }[family]
     module = importlib.import_module("experiments.plots." + module_name)
     captured = []
@@ -106,9 +106,6 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
             replicates=2, horizon=100, environment_seed=7, learner_seed=42)
         path = run_adversarial_scaling_experiment(spec, raw, workers=1)
         module._plot_scaling(module.load_adversarial_scaling_rows(path), output)
-    elif family == "weights":
-        from experiments.game_catalog import load_game_payoffs
-        module.plot_equilibrium_profile_weights(load_game_payoffs("rps"), "ce", output)
     else:
         paths = fixed_results(raw)[:2]
         if family == "joint":
@@ -171,4 +168,4 @@ def test_every_figure_renderer_uses_the_shared_publication_style():
                 renderers.append(function.name)
                 assert any(isinstance(node, ast.Name) and node.id == "publication_plot"
                            for node in function.decorator_list), f"{path}:{function.lineno}"
-    assert len(renderers) == 6
+    assert len(renderers) == 5

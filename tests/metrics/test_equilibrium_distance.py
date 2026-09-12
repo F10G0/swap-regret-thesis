@@ -1,58 +1,114 @@
 import numpy as np
-import pulp
 import pytest
 
 from config import EQUILIBRIUM_LP_TOLERANCE
 from experiments.games import create_rock_paper_scissors_payoffs
-import metrics.equilibrium as equilibrium_module
 from metrics.equilibrium_distance import equilibrium_l1_distance
 from tests.support import coordination_game_payoffs
 
 
-def old_pulp_distance(payoffs, empirical, concept):
-    """Pre-change production formulation, retained only as a test oracle."""
-    variables, problem = equilibrium_module.create_equilibrium_lp(payoffs, concept, np.zeros(empirical.shape))
-    deviations = pulp.LpVariable.dicts("l1_distance", list(variables), lowBound=0.0)
-    for profile in variables:
-        problem += deviations[profile] >= variables[profile] - empirical[profile]
-        problem += deviations[profile] >= empirical[profile] - variables[profile]
-    problem.sense = pulp.LpMinimize
-    problem.setObjective(pulp.lpSum(deviations.values()))
-    assert problem.solve(pulp.PULP_CBC_CMD(msg=False)) == pulp.LpStatusOptimal
-    return float(pulp.value(problem.objective))
+# Objective baselines independently cross-validated before dependency removal.
+# All 60 comparisons passed its existing abs=1e-8, rel=1e-8 tolerance.
+FIXTURES = {
+    "matching_pennies": np.array([[[1., 0.], [0., 1.]], [[0., 1.], [1., 0.]]]),
+    "coordination": coordination_game_payoffs(),
+    "rps": create_rock_paper_scissors_payoffs(),
+    "asymmetric": np.array([[[3., 0.], [1., 2.]], [[1., 4.], [3., 0.]]]),
+    "heterogeneous": np.random.default_rng(17).random((3, 2, 1, 3)),
+}
+# Pure profile 0, uniform, then four Dirichlet draws with seed 42.
+DISTANCE_BASELINES = {
+    "matching_pennies": (
+        (1.5, 0., .4244305077727705, .5288534688658404, .8689629172461633, .6913626007698301),
+        (1.5, 0., .4244305077727705, .5288534688658404, .8689629172461633, .6913626007698301),
+    ),
+    "coordination": (
+        (0., 0., .3746466963561506, .29525104358098475, .4232531000930262, .3076316431473425),
+        (0., 0., .3746466963561506, .29525104358098475, .4232531000930262, .3076316431473425),
+    ),
+    "rps": (
+        (1.7777777777777777, 0., .623097519866187, .7782787957534819, .5247105340247252, .5321218928529506),
+        (1.3333333333333335, 0., .39834603544061115, .6108454745300456, .2763512864621229, .4536428902539118),
+    ),
+    "asymmetric": (
+        (1.5, 0., .4244305077727705, .5288534688658404, .8689629172461633, .6913626007698301),
+        (1.5, 0., .4244305077727705, .5288534688658404, .8689629172461633, .6913626007698301),
+    ),
+    "heterogeneous": (
+        (2., .929890118565153, 1.252395546571471, 1.3296525076413122, 1.4976857559226513, .7526347212943629),
+        (2., .929890118565153, 1.252395546571471, 1.3296525076413122, 1.4976857559226513, .7526347212943629),
+    ),
+}
 
 
-@pytest.mark.parametrize("concept", ["ce", "cce"])
-@pytest.mark.parametrize("payoffs", [
-    np.array([[[1., 0.], [0., 1.]], [[0., 1.], [1., 0.]]]),
-    coordination_game_payoffs(),
-    create_rock_paper_scissors_payoffs(),
-    np.random.default_rng(17).random((3, 2, 1, 3)),
-])
-def test_highs_matches_old_polytope_and_distance(payoffs, concept):
+def maximum_incentive_gain(payoffs, distribution, concept):
+    """Check deviations directly, independently of the production LP matrices."""
+    gains = []
+    for player, n_actions in enumerate(distribution.shape):
+        for deviation_action in range(n_actions):
+            recommendations = (None,) if concept == "cce" else range(n_actions)
+            for recommendation in recommendations:
+                if recommendation == deviation_action:
+                    continue
+                gain = 0.
+                for profile in np.ndindex(distribution.shape):
+                    if recommendation is not None and profile[player] != recommendation:
+                        continue
+                    deviation = list(profile)
+                    deviation[player] = deviation_action
+                    gain += distribution[profile] * (
+                        payoffs[(player, *deviation)] - payoffs[(player, *profile)]
+                    )
+                gains.append(gain)
+    return max(gains, default=0.)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES)
+@pytest.mark.parametrize("distribution_index", range(6))
+def test_distance_baselines_and_independent_feasibility(fixture, distribution_index):
+    payoffs = FIXTURES[fixture]
     shape = payoffs.shape[1:]
+    size = int(np.prod(shape))
     random = np.random.default_rng(42)
     pure = np.zeros(shape)
-    pure.flat[0] = 1
-    distributions = [pure, np.full(shape, 1 / np.prod(shape)),
-                     *[random.dirichlet(np.ones(np.prod(shape))).reshape(shape) for _ in range(4)]]
-    for empirical in distributions:
+    pure.flat[0] = 1.
+    distributions = [
+        pure, np.full(shape, 1 / size),
+        *[random.dirichlet(np.ones(size)).reshape(shape) for _ in range(4)],
+    ]
+    empirical = distributions[distribution_index]
+    distances = {}
+    for index, concept in enumerate(("ce", "cce")):
         result = equilibrium_l1_distance(payoffs, empirical, concept)
-        assert result.distance == pytest.approx(old_pulp_distance(payoffs, empirical, concept), abs=1e-8, rel=1e-8)
+        distances[concept] = result.distance
+        assert result.distance == pytest.approx(
+            DISTANCE_BASELINES[fixture][index][distribution_index], abs=1e-8, rel=1e-8
+        )
         nearest = result.nearest_distribution
         assert nearest.shape == shape
+        assert np.isfinite(nearest).all()
         assert nearest.min() >= -1e-9
         assert nearest.sum() == pytest.approx(1, abs=1e-9)
         assert np.abs(nearest - empirical).sum() == pytest.approx(result.distance, abs=1e-8)
-        # Verify feasibility in the upstream polytope, not just our own matrices.
-        variables, problem = equilibrium_module.create_equilibrium_lp(payoffs, concept, np.zeros(shape))
-        for profile, variable in variables.items():
-            variable.varValue = nearest[profile]
-        for constraint in problem.constraints.values():
-            if constraint.sense == pulp.LpConstraintEQ:
-                assert abs(constraint.value()) < 1e-8
-            else:
-                assert constraint.sense * constraint.value() >= -1e-8
+        assert maximum_incentive_gain(payoffs, nearest, concept) <= EQUILIBRIUM_LP_TOLERANCE
+    assert distances["cce"] <= distances["ce"] + EQUILIBRIUM_LP_TOLERANCE
+
+
+@pytest.mark.parametrize("concept", ("ce", "cce"))
+def test_uniform_rps_is_an_equilibrium(concept):
+    empirical = np.full((3, 3), 1 / 9)
+    result = equilibrium_l1_distance(FIXTURES["rps"], empirical, concept)
+    assert result.distance == pytest.approx(0., abs=EQUILIBRIUM_LP_TOLERANCE)
+    np.testing.assert_allclose(result.nearest_distribution, empirical, atol=EQUILIBRIUM_LP_TOLERANCE)
+    assert maximum_incentive_gain(FIXTURES["rps"], empirical, concept) <= EQUILIBRIUM_LP_TOLERANCE
+
+
+def test_direct_checker_distinguishes_conditional_and_unconditional_deviations():
+    # A diagonal RPS mixture has no profitable fixed-action deviation, but its
+    # recommendation reveals the opponent's action and is exploitable under CE.
+    diagonal = np.eye(3) / 3
+    assert maximum_incentive_gain(FIXTURES["rps"], diagonal, "cce") == pytest.approx(0.)
+    assert maximum_incentive_gain(FIXTURES["rps"], diagonal, "ce") == pytest.approx(1 / 6)
 
 
 def test_prepared_distance_reuses_all_coefficient_matrices(monkeypatch):

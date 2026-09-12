@@ -3,7 +3,7 @@
 const dashboardDataElement = document.getElementById("dashboard-data");
 const dashboardData = dashboardDataElement
     ? JSON.parse(dashboardDataElement.textContent)
-    : {mode: "fixed", equilibriumFigures: {}, gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
+    : {mode: "fixed", gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
 const onePlayerMode = dashboardData.mode === "adversarial";
 const formStorageKey = onePlayerMode ? "swap-regret-adversarial-form" : "swap-regret-experiment-form";
 let resultFilters = null;
@@ -165,58 +165,6 @@ function selectedResultScope() {
     return scope && scope.value !== "all" ? scope.value : "";
 }
 
-function updateEquilibriumFigures() {
-    const game = selectedResultScope();
-    const panel = element("equilibrium-panel");
-    if (panel) {
-        panel.hidden = !game;
-    }
-    if (!game) {
-        return;
-    }
-    const urls = (dashboardData.equilibriumFigures || {})[game];
-
-    const presentation = gamePresentation(game);
-    const gameLabel = element("equilibrium-game");
-    if (gameLabel) {
-        gameLabel.textContent = presentation.label;
-    }
-    const grid = element("equilibrium-grid");
-    const explanation = element("equilibrium-explanation");
-    const unavailable = element("equilibrium-unavailable");
-    if (grid) {
-        grid.hidden = !urls;
-    }
-    if (explanation) {
-        explanation.hidden = !urls;
-    }
-    if (unavailable) {
-        unavailable.hidden = Boolean(urls);
-    }
-    if (!urls || !panel || !panel.open) {
-        return;
-    }
-    for (const equilibrium of ["ce", "cce"]) {
-        const image = element(`${equilibrium}-equilibrium-image`);
-        const download = element(`${equilibrium}-equilibrium-download`);
-        if (download) {
-            download.removeAttribute("href");
-            download.setAttribute("aria-disabled", "true");
-            download.classList.add("is-disabled");
-        }
-        if (image) {
-            setHeatmapSource(image, urls[equilibrium].png, () => {
-                if (download) {
-                    download.href = urls[equilibrium].pdf;
-                    download.removeAttribute("aria-disabled");
-                    download.classList.remove("is-disabled");
-                }
-            });
-            image.alt = `Maximum ${equilibrium.toUpperCase()} profile weight for ${presentation.label}`;
-        }
-    }
-}
-
 function updateDashboardForGame(preferredAlgorithms = null) {
     updatePlayerControls(preferredAlgorithms);
     const game = element("game");
@@ -267,8 +215,6 @@ function updateEnvironmentAnalysis() {
 function updateFilteredAnalysis() {
     if (onePlayerMode) {
         updateEnvironmentAnalysis();
-    } else {
-        updateEquilibriumFigures();
     }
 }
 
@@ -474,7 +420,7 @@ function showExperimentDetail(index) {
     element("detail-equilibrium-distance-card").hidden = !distanceAvailable;
     const distanceDownload = element("detail-equilibrium-distance-download");
     if (distanceAvailable) {
-        setHeatmapSource(distanceImage, summary.equilibrium_distance_url, null, "Computing equilibrium distances…");
+        setHeatmapSource(distanceImage, summary.equilibrium_distance_url, "Computing equilibrium distances…");
         distanceImage.alt = `Mean CE and CCE L1 distance by horizon for ${gameLabel}`;
         distanceDownload.href = summary.equilibrium_distance_pdf_url;
         distanceDownload.download = `${summary.group_id}_mean_equilibrium_distance.pdf`;
@@ -559,11 +505,6 @@ listen("game", "change", () => {
 });
 listen("adversarial-environment", "change", () => {
     updateOnePlayerEnvironment();
-});
-listen("equilibrium-panel", "toggle", (event) => {
-    if (event.currentTarget.open) {
-        updateEquilibriumFigures();
-    }
 });
 listen("synchronize-players", "click", () => {
     synchronizePlayerValues();

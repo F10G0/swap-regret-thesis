@@ -147,34 +147,6 @@
                 <div id="payoff-table-scroll" class="payoff-table-scroll" aria-busy="true"></div>
             </section>
 
-            {% if equilibrium_figures %}
-                <section class="panel equilibrium-panel">
-                    <div class="section-heading">
-                        <div>
-                            <p class="eyebrow">Game analysis</p>
-                            <h2>Equilibrium profile weights</h2>
-                        </div>
-                    </div>
-                    <p class="equilibrium-explanation">
-                        Each cell is optimized independently over the corresponding equilibrium polytope. The displayed matrix is not itself an equilibrium distribution and generally does not sum to one.
-                    </p>
-                    <div class="equilibrium-grid">
-                        {% for equilibrium, label in (("ce", "CE"), ("cce", "CCE")) %}
-                            <article class="equilibrium-card">
-                                <h3>Maximum {{ label }} Profile Weight</h3>
-                                <div class="heatmap-frame">
-                                    <img
-                                        data-heatmap-source="{{ equilibrium_figures[equilibrium].png }}"
-                                        alt="Maximum {{ label }} profile weight for {{ selected.label }}"
-                                    >
-                                    <span class="heatmap-loading" role="status">Loading heatmap…</span>
-                                </div>
-                                <a href="{{ equilibrium_figures[equilibrium].pdf }}" download>Download PDF</a>
-                            </article>
-                        {% endfor %}
-                    </div>
-                </section>
-            {% endif %}
         {% endif %}
     </main>
 {% endblock %}

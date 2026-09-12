@@ -1,5 +1,7 @@
 # Performance cleanup report — 2026-09-08
 
+Historical benchmark evidence: this report describes the implementation measured at that time, not the current API. Current runs use a single strategy-weighted regret tracker and replicate-mean figures. References below to separate evaluation modes and probability floors describe the old benchmark baseline, not supported configuration options today.
+
 ## Scope and working-tree preservation
 
 Implemented against the current local tree, not GitHub main. Git sees this audit directory as untracked inside `/home/florian`; therefore a normal Git diff cannot isolate these changes. Review used a source archive captured before editing, without restoring it into the working tree.

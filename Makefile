@@ -18,7 +18,7 @@ FIGURE_DIR ?= $(RESULTS_DIR)/figures
 ADVERSARIAL_DIR ?= $(RESULTS_DIR)/adversarial
 
 .PHONY: help all install
-.PHONY: web plot precompute-equilibria
+.PHONY: web plot
 .PHONY: test clean reset
 
 ##@ General
@@ -45,9 +45,6 @@ plot: ## Regenerate plots from existing raw results
 	$(PYTHON) -m experiments.plots.plot_adversarial
 	$(PYTHON) -m experiments.plots.plot_adversarial_scaling
 
-precompute-equilibria: ## Regenerate static CE/CCE profile-weight heatmaps
-	$(PYTHON) -m web.precompute_equilibrium_figures --force --workers 4
-
 ##@ Validation
 
 test: ## Run the complete test suite without creating caches
@@ -57,8 +54,8 @@ test: ## Run the complete test suite without creating caches
 
 clean: ## Remove Python and pytest caches
 	find . -type d \( -name "__pycache__" -o -name ".pytest_cache" \) -prune -exec rm -rf {} +
-	find . -type f \( -name "*.pyc" -o -name "*-pulp.*" \) -delete
-	find "$(RESULTS_DIR)" web/static/equilibria data/custom_games -type d \( -name ".figures-*" -o -name ".equilibrium-*" -o -name ".equilibrium-convergence-*" -o -name ".precompute-equilibrium-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete
+	find "$(RESULTS_DIR)" data/custom_games -type d \( -name ".figures-*" -o -name ".equilibrium-convergence-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 reset: clean ## Remove caches and generated results
 	@if [ -d "$(RESULTS_DIR)/cache/plot_rows" ]; then \

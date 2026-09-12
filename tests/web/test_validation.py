@@ -295,8 +295,7 @@ def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_pa
     assert b'id="filter-summary-source"' not in dashboard_response.data
     assert b'data-regret-source=' not in dashboard_response.data
     assert b'data-metric="average_external"' in dashboard_response.data
-    assert b'class="panel disclosure-panel equilibrium-panel"' in dashboard_response.data
-    assert dashboard_response.data.count(b"Loading heatmap") == 3
+    assert dashboard_response.data.count(b"Loading heatmap") == 1
     assert heatmap_response.status_code == 200
     assert heatmap_response.content_type == "image/png"
     assert distance_statuses[-1] == 200
@@ -327,49 +326,6 @@ def test_dashboard_combines_matching_replicates_and_retains_raw_downloads(tmp_pa
     assert summaries[0]["joint_actions_url"].startswith("/experiment-groups/")
     assert summaries[0]["equilibrium_distance_url"].startswith("/experiment-groups/")
     assert {run["experiment"] for run in summaries[0]["runs"]} == set(service.result_snapshot().filenames)
-
-
-def test_dashboard_renders_and_serves_theoretical_equilibrium_heatmaps(
-    tmp_path: Path,
-) -> None:
-    app, _ = create_test_app(tmp_path)
-    client = app.test_client()
-
-    dashboard_response = client.get("/")
-    ce_response, ce_statuses = wait_for_http_response(
-        client,
-        "/games/rps/equilibria/ce.png",
-    )
-    cce_response, cce_statuses = wait_for_http_response(
-        client,
-        "/games/rps/equilibria/cce.png",
-    )
-
-    assert dashboard_response.status_code == 200
-    assert b"Maximum CE Profile Weight" in dashboard_response.data
-    assert b"Maximum CCE Profile Weight" in dashboard_response.data
-    assert b"Each cell is optimized independently" in dashboard_response.data
-    assert b"not itself an" in dashboard_response.data
-    assert dashboard_response.data.count(b"Loading heatmap") == 2
-    assert ce_statuses == [200]
-    assert cce_statuses == [200]
-    assert ce_response.status_code == 200
-    assert ce_response.content_type == "image/png"
-    assert cce_response.status_code == 200
-    assert cce_response.content_type == "image/png"
-
-
-def test_equilibrium_heatmap_request_serves_precomputed_asset_immediately(tmp_path: Path) -> None:
-    app, _ = create_test_app(tmp_path)
-    client = app.test_client()
-
-    started_at = time.monotonic()
-    first_response = client.get("/games/rps/equilibria/ce.png")
-    elapsed = time.monotonic() - started_at
-
-    assert first_response.status_code == 200
-    assert first_response.content_type == "image/png"
-    assert elapsed < 0.5
 
 
 def test_dashboard_renders_balanced_top_controls_and_theme_selector(
@@ -561,12 +517,6 @@ def test_custom_game_page_creates_symmetric_zero_sum_game(
     library_page = client.get("/custom-games")
     inspector_page = client.get(f"/custom-games/{definition.id}")
     dashboard_page = client.get("/")
-    ce_response = client.get(
-        f"/games/{definition.id}/equilibria/ce.png"
-    )
-    cce_response = client.get(
-        f"/games/{definition.id}/equilibria/cce.png"
-    )
 
     assert response.status_code == 302
     assert definition.payoff_structure == "zero_sum"
@@ -577,19 +527,10 @@ def test_custom_game_page_creates_symmetric_zero_sum_game(
     assert b"Symmetric zero-sum" in library_page.data
     assert b'id="custom-payoff-structure"' in library_page.data
     assert b'value="zero_sum"' in library_page.data
-    assert inspector_page.data.count(b"Equilibrium profile weights") == 1
-    assert b"Maximum CE Profile Weight" in inspector_page.data
-    assert b"Maximum CCE Profile Weight" in inspector_page.data
-    equilibrium_url = (
-        f"/games/{definition.id}/equilibria/ce.png".encode()
-    )
-    assert equilibrium_url in inspector_page.data
-    assert equilibrium_url in dashboard_page.data
-    assert ce_response.status_code == 200
-    assert ce_response.content_type == "image/png"
-    assert cce_response.status_code == 200
-    assert cce_response.content_type == "image/png"
-    assert len(list((tmp_path / "custom-games" / ".equilibria").glob("*.png"))) == 2
+    assert inspector_page.status_code == dashboard_page.status_code == 200
+    assert b'id="payoff-table-scroll"' in inspector_page.data
+    assert b"Profile Weight" not in inspector_page.data
+    assert not (tmp_path / "custom-games" / ".equilibria").exists()
 
     script = client.get("/static/custom_games.js").get_data(as_text=True)
     assert 'fieldCount = symmetricZeroSum ? 1 : playerCount' in script

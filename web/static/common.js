@@ -120,7 +120,7 @@ function installConfirmations() {
     });
 }
 
-function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loading heatmap…") {
+function setHeatmapSource(image, source, loadingMessage = "Loading heatmap…") {
     if (!image || !source) {
         return;
     }
@@ -166,7 +166,7 @@ function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loadi
             if (response.status === 202) {
                 const payload = await response.json();
                 if (status) {
-                    status.textContent = payload.message || "Computing equilibrium heatmap…";
+                    status.textContent = payload.message || loadingMessage;
                 }
                 const retryAfter = Number(response.headers.get("Retry-After")) || 2;
                 window.setTimeout(load, Math.max(1, retryAfter) * 1000);
@@ -188,9 +188,6 @@ function setHeatmapSource(image, source, onReady = null, loadingMessage = "Loadi
                 }
                 image.dataset.objectUrl = objectUrl;
                 finish(false);
-                if (onReady) {
-                    onReady();
-                }
             };
             image.onerror = () => {
                 URL.revokeObjectURL(objectUrl);

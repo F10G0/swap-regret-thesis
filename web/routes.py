@@ -425,17 +425,6 @@ def download_filtered_figures():
     return response
 
 
-@dashboard.get("/games/<game_name>/equilibria/<equilibrium>.<figure_format>")
-def equilibrium_figure(game_name: str, equilibrium: str, figure_format: str):
-    try:
-        path = get_service().equilibrium_figure(game_name, equilibrium, figure_format)
-    except (KeyError, ValueError):
-        abort(404)
-    except FileNotFoundError as error:
-        return jsonify({"status": "failed", "error": str(error)}), 500
-    return send_from_directory(path.parent.resolve(), path.name)
-
-
 @dashboard.get("/experiments/<filename>")
 def download_experiment(filename: str):
     service = get_service()

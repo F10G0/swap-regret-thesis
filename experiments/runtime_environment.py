@@ -9,10 +9,8 @@ import platform
 
 
 _NUMERICAL_DISTRIBUTIONS = (
-    "games_learning",
     "matplotlib",
     "numpy",
-    "PuLP",
     "scipy",
 )
 

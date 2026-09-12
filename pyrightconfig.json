@@ -1,6 +1,3 @@
 {
-    "typeCheckingMode": "off",
-    "extraPaths": [
-        "src/games-learning"
-    ]
+    "typeCheckingMode": "off"
 }

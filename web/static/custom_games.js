@@ -235,7 +235,3 @@ function installPayoffInspector() {
 }
 
 installPayoffInspector();
-
-document.querySelectorAll("img[data-heatmap-source]").forEach((image) => {
-    setHeatmapSource(image, image.dataset.heatmapSource);
-});

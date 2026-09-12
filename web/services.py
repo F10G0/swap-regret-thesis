@@ -22,7 +22,6 @@ from config import (
 )
 from experiments.algorithm_labels import algorithm_label, algorithm_profile_label
 from experiments.game_catalog import (
-    CUSTOM_GAME_PREFIX,
     GameCatalog,
     GameDefinition,
     payoff_tensor_digest,
@@ -31,7 +30,6 @@ from experiments.games import PAYOFF_FACTORIES
 from experiments.plots import (
     FIGURE_SUFFIXES,
     figure_pair_is_current,
-    figure_path,
     figure_paths,
     publish_figure_pair,
 )
@@ -55,7 +53,6 @@ from experiments.scenarios.adversarial_scaling import (
     load_adversarial_scaling_rows,
     run_adversarial_scaling_experiment,
 )
-from web.equilibrium_figures import PRECOMPUTED_EQUILIBRIUM_DIR, equilibrium_figure_filename
 from web.experiment_modes import FEEDBACK_MODES
 from web.jobs import Job, JobContext, JobManager
 from web.presentations import GAME_PRESENTATIONS
@@ -171,7 +168,6 @@ class DashboardService:
 
         self.figure_builder = FigureBuilder(self)
         self._detail_figure_lock = Lock()
-        self._equilibrium_figure_lock = Lock()
         self._detail_figure_generation = 0
         self._convergence_executor = ThreadPoolExecutor(
             max_workers=2,
@@ -247,7 +243,6 @@ class DashboardService:
                 raise ValueError("delete the recorded experiments for this game before deleting the game")
             definition = self.game_catalog.delete(game_id)
             self._clear_figure_files(game_id)
-            self._clear_custom_equilibrium_figures(game_id)
             return definition
 
         return self.jobs.run_maintenance(operation)
@@ -865,80 +860,6 @@ class DashboardService:
     def _group_cache_stem(self, group_id: str, input_paths: list[Path]) -> str:
         membership = "\n".join(path.name for path in input_paths)
         return f"{group_id}_{sha256(membership.encode('utf-8')).hexdigest()[:8]}"
-
-    @property
-    def custom_equilibrium_figure_dir(self) -> Path:
-        return self.game_catalog.custom_game_dir / ".equilibria"
-
-    def _clear_custom_equilibrium_figures(self, game_name: str) -> None:
-        if not game_name.startswith(CUSTOM_GAME_PREFIX):
-            return
-        slug = game_name.removeprefix(CUSTOM_GAME_PREFIX)
-        if self.custom_equilibrium_figure_dir.exists():
-            for suffix in FIGURE_SUFFIXES:
-                for path in self.custom_equilibrium_figure_dir.glob(f"{slug}_*{suffix}"):
-                    path.unlink()
-
-    def _equilibrium_figure_path(
-        self,
-        game_name: str,
-        equilibrium: str,
-    ) -> tuple[Path, np.ndarray | None]:
-        if not self.supports_matrix_figures(game_name):
-            raise ValueError(f"unknown game: {game_name}")
-        if equilibrium not in {"ce", "cce"}:
-            raise ValueError(f"unknown equilibrium concept: {equilibrium}")
-        if game_name in PAYOFF_FACTORIES:
-            output_path = (
-                PRECOMPUTED_EQUILIBRIUM_DIR
-                / equilibrium_figure_filename(game_name, equilibrium)
-            )
-            return output_path, None
-
-        payoff_tensor = self.game_catalog.load(game_name)
-        digest = payoff_tensor_digest(payoff_tensor)
-        slug = game_name.removeprefix(CUSTOM_GAME_PREFIX)
-        output_path = self.custom_equilibrium_figure_dir / equilibrium_figure_filename(
-            f"{slug}_{digest}",
-            equilibrium,
-        )
-        return output_path, payoff_tensor
-
-    def equilibrium_figure(self, game_name: str, equilibrium: str, figure_format: str = "png") -> Path:
-        output_path, payoff_tensor = self._equilibrium_figure_path(
-            game_name,
-            equilibrium,
-        )
-        requested_path = figure_path(output_path, figure_format)
-        if requested_path.is_file():
-            return requested_path
-        if payoff_tensor is None and figure_format == "png":
-            raise FileNotFoundError(
-                f"missing precomputed equilibrium figure: {output_path.name}"
-            )
-        if payoff_tensor is None:
-            payoff_tensor = PAYOFF_FACTORIES[game_name]()
-
-        from experiments.plots.plot_equilibrium_weights import (
-            plot_equilibrium_profile_weights,
-        )
-
-        with self._equilibrium_figure_lock:
-            if requested_path.is_file():
-                return requested_path
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(
-                prefix=".equilibrium-weights-",
-                dir=output_path.parent,
-            ) as temporary_directory:
-                temporary_path = Path(temporary_directory) / output_path.name
-                plot_equilibrium_profile_weights(
-                    payoff_tensor,
-                    equilibrium,
-                    temporary_path,
-                )
-                publish_figure_pair(temporary_path, output_path, overwrite=False)
-        return requested_path
 
     def joint_action_figure(self, filename: str) -> Path:
         filename = validate_leaf_filename(filename, ".csv")

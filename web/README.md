@@ -7,7 +7,7 @@ make install
 make web
 ```
 
-The **Experiments** page uses one template, controller, result filters, figure grid and dialog, and sortable summary framework for fixed games and one-player environments. Both modes also share feedback, regret evaluation, horizon, seed, algorithm, and replicate controls.
+The **Experiments** page uses one template, controller, result filters, figure grid and dialog, and sortable summary framework for fixed games and one-player environments. Both modes also share feedback, horizon, seed, algorithm, and replicate controls.
 
 ## Features
 
@@ -18,17 +18,17 @@ The **Experiments** page uses one template, controller, result filters, figure g
 - Switch the **Experiments** page between fixed games and one-player historical-frequency or lazy-random-walk environments.
 - Sweep a configurable list of action counts and plot final regret against K.
 
-The queue has one worker and reserves run IDs on submission. Fixed-game and one-player experiments accept a replicate count. Compatible fixed-game groups share the game/payoff digest, feedback, evaluation, learner profile, horizon, base seed, stationary solver, and runtime-environment fingerprint. Their regret and CE/CCE-distance views report replicate means with pointwise Student-t 95% confidence intervals.
+The queue has one worker and reserves run IDs on submission. Fixed-game and one-player experiments accept a replicate count. Compatible fixed-game groups share the game/payoff digest, feedback, learner profile, horizon, base seed, stationary solver, and runtime-environment fingerprint. Their strategy-weighted regret and full-space CE/CCE-distance views report replicate means.
 
-One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Ordinary and action-scaling batches derive learner and environment seeds from distinct domains and the replicate index, while retaining the configured base seeds in their CSVs. Every experiment figure opens in the same viewer. Eligible figures have independent controls for switching between Student-t 95% confidence bands and cached mean-only figures; previews and PDF downloads always use the same selection.
+One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Ordinary and action-scaling batches derive learner and environment seeds from distinct domains and the replicate index, while retaining the configured base seeds in their CSVs. Every experiment figure opens in the same viewer. Figures show means without confidence bands; previews and PDF downloads use the same selection.
 
-The sidebar configures the next run. The global result filters control saved figures, summaries, and analysis: choosing one game shows its CE/CCE analysis, choosing one environment shows its rule, and choosing **All** hides the analysis panel. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
+The sidebar configures the next run. The global result filters control saved figures, summaries, and analysis: game, feedback, player, regret, view, and algorithm-profile selections apply across Figure Builder and final summaries. In one-player mode, choosing one environment shows its rule and choosing **All** hides that rule panel. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
 
 ## Figures and Data
 
-PNG previews have matching vector PDFs. Regret plots update after a run; a manual rebuild uses the same background queue and refreshes the page when finished. Detail figures are generated lazily and cached. Custom-game equilibrium heatmaps stay with the game; built-in heatmaps can be rebuilt with `make precompute-equilibria`.
+PNG previews have matching vector PDFs. Regret plots update after a run; a manual rebuild uses the same background queue and refreshes the page when finished. Detail figures are generated lazily and cached. Result details retain mean empirical joint-action heatmaps for supported two-player games and asynchronously computed full-space CE/CCE convergence figures.
 
-In **Visual analysis**, **Download merged PDF** combines the currently filtered regret figures in their displayed order, honoring each figure's confidence-interval toggle. Existing PDF pages are preserved; older PNG-only figures are converted to PDF pages. Exporting does not rerun experiments or rebuild plots.
+**Figure Builder** generates all three regrets and both views together, sharing loaded replicate data. The collected-PDF download combines the currently filtered figures in their displayed order. Existing PDF pages are preserved; older PNG-only figures are converted to PDF pages. Exporting does not rerun experiments or rebuild plots.
 
 | Location | Contents |
 |---|---|
@@ -36,10 +36,9 @@ In **Visual analysis**, **Download merged PDF** combines the currently filtered 
 | `results/figures/` | Regret and detail figures |
 | `results/adversarial/` | Stress-test CSVs and figures |
 | `results/cache/` | Regenerable plot and equilibrium-distance caches |
-| `data/custom_games/` | Custom games and cached heatmaps |
-| `web/static/equilibria/` | Built-in equilibrium assets |
+| `data/custom_games/` | Saved custom games |
 
-`make reset` removes experiment CSVs, figures, and their row cache, but keeps custom games, heatmaps, static assets, and equilibrium-distance caches. **Clear results** in the one-player mode removes both its CSVs and figures. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
+`make reset` removes experiment CSVs, figures, and their row cache, but keeps custom games and equilibrium-distance caches. **Clear results** in the one-player mode removes both its CSVs and figures. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
 
 POST parameters, CSRF tokens, and filenames are validated. For a stable session secret across restarts:
 

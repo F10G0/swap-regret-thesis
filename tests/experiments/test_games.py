@@ -120,7 +120,7 @@ def test_fixed_games_do_not_import_external_game_constructors() -> None:
     import subprocess
     import sys
 
-    # The separate CE/CCE adapter still needs the external utils package.
+    # Guard against reintroducing external constructors into the local fixtures.
     script = """
 import importlib.abc
 import sys

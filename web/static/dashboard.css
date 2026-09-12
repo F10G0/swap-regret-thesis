@@ -730,12 +730,6 @@ fieldset {
     margin-top: 18px;
 }
 
-.equilibrium-explanation {
-    max-width: 850px;
-    margin: 12px 0 0;
-    color: var(--muted);
-}
-
 .results-toolbar {
     display: grid;
     gap: 18px;
@@ -807,26 +801,6 @@ fieldset {
     border-top: 1px solid var(--border);
 }
 
-.equilibrium-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-    margin-top: 18px;
-}
-
-.equilibrium-card {
-    min-width: 0;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface-muted);
-}
-
-.equilibrium-card h3 {
-    margin: 0 0 8px;
-    font-size: 0.9rem;
-}
-
 .heatmap-frame {
     position: relative;
     overflow: hidden;
@@ -863,17 +837,6 @@ fieldset {
 .heatmap-frame.is-loading img,
 .heatmap-frame.has-error img {
     opacity: 0;
-}
-
-.equilibrium-card a {
-    display: inline-block;
-    margin-top: 7px;
-    font-size: 0.75rem;
-}
-
-.equilibrium-card a.is-disabled {
-    pointer-events: none;
-    opacity: 0.5;
 }
 
 .figure-card {
@@ -1174,7 +1137,6 @@ tbody tr:hover {
     .players,
     .filter-grid,
     .shared-result-filters,
-    .equilibrium-grid,
     .figure-grid,
     .detail-figure-grid,
     .detail-regrets {

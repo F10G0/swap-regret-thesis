@@ -158,54 +158,6 @@ assert(!matchesResultFilters(record, null));'''
     assert result.returncode == 0, result.stderr
 
 
-def test_game_analysis_follows_the_global_game_filter() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is unavailable")
-    path = Path(__file__).parents[2] / "web" / "static" / "dashboard.js"
-    script = r'''const source = require("fs").readFileSync(process.argv[1], "utf8");
-const extract = (name) => {
-    const start = source.indexOf(`function ${name}`);
-    const body = source.indexOf("{", start);
-    let depth = 0;
-    for (let index = body; index < source.length; index += 1) {
-        if (source[index] === "{") depth += 1;
-        if (source[index] === "}") depth -= 1;
-        if (depth === 0) return source.slice(start, index + 1);
-    }
-};
-const elements = {
-    "filter-scope": {value: "all"},
-    "equilibrium-panel": {hidden: false, open: false},
-    "equilibrium-game": {textContent: ""},
-    "equilibrium-grid": {hidden: true},
-    "equilibrium-explanation": {hidden: true},
-    "equilibrium-unavailable": {hidden: false},
-};
-global.element = (id) => elements[id] || null;
-global.dashboardData = {
-    equilibriumFigures: {rps: {ce: {}, cce: {}}},
-    gamePresentations: {rps: {label: "Rock–Paper–Scissors", description: "RPS"}},
-};
-global.setHeatmapSource = () => {};
-eval(extract("gamePresentation"));
-eval(extract("selectedResultScope"));
-eval(extract("updateEquilibriumFigures"));
-updateEquilibriumFigures();
-if (!elements["equilibrium-panel"].hidden) process.exit(1);
-elements["filter-scope"].value = "rps";
-updateEquilibriumFigures();
-if (elements["equilibrium-panel"].hidden) process.exit(2);
-if (elements["equilibrium-game"].textContent !== "Rock–Paper–Scissors") process.exit(3);
-if (elements["equilibrium-grid"].hidden || elements["equilibrium-explanation"].hidden) process.exit(4);
-elements["filter-scope"].value = "all";
-updateEquilibriumFigures();
-if (!elements["equilibrium-panel"].hidden) process.exit(5);'''
-    result = subprocess.run([node, "-e", script, path], capture_output=True, text=True)
-
-    assert result.returncode == 0, result.stderr
-
-
 @pytest.mark.parametrize("terminal_status", ["succeeded", "failed", "cancelled"])
 def test_completed_job_offers_refresh_without_reloading_dashboard(terminal_status) -> None:
     node = shutil.which("node")
