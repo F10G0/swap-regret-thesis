@@ -22,7 +22,7 @@ CASES = [
 
 @pytest.mark.parametrize("url,form,method,mode", CASES)
 def test_queue_returns_job_without_redirect_for_background_submission(tmp_path, monkeypatch, url, form, method, mode):
-    app, service = create_test_app(tmp_path, experimental=False)
+    app, service = create_test_app(tmp_path)
     client = app.test_client()
     token = csrf_token(client)
     calls = []
@@ -51,7 +51,7 @@ def test_queue_returns_job_without_redirect_for_background_submission(tmp_path, 
 
 @pytest.mark.parametrize("url,form,method,mode", CASES)
 def test_background_queue_returns_validation_errors_in_place(tmp_path, url, form, method, mode):
-    app, service = create_test_app(tmp_path, experimental=False)
+    app, service = create_test_app(tmp_path)
     client = app.test_client()
     response = client.post(url, data=form | {"horizon": "0", "_csrf_token": csrf_token(client)},
                            headers={"Accept": "application/json"})
@@ -62,7 +62,7 @@ def test_background_queue_returns_validation_errors_in_place(tmp_path, url, form
 
 @pytest.mark.parametrize("error", [FileExistsError("already queued"), ServiceBusyError("busy"), ValueError("invalid")])
 def test_background_queue_preserves_duplicate_and_busy_errors(tmp_path, monkeypatch, error):
-    app, service = create_test_app(tmp_path, experimental=False)
+    app, service = create_test_app(tmp_path)
     client = app.test_client()
 
     def submit(_form):
@@ -75,7 +75,7 @@ def test_background_queue_preserves_duplicate_and_busy_errors(tmp_path, monkeypa
 
 
 def test_background_queue_still_requires_csrf(tmp_path):
-    app, service = create_test_app(tmp_path, experimental=False)
+    app, service = create_test_app(tmp_path)
     response = app.test_client().post("/", data=FIXED, headers={"Accept": "application/json"})
     assert response.status_code == 400
     assert service.jobs.recent() == []
@@ -83,7 +83,7 @@ def test_background_queue_still_requires_csrf(tmp_path):
 
 @pytest.mark.parametrize("url,form,method,mode", CASES)
 def test_queue_retains_plain_html_form_fallback(tmp_path, monkeypatch, url, form, method, mode):
-    app, service = create_test_app(tmp_path, experimental=False)
+    app, service = create_test_app(tmp_path)
     client = app.test_client()
     monkeypatch.setattr(service, method, lambda _form: Job("job123", "Experiment", "queued", "Waiting", "now"))
     response = client.post(url, data=form | {"_csrf_token": csrf_token(client)})

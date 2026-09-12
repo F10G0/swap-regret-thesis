@@ -4,9 +4,6 @@ import pytest
 from metrics.empirical_distribution import (
     default_checkpoints,
     empirical_distribution_trajectory,
-    final_interval_checkpoints,
-    final_logarithmic_interval_start,
-    mean_empirical_distribution_trajectory,
 )
 
 
@@ -47,61 +44,3 @@ def test_three_player_heterogeneous_trajectory_keeps_every_player() -> None:
 )
 def test_default_checkpoints_include_first_round_powers_of_ten_and_final(horizon: int, expected: list[int]) -> None:
     assert np.array_equal(default_checkpoints(horizon), expected)
-
-
-@pytest.mark.parametrize(
-    ("horizon", "segments", "expected"),
-    [
-        (1, 4, [1]),
-        (7, 4, [1, 3, 4, 6, 7]),
-        (10, 4, [1, 3, 6, 8, 10]),
-        (6_500, 4, [1, 10, 100, 1_000, 2_375, 3_750, 5_125, 6_500]),
-        (10_000, 4, [1, 10, 100, 1_000, 3_250, 5_500, 7_750, 10_000]),
-        (10_000, 1, [1, 10, 100, 1_000, 10_000]),
-        (2, 50, [1, 2]),
-    ],
-)
-def test_final_interval_checkpoints_preserve_logs_and_subdivide_final_interval(
-    horizon: int,
-    segments: int,
-    expected: list[int],
-) -> None:
-    checkpoints = final_interval_checkpoints(horizon, segments)
-
-    assert np.array_equal(checkpoints, expected)
-    assert np.array_equal(
-        checkpoints,
-        final_interval_checkpoints(horizon, segments),
-    )
-    assert np.all(np.diff(checkpoints) > 0)
-    assert checkpoints[-1] == horizon
-
-
-@pytest.mark.parametrize(
-    ("horizon", "expected"),
-    [(1, 1), (7, 1), (10, 1), (1_000, 100), (6_500, 1_000)],
-)
-def test_final_logarithmic_interval_start_is_strictly_before_horizon(
-    horizon: int,
-    expected: int,
-) -> None:
-    assert final_logarithmic_interval_start(horizon) == expected
-
-
-@pytest.mark.parametrize("segments", [0, -1, 1.5])
-def test_final_interval_segments_must_be_positive_integers(
-    segments,
-) -> None:
-    with pytest.raises(ValueError, match="final_interval_segments"):
-        final_interval_checkpoints(100, segments)
-
-
-def test_mean_empirical_trajectory_averages_matching_replicates() -> None:
-    first = empirical_distribution_trajectory([(0, 0), (0, 0)], (2, 2), [1, 2])
-    second = empirical_distribution_trajectory([(1, 1), (1, 1)], (2, 2), [1, 2])
-
-    mean = mean_empirical_distribution_trajectory([first, second])
-
-    assert np.array_equal(mean.horizons, np.array([1, 2]))
-    assert np.allclose(mean.distributions[:, 0, 0], 0.5)
-    assert np.allclose(mean.distributions[:, 1, 1], 0.5)

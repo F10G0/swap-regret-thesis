@@ -170,7 +170,6 @@ class DashboardService:
         from web.figure_builder import FigureBuilder
 
         self.figure_builder = FigureBuilder(self)
-        self._experimental_trajectory_dashboard = None
         self._detail_figure_lock = Lock()
         self._equilibrium_figure_lock = Lock()
         self._detail_figure_generation = 0
@@ -221,19 +220,6 @@ class DashboardService:
 
     def supports_equilibrium_distance(self, game_name: str) -> bool:
         return game_name in self.game_definitions
-
-    @property
-    def experimental_trajectory(self):
-        """Load the opt-in trajectory service only when explicitly used."""
-        if self._experimental_trajectory_dashboard is None:
-            from experimental.equilibrium_trajectory.dashboard import (
-                ExperimentalTrajectoryDashboard,
-            )
-
-            self._experimental_trajectory_dashboard = (
-                ExperimentalTrajectoryDashboard(self)
-            )
-        return self._experimental_trajectory_dashboard
 
     def custom_games(self) -> tuple[list[GameDefinition], list[str]]:
         return self.game_catalog.custom_definitions()
@@ -1135,8 +1121,6 @@ class DashboardService:
         return output_path
 
     def _invalidate_detail_figures(self) -> None:
-        if self._experimental_trajectory_dashboard is not None:
-            self._experimental_trajectory_dashboard.invalidate()
         with self._convergence_future_lock:
             for future in self._convergence_futures.values():
                 future.cancel()

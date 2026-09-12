@@ -28,5 +28,13 @@ swap-regret-web = "web.app:main"
 [tool.setuptools]
 py-modules = ["config"]
 
+[tool.setuptools.packages.find]
+include = ["algorithms*", "environments*", "experiments*", "metrics*", "web*"]
+exclude = ["tests*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+web = ["templates/*.html", "static/*.css", "static/*.js", "static/equilibria/*.png", "static/equilibria/*.pdf"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

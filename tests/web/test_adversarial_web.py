@@ -38,7 +38,7 @@ ENVIRONMENTS = {HISTORICAL_FREQUENCY_ENVIRONMENT, RANDOM_WALK_ENVIRONMENT}
 
 
 def _app(tmp_path: Path):
-    return create_test_app(tmp_path, experimental=False, max_replicates=10, disable_adversarial_plots=True)
+    return create_test_app(tmp_path, max_replicates=10, disable_adversarial_plots=True)
 
 
 def _opening_tag(page: str, element_id: str) -> str:
@@ -230,7 +230,6 @@ def test_adversarial_algorithm_options_follow_feedback_mode(tmp_path, algorithm)
 def test_adversarial_page_runs_action_space_scaling_batch(tmp_path) -> None:
     app, service = create_test_app(
         tmp_path,
-        experimental=False,
         max_replicates=10,
     )
     client = app.test_client()

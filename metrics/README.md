@@ -22,7 +22,7 @@ Replicate regret curves and final summaries report the sample mean with pointwis
 
 ## Empirical Play and Equilibria
 
-`empirical_distribution_trajectory(...)` converts joint-action histories into full joint-distribution vectors at deterministic checkpoints. The optional comparison view adds checkpoints within the final logarithmic interval; see the [experimental guide](../experimental/equilibrium_trajectory/README.md).
+`empirical_distribution_trajectory(...)` converts joint-action histories into full joint-distribution vectors at deterministic checkpoints.
 
 The pinned `games_learning` LP adapter uses `coarse=False` for CE and `coarse=True` for CCE. Its main operations are:
 

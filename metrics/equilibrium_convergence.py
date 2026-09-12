@@ -1,8 +1,6 @@
 """Full-space CE/CCE convergence metrics.
 
-Projected trajectories deliberately live in
-``experimental.equilibrium_trajectory``.  This module contains only the
-authoritative distance-vs-horizon evidence used by the core analysis.
+Authoritative distance-vs-horizon evidence for the production analysis.
 """
 
 from dataclasses import dataclass

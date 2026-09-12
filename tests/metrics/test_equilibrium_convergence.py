@@ -51,6 +51,22 @@ def test_distance_aggregation_requires_a_replicate() -> None:
         aggregate_equilibrium_distance_trajectories([])
 
 
+@pytest.mark.parametrize("n_players", [3, 4])
+def test_full_space_convergence_supports_multiple_players(n_players):
+    from metrics.empirical_distribution import empirical_distribution_trajectory
+    from metrics.equilibrium_convergence import equilibrium_distance_trajectory
+
+    action_shape = (2,) * n_players
+    payoffs = np.zeros((n_players, *action_shape))
+    empirical = empirical_distribution_trajectory(
+        [(0,) * n_players, (1,) * n_players], action_shape, checkpoints=[1, 2],
+    )
+    distances = equilibrium_distance_trajectory(payoffs, empirical)
+    np.testing.assert_array_equal(distances.horizons, [1, 2])
+    np.testing.assert_array_equal(distances.ce, [0.0, 0.0])
+    np.testing.assert_array_equal(distances.cce, [0.0, 0.0])
+
+
 def test_trajectory_prepares_once_per_concept_and_uses_only_scalar_objectives(monkeypatch):
     from types import SimpleNamespace
     import metrics.equilibrium_convergence as module

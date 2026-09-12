@@ -16,9 +16,8 @@ RESULTS_DIR ?= results
 RAW_DIR ?= $(RESULTS_DIR)/raw
 FIGURE_DIR ?= $(RESULTS_DIR)/figures
 ADVERSARIAL_DIR ?= $(RESULTS_DIR)/adversarial
-EXPERIMENTAL_TRAJECTORIES ?= 0
 
-.PHONY: help all install install-experimental
+.PHONY: help all install
 .PHONY: web plot precompute-equilibria
 .PHONY: test clean reset
 
@@ -27,15 +26,12 @@ EXPERIMENTAL_TRAJECTORIES ?= 0
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n"} /^##@ / {printf "\n%s:\n", substr($$0, 5)} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-all: install plot ## Install the default build and refresh existing plots
+all: install plot ## Install and refresh existing plots
 
 ##@ Setup
 
-install: ## Install project and tests without experimental trajectories
-	EXPERIMENTAL_TRAJECTORIES="$(EXPERIMENTAL_TRAJECTORIES)" $(PIP) install --requirement "$(LOCKFILE)"
-
-install-experimental: EXPERIMENTAL_TRAJECTORIES := 1
-install-experimental: install ## Install project and tests with experimental trajectories
+install: ## Install project and tests
+	$(PIP) install --requirement "$(LOCKFILE)"
 
 ##@ Run
 

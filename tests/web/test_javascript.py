@@ -124,7 +124,7 @@ eval(source.slice(start, end));
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("filename", ["common.js", "dashboard.js", "custom_games.js", "experimental_trajectory.js", "figure_builder.js"])
+@pytest.mark.parametrize("filename", ["common.js", "dashboard.js", "custom_games.js", "figure_builder.js"])
 def test_web_javascript_parses(filename: str) -> None:
     node = shutil.which("node")
     if node is None:

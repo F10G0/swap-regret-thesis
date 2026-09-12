@@ -9,7 +9,7 @@ from tests.web.support import create_test_app, csrf_token
 
 @pytest.fixture
 def export_app(tmp_path):
-    app, service = create_test_app(tmp_path, experimental=False)
+    app, service = create_test_app(tmp_path)
     return app, service
 
 

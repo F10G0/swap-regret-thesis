@@ -1,55 +1,22 @@
-import ast
+import importlib
 from pathlib import Path
-import subprocess
-import sys
+
+from tests.web.support import create_test_app
 
 
-CORE_PATHS = (
-    Path("algorithms"),
-    Path("environments"),
-    Path("experiments"),
-    Path("metrics"),
-    Path("main.py"),
-)
+def test_core_packages_import_from_the_current_project():
+    root = Path.cwd().resolve()
+    for name in ("algorithms", "environments", "experiments", "metrics", "web"):
+        module = importlib.import_module(name)
+        assert Path(module.__file__).resolve().is_relative_to(root)
 
 
-def _python_files(path: Path):
-    if path.is_file():
-        yield path
-    else:
-        yield from path.rglob("*.py")
-
-
-def test_core_modules_do_not_import_experimental_subsystem() -> None:
-    violations = []
-    for root in CORE_PATHS:
-        for path in _python_files(root):
-            tree = ast.parse(path.read_text(encoding="utf-8"), path)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    modules = [alias.name for alias in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    modules = [node.module or ""]
-                else:
-                    continue
-                for module in modules:
-                    if module == "experimental" or module.startswith(
-                        "experimental."
-                    ):
-                        violations.append(f"{path}:{node.lineno}")
-    assert violations == []
-
-
-def test_normal_dashboard_startup_does_not_import_trajectory_package() -> None:
-    source = (
-        "import sys; import web.app; "
-        "assert not any(name == 'experimental' or "
-        "name.startswith('experimental.') for name in sys.modules), "
-        "sorted(name for name in sys.modules if "
-        "name.startswith('experimental'))"
-    )
-    subprocess.run(
-        [sys.executable, "-c", source],
-        check=True,
-        cwd=Path.cwd(),
-    )
+def test_dashboard_has_one_application_blueprint(tmp_path):
+    app, _ = create_test_app(tmp_path)
+    assert set(app.blueprints) == {"dashboard"}
+    endpoints = {rule.endpoint for rule in app.url_map.iter_rules()}
+    assert all(endpoint == "static" or endpoint.startswith("dashboard.") for endpoint in endpoints)
+    client = app.test_client()
+    assert client.get("/").status_code == 200
+    assert client.get("/?mode=adversarial").status_code == 200
+    assert client.get("/custom-games").status_code == 200

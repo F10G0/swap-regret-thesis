@@ -42,63 +42,6 @@ def default_checkpoints(horizon: int) -> np.ndarray:
     return np.array(sorted(set(checkpoints)), dtype=int)
 
 
-def final_logarithmic_interval_start(horizon: int) -> int:
-    """Return the largest power of ten strictly smaller than ``horizon``."""
-    try:
-        horizon = index(horizon)
-    except TypeError as error:
-        raise ValueError("horizon must be a positive integer") from error
-    if horizon <= 0:
-        raise ValueError("horizon must be a positive integer")
-    interval_start = 1
-    while 10 * interval_start < horizon:
-        interval_start *= 10
-    return interval_start
-
-
-def final_interval_checkpoints(
-    horizon: int,
-    final_interval_segments: int,
-) -> np.ndarray:
-    """Keep logarithmic history and subdivide only the final log interval."""
-    try:
-        horizon = index(horizon)
-        final_interval_segments = index(final_interval_segments)
-    except TypeError as error:
-        raise ValueError(
-            "horizon and final_interval_segments must be positive integers"
-        ) from error
-    if horizon <= 0 or final_interval_segments <= 0:
-        raise ValueError(
-            "horizon and final_interval_segments must be positive integers"
-        )
-    if horizon == 1:
-        return np.array([1], dtype=int)
-
-    interval_start = final_logarithmic_interval_start(horizon)
-    checkpoints = []
-    logarithmic = 1
-    while logarithmic <= interval_start:
-        checkpoints.append(logarithmic)
-        logarithmic *= 10
-
-    interval_width = horizon - interval_start
-    for segment in range(1, final_interval_segments + 1):
-        numerator = (
-            interval_start * final_interval_segments
-            + segment * interval_width
-        )
-        # Round to the nearest integer; exact halves round upward.
-        endpoint = (
-            numerator + final_interval_segments // 2
-        ) // final_interval_segments
-        if endpoint > checkpoints[-1]:
-            checkpoints.append(endpoint)
-    if checkpoints[-1] != horizon:
-        checkpoints.append(horizon)
-    return np.asarray(checkpoints, dtype=int)
-
-
 def _validated_checkpoints(checkpoints: Iterable[int] | None, horizon: int) -> np.ndarray:
     if checkpoints is None:
         return default_checkpoints(horizon)
@@ -132,18 +75,3 @@ def empirical_distribution_trajectory(action_profiles: Iterable[Sequence[int]], 
             vectors[position] = counts / horizon
 
     return EmpiricalDistributionTrajectory(shape, horizons, vectors)
-
-
-def mean_empirical_distribution_trajectory(
-    trajectories: Sequence[EmpiricalDistributionTrajectory],
-) -> EmpiricalDistributionTrajectory:
-    if not trajectories:
-        raise ValueError("at least one empirical trajectory is required")
-    first = trajectories[0]
-    for trajectory in trajectories[1:]:
-        if trajectory.action_shape != first.action_shape or not np.array_equal(trajectory.horizons, first.horizons):
-            raise ValueError("empirical trajectories must have matching action shapes and horizons")
-        if trajectory.vectors.shape != first.vectors.shape:
-            raise ValueError("empirical trajectories must have matching vector shapes")
-    vectors = np.mean([trajectory.vectors for trajectory in trajectories], axis=0)
-    return EmpiricalDistributionTrajectory(first.action_shape, first.horizons.copy(), vectors)

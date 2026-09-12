@@ -17,10 +17,6 @@ from web.presentations import GAME_PRESENTATIONS
 from web.result_groups import aggregate_result_summaries
 from web.services import DashboardService, PlotUpdateError
 from tests.web.support import block_job_queue, create_service, wait_for_async_result, wait_for_job
-from experimental.equilibrium_trajectory.web_models import (
-    comparison_member_colors,
-    stable_member_color,
-)
 from web.validation import ExperimentForm
 
 
@@ -28,23 +24,6 @@ def write_figure_pair(output_path, content: bytes) -> None:
     output_path = Path(output_path)
     output_path.write_bytes(content)
     output_path.with_suffix(".pdf").write_bytes(content)
-
-
-def wait_for_trajectory_comparison(
-    service: DashboardService,
-    group_ids: list[str],
-    final_interval_segments: int = 4,
-    focus_final_interval: bool = False,
-    comparison_view: str = "geometry",
-):
-    return wait_for_async_result(
-        lambda: service.experimental_trajectory.request(
-            group_ids,
-            final_interval_segments,
-            focus_final_interval,
-            comparison_view,
-        )
-    )
 
 
 def wait_for_equilibrium_figure(request_figure):
@@ -713,7 +692,7 @@ def test_replicate_group_equilibrium_figures_share_computation_and_use_paired_ca
     assert first_path.with_suffix(".pdf").read_bytes() == b"mean distance"
 
 
-def test_core_distance_generation_does_not_load_experimental_trajectory(
+def test_single_run_distance_generation_requests_one_render(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -728,7 +707,7 @@ def test_core_distance_generation_does_not_load_experimental_trajectory(
     def fake_distance(input_paths, output_path, **kwargs) -> None:
         nonlocal calls
         calls += 1
-        write_figure_pair(output_path, b"trajectory 20")
+        write_figure_pair(output_path, b"distance curve")
 
     monkeypatch.setattr(
         plot_equilibrium_convergence,
@@ -736,7 +715,6 @@ def test_core_distance_generation_does_not_load_experimental_trajectory(
         fake_distance,
     )
 
-    assert service._experimental_trajectory_dashboard is None
     generated, error = wait_for_equilibrium_figure(
         lambda: service.request_equilibrium_convergence_figure(result_path.name)
     )
@@ -744,7 +722,6 @@ def test_core_distance_generation_does_not_load_experimental_trajectory(
     assert calls == 1
     assert error is None
     assert generated is not None
-    assert service._experimental_trajectory_dashboard is None
 
 
 @pytest.mark.parametrize("grouped", [False, True])
@@ -781,310 +758,6 @@ def test_annotated_equilibrium_figures_bypass_old_render_cache_without_deleting_
     assert legacy_path.read_bytes() == legacy_path.with_suffix(".pdf").read_bytes() == b"old unannotated figure"
     assert wait_for_equilibrium_figure(request_figure) == (generated, None)
     assert len(calls) == 1
-
-
-def test_trajectory_comparison_candidates_expose_exact_replicate_seed_protocol(
-    tmp_path: Path,
-) -> None:
-    service = create_service(tmp_path)
-    for algorithms in (
-        ["hedge", "hedge"],
-        ["regret_matching", "regret_matching"],
-    ):
-        for replicate in (0, 1):
-            run_full_information_cross_play_experiment(
-                game_name="rps",
-                algorithm_names=algorithms,
-                horizon=3,
-                seed=42,
-                replicate=replicate,
-                output_dir=service.raw_dir,
-            )
-
-    candidates = service.experimental_trajectory.candidates()
-
-    assert len(candidates) == 2
-    for candidate in candidates:
-        assert candidate["replicate_count"] == 2
-        assert candidate["replicate_indices"] == [0, 1]
-        assert candidate["player_seed_schedule"] == [
-            [42, 43],
-            [44, 45],
-        ]
-        assert candidate["compatibility_key"][-3:] == (
-            2,
-            (0, 1),
-            ((42, 43), (44, 45)),
-        )
-
-
-def test_comparison_colors_are_order_independent_and_high_contrast() -> None:
-    group_ids = ["f", "a", "d", "b", "e", "c"]
-
-    colors = comparison_member_colors(group_ids)
-    reversed_colors = comparison_member_colors(reversed(group_ids))
-
-    assert colors == reversed_colors
-    assert list(colors) == sorted(group_ids)
-    assert list(colors.values()) == [
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#d62728",
-        "#9467bd",
-        "#8c564b",
-    ]
-    assert len(set(colors.values())) == len(group_ids)
-    assert comparison_member_colors(["only"]) == {
-        "only": stable_member_color("only")
-    }
-    overflow_colors = comparison_member_colors(
-        f"member-{position:02d}" for position in range(24)
-    )
-    assert len(set(overflow_colors.values())) == 24
-
-
-def test_trajectory_comparison_rejects_different_replicate_populations(
-    tmp_path: Path,
-) -> None:
-    service = create_service(tmp_path)
-    for replicate in (0, 1):
-        run_full_information_cross_play_experiment(
-            game_name="rps",
-            algorithm_names=["hedge", "hedge"],
-            horizon=3,
-            seed=42,
-            replicate=replicate,
-            output_dir=service.raw_dir,
-        )
-    run_full_information_cross_play_experiment(
-        game_name="rps",
-        algorithm_names=["regret_matching", "regret_matching"],
-        horizon=3,
-        seed=42,
-        replicate=0,
-        output_dir=service.raw_dir,
-    )
-    group_ids = [
-        candidate["group_id"]
-        for candidate in service.experimental_trajectory.candidates()
-    ]
-
-    with pytest.raises(ValueError, match="replicate count"):
-        service.experimental_trajectory.request(group_ids)
-
-
-def test_trajectory_comparison_cache_is_order_independent_and_colors_are_authoritative(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    from experimental.equilibrium_trajectory import dashboard as trajectory_dashboard
-
-    service = create_service(tmp_path)
-    for algorithms in (
-        ["hedge", "hedge"],
-        ["regret_matching", "regret_matching"],
-    ):
-        run_full_information_cross_play_experiment(
-            game_name="rps",
-            algorithm_names=algorithms,
-            horizon=3,
-            seed=42,
-            replicate=0,
-            output_dir=service.raw_dir,
-        )
-    candidates = service.experimental_trajectory.candidates()
-    group_ids = [candidate["group_id"] for candidate in candidates]
-    captured_members = []
-
-    def fake_comparison(members, output_path, **kwargs):
-        captured_members.extend(members)
-        write_figure_pair(output_path, b"comparison")
-
-    monkeypatch.setattr(
-        trajectory_dashboard,
-        "plot_result_equilibrium_trajectory_comparison",
-        fake_comparison,
-    )
-    forward = service.experimental_trajectory.definition(
-        group_ids,
-        4,
-        True,
-    )
-    reverse = service.experimental_trajectory.definition(
-        list(reversed(group_ids)),
-        4,
-        True,
-    )
-    result, error = wait_for_trajectory_comparison(
-        service,
-        list(reversed(group_ids)),
-        final_interval_segments=4,
-        focus_final_interval=True,
-    )
-
-    assert error is None
-    assert result is not None
-    assert forward.artifact_id == reverse.artifact_id
-    assert [member.group_id for member in forward.members] == sorted(group_ids)
-    assert [member.member_id for member in captured_members] == sorted(group_ids)
-    from experiments.plots.style import algorithm_style
-    assert [member.color for member in captured_members] == [
-        algorithm_style(member.algorithm_profile[0])["color"] for member in captured_members
-    ]
-    response_members = result.public_data("/comparison.png")["members"]
-    assert [member["group_id"] for member in response_members] == sorted(group_ids)
-    assert [member["color"] for member in response_members] == [
-        member.color for member in captured_members
-    ]
-    assert result.output_path.with_suffix(".pdf").is_file()
-    assert result.output_path.read_bytes() == b"comparison"
-
-
-def test_trajectory_comparison_views_have_distinct_cache_ids_and_share_colors(
-    tmp_path: Path,
-) -> None:
-    service = create_service(tmp_path)
-    for algorithms in (
-        ["hedge", "hedge"],
-        ["regret_matching", "regret_matching"],
-    ):
-        run_full_information_cross_play_experiment(
-            game_name="rps",
-            algorithm_names=algorithms,
-            horizon=3,
-            seed=42,
-            replicate=0,
-            output_dir=service.raw_dir,
-        )
-    group_ids = [
-        candidate["group_id"]
-        for candidate in service.experimental_trajectory.candidates()
-    ]
-
-    default_geometry = service.experimental_trajectory.definition(
-        group_ids,
-        4,
-        True,
-    )
-    explicit_geometry = service.experimental_trajectory.definition(
-        list(reversed(group_ids)),
-        4,
-        True,
-        "geometry",
-    )
-    unified = service.experimental_trajectory.definition(
-        group_ids,
-        4,
-        True,
-        "unified",
-    )
-
-    assert default_geometry.artifact_id == explicit_geometry.artifact_id
-    assert unified.artifact_id != explicit_geometry.artifact_id
-    assert default_geometry.comparison_view == "geometry"
-    assert unified.comparison_view == "unified"
-    assert [member.color for member in unified.members] == [
-        member.color for member in default_geometry.members
-    ]
-
-
-def test_unified_service_generation_passes_view_without_using_geometry_cache(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    from experimental.equilibrium_trajectory import dashboard as trajectory_dashboard
-
-    service = create_service(tmp_path)
-    run_full_information_cross_play_experiment(
-        game_name="rps",
-        algorithm_names=["hedge", "hedge"],
-        horizon=3,
-        seed=42,
-        replicate=0,
-        output_dir=service.raw_dir,
-    )
-    group_id = service.experimental_trajectory.candidates()[0]["group_id"]
-    received = []
-
-    def fake_comparison(members, output_path, **kwargs):
-        received.append(kwargs)
-        write_figure_pair(output_path, b"unified")
-
-    monkeypatch.setattr(
-        trajectory_dashboard,
-        "plot_result_equilibrium_trajectory_comparison",
-        fake_comparison,
-    )
-
-    result, error = wait_for_trajectory_comparison(
-        service,
-        [group_id],
-        comparison_view="unified",
-    )
-
-    assert error is None
-    assert result is not None
-    assert result.definition.comparison_view == "unified"
-    assert received[0]["comparison_view"] == "unified"
-    assert result.public_data("/comparison.png")["comparison_view"] == "unified"
-
-
-def test_equilibrium_distance_is_available_before_projected_regions_finish(tmp_path: Path, monkeypatch) -> None:
-    from experiments.plots import plot_equilibrium_convergence
-    from experimental.equilibrium_trajectory import dashboard as trajectory_dashboard
-
-    service = create_service(tmp_path)
-    result_path = run_full_information_cross_play_experiment(
-        game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir
-    )
-    trajectory_started = Event()
-    release_trajectory = Event()
-
-    def plot_distance(input_path, output_path, **kwargs) -> None:
-        write_figure_pair(output_path, b"distance")
-
-    def plot_trajectory(members, output_path, **kwargs) -> None:
-        trajectory_started.set()
-        assert release_trajectory.wait(timeout=2)
-        write_figure_pair(output_path, b"trajectory")
-
-    monkeypatch.setattr(
-        plot_equilibrium_convergence,
-        "plot_result_equilibrium_distance",
-        plot_distance,
-    )
-    monkeypatch.setattr(
-        trajectory_dashboard,
-        "plot_result_equilibrium_trajectory_comparison",
-        plot_trajectory,
-    )
-
-    group_id = service.experimental_trajectory.candidates()[0]["group_id"]
-    assert service.experimental_trajectory.request([group_id]) == (
-        None,
-        None,
-    )
-    assert trajectory_started.wait(timeout=1)
-
-    first_path, first_error = service.request_equilibrium_convergence_figure(result_path.name)
-    assert (first_path, first_error) == (None, None)
-
-    distance_path, distance_error = wait_for_async_result(
-        lambda: service.request_equilibrium_convergence_figure(result_path.name),
-        timeout=1,
-    )
-    assert distance_error is None
-    assert distance_path is not None
-    assert distance_path.read_bytes() == b"distance"
-
-    release_trajectory.set()
-    result, trajectory_error = wait_for_async_result(
-        lambda: service.experimental_trajectory.request([group_id]),
-        timeout=2,
-    )
-    assert trajectory_error is None
-    assert result.output_path.read_bytes() == b"trajectory"
 
 
 def test_equilibrium_heatmap_uses_persistent_precomputed_asset(tmp_path: Path) -> None:

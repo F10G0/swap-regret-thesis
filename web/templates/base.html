@@ -27,9 +27,6 @@
         <nav class="site-navigation" aria-label="Main navigation">
             <a href="{{ url_for('dashboard.index') }}" {% if request.endpoint == 'dashboard.index' %}aria-current="page"{% endif %}>Experiments</a>
             <a href="{{ url_for('dashboard.custom_games') }}" {% if request.endpoint and request.endpoint.startswith('dashboard.custom') %}aria-current="page"{% endif %}>Custom games</a>
-            {% if experimental_trajectories_enabled %}
-                <a href="{{ url_for('experimental_trajectory.workspace') }}" {% if request.blueprint == 'experimental_trajectory' %}aria-current="page"{% endif %}>Trajectories</a>
-            {% endif %}
         </nav>
         <label class="theme-control" for="primary-theme">
             <span>Theme</span>

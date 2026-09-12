@@ -20,7 +20,6 @@ def create_service(tmp_path: Path) -> DashboardService:
 def create_test_app(
     tmp_path: Path,
     *,
-    experimental: bool = True,
     max_replicates: int = 100,
     disable_adversarial_plots: bool = False,
 ):
@@ -33,8 +32,6 @@ def create_test_app(
         "MAX_HORIZON": 100,
         "MAX_REPLICATES": max_replicates,
     }
-    if experimental:
-        config["TEST_ENABLE_EXPERIMENTAL_TRAJECTORIES"] = True
     return create_app(config, service=service), service
 
 

@@ -16,11 +16,6 @@ from web.validation import (
     parse_positive_integer,
     validate_leaf_filename,
 )
-from experimental.equilibrium_trajectory.settings import (
-    parse_final_interval_segments,
-    parse_focus_final_interval,
-    parse_trajectory_comparison_view,
-)
 
 
 VALID_FORM = {
@@ -42,10 +37,6 @@ RETIRED_GAME_IDS = (
 )
 
 
-def wait_for_trajectory_comparison(client, url: str):
-    return wait_for_http_response(client, url, headers={"Accept": "application/json"}, timeout=10)
-
-
 @pytest.mark.parametrize("value", ["0", "-1"])
 def test_positive_integer_validation(value: str) -> None:
     with pytest.raises(ValueError, match="positive"):
@@ -55,40 +46,6 @@ def test_positive_integer_validation(value: str) -> None:
 def test_positive_integer_enforces_maximum() -> None:
     with pytest.raises(ValueError, match="must not exceed 100"):
         parse_positive_integer("101", "horizon", maximum=100)
-
-
-@pytest.mark.parametrize(("value", "expected"), [(None, 10), ("1", 1), ("50", 50)])
-def test_final_interval_segment_validation_accepts_supported_values(value: str | None, expected: int) -> None:
-    assert parse_final_interval_segments(value) == expected
-
-
-@pytest.mark.parametrize("value", ["0", "51", "invalid"])
-def test_final_interval_segment_validation_rejects_unsupported_values(value: str) -> None:
-    with pytest.raises(ValueError, match="final interval segments"):
-        parse_final_interval_segments(value)
-
-
-@pytest.mark.parametrize(("value", "expected"), [(None, False), ("0", False), ("1", True)])
-def test_focus_final_interval_validation_accepts_boolean_query_values(value: str | None, expected: bool) -> None:
-    assert parse_focus_final_interval(value) is expected
-
-
-def test_focus_final_interval_validation_rejects_unknown_query_value() -> None:
-    with pytest.raises(ValueError, match="focus_final_interval"):
-        parse_focus_final_interval("true")
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [(None, "geometry"), ("geometry", "geometry"), ("unified", "unified")],
-)
-def test_trajectory_comparison_view_validation(value, expected) -> None:
-    assert parse_trajectory_comparison_view(value) == expected
-
-
-def test_trajectory_comparison_view_validation_rejects_unknown_mode() -> None:
-    with pytest.raises(ValueError, match="comparison_view"):
-        parse_trajectory_comparison_view("unknown")
 
 
 def test_experiment_form_rejects_algorithm_from_wrong_feedback_mode() -> None:
@@ -318,19 +275,6 @@ def test_dashboard_uses_compact_management_and_has_no_all_pairs_action(
     assert removed_route.status_code == 404
 
 
-def test_comparison_view_change_only_marks_pending_state() -> None:
-    script = Path("web/static/experimental_trajectory.js").read_text(
-        encoding="utf-8"
-    )
-    handler = script.split(
-        'listen("trajectory-comparison-view", "change",', 1
-    )[1].split("});", 1)[0]
-
-    assert "saveTrajectoryComparisonView" in handler
-    assert "updateTrajectoryComparisonDirtyState" in handler
-    assert "generateTrajectoryComparison" not in handler
-
-
 def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_path: Path) -> None:
     app, service = create_test_app(tmp_path)
     run_full_information_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
@@ -341,92 +285,23 @@ def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_pa
     payload = page.split('<script id="dashboard-data" type="application/json">', 1)[1].split("</script>", 1)[0]
     dashboard_data = json.loads(payload)
     summary = dashboard_data["summaries"][0]
-    assert "trajectoryComparisonCandidates" not in dashboard_data
-    assert service._experimental_trajectory_dashboard is None
-    workspace_response = client.get(
-        "/experimental/trajectory-comparisons"
-    )
-    workspace_page = workspace_response.get_data(as_text=True)
-    workspace_payload = workspace_page.split(
-        '<script id="experimental-trajectory-data" type="application/json">',
-        1,
-    )[1].split("</script>", 1)[0]
-    workspace_data = json.loads(workspace_payload)
-    candidate = workspace_data["trajectoryComparisonCandidates"][0]
-    assert not list(
-        service.detail_figure_dir.glob("trajectory_comparison_*.png")
-    )
     heatmap_response = client.get(summary["joint_actions_url"])
     distance_response, distance_statuses = wait_for_http_response(client, summary["equilibrium_distance_url"])
-    comparison_url = (
-        f"{workspace_data['trajectoryComparisonUrl']}?member={candidate['group_id']}"
-        "&final_interval_segments=6&focus_final_interval=0"
-    )
-    comparison_response, comparison_statuses = wait_for_trajectory_comparison(
-        client,
-        comparison_url,
-    )
-    comparison_payload = comparison_response.get_json()
-    trajectory_response = client.get(comparison_payload["image_url"])
-    unified_response, unified_statuses = wait_for_trajectory_comparison(
-        client,
-        f"{comparison_url}&comparison_view=unified",
-    )
-    unified_payload = unified_response.get_json()
-    unified_image_response = client.get(unified_payload["image_url"])
-
     assert dashboard_response.status_code == 200
     assert b"Reuse parameters" in dashboard_response.data
     assert b'id="detail-downloads"' in dashboard_response.data
     assert b"Equilibrium Convergence" in dashboard_response.data
-    assert b">Trajectories</a>" in dashboard_response.data
     assert b'class="results-toolbar"' in dashboard_response.data
     assert b'id="filter-summary-source"' not in dashboard_response.data
     assert b'data-regret-source=' not in dashboard_response.data
     assert b'data-metric="average_external"' in dashboard_response.data
     assert b'class="panel disclosure-panel equilibrium-panel"' in dashboard_response.data
-    assert b'id="trajectory-comparison-view"' not in dashboard_response.data
-    assert workspace_response.status_code == 200
-    assert b"Equilibrium Trajectory Comparison" in workspace_response.data
-    assert b'id="trajectory-comparison-view"' in workspace_response.data
-    assert b'Unified equilibrium-relative' in workspace_response.data
-    assert b'id="detail-equilibrium-trajectory-card"' not in dashboard_response.data
-    assert b'id="final-interval-segments"' in workspace_response.data
-    assert b'id="focus-final-interval"' in workspace_response.data
-    assert b"Focus final log interval" in workspace_response.data
-    assert b'min="1"' in workspace_response.data
-    assert b'max="50"' in workspace_response.data
-    assert "equilibrium_trajectory_url" not in summary
     assert dashboard_response.data.count(b"Loading heatmap") == 3
     assert heatmap_response.status_code == 200
     assert heatmap_response.content_type == "image/png"
-    assert 202 in distance_statuses + comparison_statuses + unified_statuses
+    assert distance_statuses[-1] == 200
     assert distance_response.status_code == 200
     assert distance_response.content_type == "image/png"
-    assert trajectory_response.status_code == 200
-    assert trajectory_response.content_type == "image/png"
-    assert comparison_payload["members"][0]["color"] == candidate["color"]
-    assert comparison_payload["comparison_view"] == "geometry"
-    assert unified_payload["comparison_view"] == "unified"
-    assert unified_payload["artifact_id"] != comparison_payload["artifact_id"]
-    assert unified_image_response.status_code == 200
-    assert unified_image_response.content_type == "image/png"
-    assert client.get(
-        f"{workspace_data['trajectoryComparisonUrl']}?member={candidate['group_id']}"
-        "&final_interval_segments=0"
-    ).status_code == 400
-    comparison_endpoint = workspace_data["trajectoryComparisonUrl"]
-    assert client.get(
-        f"{comparison_endpoint}?member={candidate['group_id']}"
-        "&focus_final_interval=true"
-    ).status_code == 400
-    assert client.get(
-        f"{comparison_endpoint}?final_interval_segments=6"
-    ).status_code == 400
-    assert client.get(
-        f"{comparison_endpoint}?member={candidate['group_id']}"
-        "&comparison_view=unknown"
-    ).status_code == 400
 
 
 def test_dashboard_combines_matching_replicates_and_retains_raw_downloads(tmp_path: Path) -> None:
@@ -869,38 +744,13 @@ def test_custom_three_player_dashboard_experiment_includes_equilibrium_convergen
     payload = page.split('<script id="dashboard-data" type="application/json">', 1)[1].split("</script>", 1)[0]
     dashboard_data = json.loads(payload)
     summary = next(summary for summary in dashboard_data["summaries"] if summary["game"] == definition.id)
-    workspace_page = client.get(
-        "/experimental/trajectory-comparisons"
-    ).get_data(as_text=True)
-    workspace_payload = workspace_page.split(
-        '<script id="experimental-trajectory-data" type="application/json">',
-        1,
-    )[1].split("</script>", 1)[0]
-    workspace_data = json.loads(workspace_payload)
-    candidate = next(
-        candidate
-        for candidate in workspace_data["trajectoryComparisonCandidates"]
-        if candidate["game"] == definition.id
-    )
     distance_response, _ = wait_for_http_response(client, summary["equilibrium_distance_url"])
-    comparison_response, _ = wait_for_trajectory_comparison(
-        client,
-        (
-            f"{workspace_data['trajectoryComparisonUrl']}?member={candidate['group_id']}"
-            "&final_interval_segments=2&focus_final_interval=1"
-        ),
-    )
-    trajectory_response = client.get(comparison_response.get_json()["image_url"])
-
     assert summary["n_players"] == 3
     assert summary["algorithm_profile"] == ["hedge", "hedge", "hedge"]
     assert summary["equilibrium_distance_url"].startswith("/experiment-groups/")
-    assert "equilibrium_trajectory_url" not in summary
     assert summary["joint_actions_url"] is None
     assert distance_response.status_code == 200
     assert distance_response.content_type == "image/png"
-    assert trajectory_response.status_code == 200
-    assert trajectory_response.content_type == "image/png"
     assert client.get(f"/experiments/{result_path.name}/joint-actions.png").status_code == 404
 
     service.clear_results()

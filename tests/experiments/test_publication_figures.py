@@ -70,16 +70,14 @@ def fixed_results(directory, bandit=False):
             for name in algorithms for replicate in (0, 1)]
 
 
-@pytest.mark.parametrize("family", ["rps", "bandit", "ilrw", "scaling", "distance", "joint", "weights", "trajectory", "comparison"])
+@pytest.mark.parametrize("family", ["rps", "bandit", "ilrw", "scaling", "distance", "joint", "weights"])
 def test_publication_figure_families(tmp_path, monkeypatch, family):
     module_name = {
         "rps": "plot_regret", "bandit": "plot_regret", "ilrw": "plot_adversarial",
         "scaling": "plot_adversarial_scaling", "distance": "plot_equilibrium_convergence",
         "joint": "plot_joint_actions", "weights": "plot_equilibrium_weights",
-        "trajectory": "rendering", "comparison": "rendering",
     }[family]
-    package = "experimental.equilibrium_trajectory." if module_name == "rendering" else "experiments.plots."
-    module = importlib.import_module(package + module_name)
+    module = importlib.import_module("experiments.plots." + module_name)
     captured = []
     original_save = module.save_figure_pair
 
@@ -111,16 +109,6 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
     elif family == "weights":
         from experiments.game_catalog import load_game_payoffs
         module.plot_equilibrium_profile_weights(load_game_payoffs("rps"), "ce", output)
-    elif family in {"trajectory", "comparison"}:
-        paths = fixed_results(raw)
-        if family == "trajectory":
-            module.plot_result_equilibrium_trajectory(paths[:2], output)
-        else:
-            members = [module.TrajectoryComparisonPlotMember(
-                name, profile_label((name, name)), algorithm_style(name)["color"],
-                tuple(paths[offset:offset + 2]), (name, name),
-            ) for name, offset in (("hedge", 0), ("ito", 2))]
-            module.plot_result_equilibrium_trajectory_comparison(members, output, comparison_view="unified")
     else:
         paths = fixed_results(raw)[:2]
         if family == "joint":
@@ -132,7 +120,7 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
     figure, output = captured[0]
     axes = figure.axes[0]
     assert figure.get_figwidth() == FIGURE_WIDTH
-    assert 3.8 <= figure.get_figheight() <= (6 if family in {"trajectory", "comparison"} else 5)
+    assert 3.8 <= figure.get_figheight() <= 5
     assert axes.get_title() == "" and figure._suptitle is None
     assert axes.xaxis.label.get_fontsize() == axes.yaxis.label.get_fontsize() == 10
     assert all(tick.get_fontsize() == 9 for tick in axes.get_xticklabels())
@@ -154,8 +142,6 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
         view = "final" if family == "scaling" else "sqrt_scaling" if family == "ilrw" else "average"
         kind = "external" if family == "scaling" else "swap"
         assert axes.get_ylabel() == regret_axis_label(kind, view)
-    if family in {"trajectory", "comparison"}:
-        assert axes.get_ylabel() == r"$L^1$ distance to CCE"
     pdf = PdfReader(output.with_suffix(".pdf"))
     page = pdf.pages[0]
     assert float(page.mediabox.width) / 72 == pytest.approx(FIGURE_WIDTH)
@@ -170,7 +156,6 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
 
 def test_every_figure_renderer_uses_the_shared_publication_style():
     paths = list(Path("experiments/plots").glob("plot_*.py"))
-    paths.append(Path("experimental/equilibrium_trajectory/rendering.py"))
     renderers = []
     for path in paths:
         for function in ast.walk(ast.parse(path.read_text())):
@@ -186,4 +171,4 @@ def test_every_figure_renderer_uses_the_shared_publication_style():
                 renderers.append(function.name)
                 assert any(isinstance(node, ast.Name) and node.id == "publication_plot"
                            for node in function.decorator_list), f"{path}:{function.lineno}"
-    assert len(renderers) == 8
+    assert len(renderers) == 6

@@ -7,8 +7,6 @@ make install
 make web
 ```
 
-The optional trajectory comparison is selected at installation with `make install-experimental`; it is not a runtime switch.
-
 The **Experiments** page uses one template, controller, result filters, figure grid and dialog, and sortable summary framework for fixed games and one-player environments. Both modes also share feedback, regret evaluation, horizon, seed, algorithm, and replicate controls.
 
 ## Features
@@ -37,13 +35,11 @@ In **Visual analysis**, **Download merged PDF** combines the currently filtered 
 | `results/raw/` | Fixed-game CSVs |
 | `results/figures/` | Regret and detail figures |
 | `results/adversarial/` | Stress-test CSVs and figures |
-| `results/cache/` | Regenerable plot and geometry caches |
+| `results/cache/` | Regenerable plot and equilibrium-distance caches |
 | `data/custom_games/` | Custom games and cached heatmaps |
 | `web/static/equilibria/` | Built-in equilibrium assets |
 
-`make reset` removes experiment CSVs, figures, and their row cache, but keeps custom games, heatmaps, static assets, and geometry caches. **Clear results** in the one-player mode removes both its CSVs and figures. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
-
-An experimental build adds `/experimental/trajectory-comparisons`; comparisons render only when **Generate** is pressed. See the [experimental guide](../experimental/equilibrium_trajectory/README.md).
+`make reset` removes experiment CSVs, figures, and their row cache, but keeps custom games, heatmaps, static assets, and equilibrium-distance caches. **Clear results** in the one-player mode removes both its CSVs and figures. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
 
 POST parameters, CSRF tokens, and filenames are validated. For a stable session secret across restarts:
 
