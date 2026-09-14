@@ -79,7 +79,7 @@
                         <form
                             method="post"
                             action="{{ url_for('dashboard.reset_results') }}"
-                            data-confirm="Delete all generated experiment and figure files?"
+                            data-confirm="Delete all experiment-derived data, figures, and caches?"
                         >
                             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="confirmation" value="reset-results">

@@ -16,7 +16,8 @@ class ItoBase(StationaryReduction):
     def sample_action(self) -> int:
         learner_index = int(self.rng.choice(self.n_actions, p=self.current_strategy))
         self.selected_learner = self.learners[learner_index]
-        return self.selected_learner.sample_action()
+        self.current_action = self.selected_learner.sample_action()
+        return self.current_action
 
 
 class FullIto(ItoBase):

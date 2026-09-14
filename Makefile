@@ -16,6 +16,7 @@ RESULTS_DIR ?= results
 RAW_DIR ?= $(RESULTS_DIR)/raw
 FIGURE_DIR ?= $(RESULTS_DIR)/figures
 ADVERSARIAL_DIR ?= $(RESULTS_DIR)/adversarial
+CUSTOM_GAME_DIR ?= data/custom_games
 
 .PHONY: help all install
 .PHONY: web plot
@@ -52,21 +53,12 @@ test: ## Run the complete test suite without creating caches
 
 ##@ Cleanup
 
-clean: ## Remove Python and pytest caches
+clean: ## Remove Python caches and temporary staging files
 	find . -type d \( -name "__pycache__" -o -name ".pytest_cache" \) -prune -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
-	find "$(RESULTS_DIR)" data/custom_games -type d \( -name ".figures-*" -o -name ".equilibrium-convergence-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
+	find "$(RESULTS_DIR)" "$(CUSTOM_GAME_DIR)" -type d \( -name ".figures-*" -o -name ".equilibrium-convergence-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true
 
-reset: clean ## Remove caches and generated results
-	@if [ -d "$(RESULTS_DIR)/cache/plot_rows" ]; then \
-		find "$(RESULTS_DIR)/cache/plot_rows" -type f -name "*.json" -delete; \
-	fi
-	@if [ -d "$(RAW_DIR)" ]; then \
-		find "$(RAW_DIR)" -mindepth 1 -maxdepth 1 -type f ! -name ".gitkeep" -delete; \
-	fi
-	@if [ -d "$(FIGURE_DIR)" ]; then \
-		find "$(FIGURE_DIR)" -type f \( -name "*.png" -o -name "*.pdf" \) -delete; \
-	fi
-	@if [ -d "$(ADVERSARIAL_DIR)" ]; then \
-		find "$(ADVERSARIAL_DIR)" -type f \( -name "*.csv" -o -name "*.png" -o -name "*.pdf" \) -delete; \
-	fi
+reset: clean ## Remove all experiment-derived results, figures, and caches
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m experiments.cleanup \
+		--preserve "$(CUSTOM_GAME_DIR)" \
+		"$(RAW_DIR)" "$(FIGURE_DIR)" "$(ADVERSARIAL_DIR)" "$(RESULTS_DIR)/cache"

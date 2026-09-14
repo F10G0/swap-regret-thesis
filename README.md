@@ -38,8 +38,8 @@ Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 | `make web` | Start the dashboard |
 | `make plot` | Rebuild plots from saved CSVs |
 | `make test` | Run the complete test suite |
-| `make clean` | Remove caches and temporary files |
-| `make reset` | Also remove generated experiment results |
+| `make clean` | Remove Python caches and temporary staging files |
+| `make reset` | Remove all experiment-derived results, figures, and caches |
 
 `make all` intentionally does not run the test suite. Run `make help` for the live command list.
 
@@ -58,6 +58,8 @@ Run IDs include the complete experiment identity and an implementation version, 
 The install commands use `requirements.lock`. Each CSV records the canonical Python and numerical-package environment plus its fingerprint, and that fingerprint participates in the run ID. One-player learner and environment randomness use domain-separated, replicate-specific seeds; CSVs retain both the user-supplied base seeds and the effective derived seeds.
 
 CE/CCE incentive constraints and L1 projection are implemented locally using NumPy and SciPy’s `linprog(method="highs")`. Empirical heatmaps count recorded joint actions directly and require no equilibrium LP.
+
+`make reset` preserves source and configuration inputs, including saved custom games, along with `.gitkeep` placeholders. Everything derived from experiment results is removed so that no generated figure or cache outlives its source data.
 
 ## Guides
 

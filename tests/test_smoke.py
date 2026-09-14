@@ -60,7 +60,7 @@ def test_all_feedback_modes_record_the_canonical_schema(tmp_path, feedback_mode)
     for row in rows:
         assert {key for key in row if key.endswith("_regret")} == set(REGRET_FIELDNAMES)
         assert "regret_evaluation" not in row
-        assert int(row["implementation_version"]) == RESULT_IMPLEMENTATION_VERSION == 5
+        assert int(row["implementation_version"]) == RESULT_IMPLEMENTATION_VERSION == 6
 
 
 def test_cancelled_experiment_does_not_publish_partial_result(tmp_path) -> None:

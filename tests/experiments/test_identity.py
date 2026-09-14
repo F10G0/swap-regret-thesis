@@ -98,11 +98,11 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=2).run_id
 
 
-@pytest.mark.parametrize("version", [2, 3, 4])
-def test_v5_identity_rejects_but_does_not_modify_legacy_results(tmp_path, version) -> None:
+@pytest.mark.parametrize("version", [3, 4, 5])
+def test_v6_identity_rejects_but_does_not_modify_legacy_results(tmp_path, version) -> None:
     current = make_spec()
     legacy = replace(current, implementation_version=version)
-    assert RESULT_IMPLEMENTATION_VERSION == current.implementation_version == 5
+    assert RESULT_IMPLEMENTATION_VERSION == current.implementation_version == 6
     assert current.run_id != legacy.run_id
     legacy_path = tmp_path / f"{legacy.run_id}.csv"
     current_path = tmp_path / f"{current.run_id}.csv"
@@ -112,7 +112,7 @@ def test_v5_identity_rejects_but_does_not_modify_legacy_results(tmp_path, versio
 
     with pytest.raises(ValueError, match=f"incompatible result implementation_version {version}"):
         list(iter_result_rows(legacy_path))
-    assert {result_implementation_version(row) for row in iter_result_rows(current_path)} == {5}
+    assert {result_implementation_version(row) for row in iter_result_rows(current_path)} == {6}
     assert legacy_path.read_bytes() == legacy_bytes
 
 

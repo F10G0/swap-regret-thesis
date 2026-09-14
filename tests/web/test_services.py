@@ -146,21 +146,29 @@ def test_job_manager_reports_progress_and_cancels() -> None:
     assert job.total == 4
 
 
-def test_clear_results_preserves_unrelated_files(tmp_path: Path) -> None:
+def test_clear_results_removes_derived_tree_and_preserves_inputs(tmp_path: Path) -> None:
     service = create_service(tmp_path)
-    service.raw_dir.mkdir(parents=True)
-    service.figure_dir.mkdir(parents=True)
-    (service.raw_dir / ".gitkeep").write_text("", encoding="utf-8")
-    (service.raw_dir / "run.csv").write_text("generated", encoding="utf-8")
-    (service.raw_dir / "notes.txt").write_text("keep", encoding="utf-8")
-    (service.figure_dir / "figure.png").write_bytes(b"generated")
+    definition = service.create_custom_game("keep me", 2, [2, 2], 0)
+    input_path = service.game_catalog.custom_path(definition.id)
+    artifact_locations = (
+        service.raw_dir,
+        service.detail_figure_dir,
+        service.adversarial_dir / "cache",
+        service.results_dir / "cache" / "figure_builder",
+    )
+    placeholders = set()
+    for index, directory in enumerate(artifact_locations):
+        directory.mkdir(parents=True, exist_ok=True)
+        placeholder = directory / ".gitkeep"
+        placeholder.write_text("", encoding="utf-8")
+        placeholders.add(placeholder)
+        (directory / f"derived-{index}.artifact").write_bytes(b"generated")
 
     service.clear_results()
 
-    assert (service.raw_dir / ".gitkeep").exists()
-    assert (service.raw_dir / "notes.txt").exists()
-    assert not (service.raw_dir / "run.csv").exists()
-    assert not (service.figure_dir / "figure.png").exists()
+    assert input_path.is_file()
+    remaining_files = {path for path in tmp_path.rglob("*") if path.is_file()}
+    assert remaining_files == placeholders | {input_path}
 
 
 def test_custom_game_deletion_requires_its_experiments_to_be_deleted_first(tmp_path: Path) -> None:

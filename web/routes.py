@@ -528,5 +528,5 @@ def reset_results():
     except ServiceBusyError as error:
         flash(str(error), "error")
     else:
-        flash("Deleted generated CSV and figure files.", "success")
+        flash("Deleted all experiment-derived results, figures, and caches.", "success")
     return redirect(url_for("dashboard.index"))

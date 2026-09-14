@@ -9,6 +9,9 @@ from config import NUMERICAL_TOLERANCE
 
 
 class RecordingAuerExp3(AuerExp3):
+    def __init__(self, n_actions: int, horizon: int, seed: int | None = None) -> None:
+        super().__init__(n_actions, horizon, seed=seed)
+
     def _reset_state(self) -> None:
         super()._reset_state()
         self.received_gains = []
@@ -53,11 +56,19 @@ def test_auer_exp3_uses_importance_weighted_gain() -> None:
     assert np.array_equal(learner.cumulative_score, expected_score)
 
 
-def test_auer_exp3_uses_literature_exploration_rate() -> None:
-    learner = AuerExp3(3, horizon=100, seed=0)
+def test_auer_exp3_uses_standalone_and_blum_mansour_exploration_rates() -> None:
+    standalone = AuerExp3(3, horizon=100, seed=0)
+    bandit_bm = BanditBM(3, horizon=100, seed=0)
 
-    expected_gamma = np.sqrt(3.0 * np.log(3.0) / 100.0)
-    assert learner.explicit_exploration == pytest.approx(expected_gamma)
+    auer_gamma = np.sqrt(3.0 * np.log(3.0) / ((np.e - 1.0) * 100.0))
+    bm_gamma = np.sqrt(3.0 * np.log(3.0) / 100.0)
+    assert standalone.explicit_exploration == pytest.approx(auer_gamma)
+    assert standalone.learning_rate == pytest.approx(auer_gamma / 3.0)
+    assert all(
+        learner.explicit_exploration == pytest.approx(bm_gamma)
+        and learner.learning_rate == pytest.approx(bm_gamma / 3.0)
+        for learner in bandit_bm.learners
+    )
 
 
 def test_auer_exp3_mixes_weights_with_explicit_uniform_exploration() -> None:
@@ -123,7 +134,7 @@ def test_exponential_weights_equal_unfloored_softmax(factory, logits) -> None:
 def test_auer_exp3_retains_explicit_exploration_when_softmax_underflows(horizon) -> None:
     learner = AuerExp3(3, horizon=horizon)
     learner.cumulative_score = np.array([-1000.0, -2000.0, 0.0]) / learner.learning_rate
-    gamma = min(1.0, np.sqrt(3.0 * np.log(3.0) / horizon))
+    gamma = learner.explicit_exploration
     expected = (1.0 - gamma) * np.array([0.0, 0.0, 1.0]) + gamma / 3.0
 
     np.testing.assert_array_equal(learner._compute_strategy(), expected)
@@ -280,9 +291,9 @@ def test_known_horizon_learning_rates_are_fixed() -> None:
     hedge = Hedge(3, horizon=100, seed=0)
     auer_exp3 = AuerExp3(3, horizon=100, seed=0)
     exp3_ix = Exp3IX(3, horizon=100, seed=0)
+    auer_rate = auer_exp3.learning_rate
 
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3) / 100))
-    assert auer_exp3.learning_rate == pytest.approx(np.sqrt(3 * np.log(3) / 100) / 3)
     assert exp3_ix.learning_rate == pytest.approx(np.sqrt(2.0 * np.log(3) / 300))
 
     hedge.update(np.array([0.2, 0.5, 0.8]))
@@ -292,7 +303,7 @@ def test_known_horizon_learning_rates_are_fixed() -> None:
     exp3_ix.update(0.5)
 
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3) / 100))
-    assert auer_exp3.learning_rate == pytest.approx(np.sqrt(3 * np.log(3) / 100) / 3)
+    assert auer_exp3.learning_rate == auer_rate
     assert exp3_ix.learning_rate == pytest.approx(np.sqrt(2.0 * np.log(3) / 300))
 
 

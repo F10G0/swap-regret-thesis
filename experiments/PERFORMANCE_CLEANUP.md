@@ -53,7 +53,7 @@ Reference tests reproduce the old 100-step solver, covering K=1/3/5/9/100, six l
 
 No learner update formula, loss/gain estimator, learning-rate formula or indexing, regret definition, seed derivation, sampling primitive, stationary equation, or selected solver was changed. In particular:
 
-- Auer still uses BM tuning `gamma=min(1,sqrt(K log(K)/T))`, with **no e−1 factor**, and `eta=gamma/K`.
+- In the measured historical implementation, standalone Auer and BM both used `gamma=min(1,sqrt(K log(K)/T))`, with **no e−1 factor**, and `eta=gamma/K`. Current standalone `AuerExp3` uses the Auer et al. `(e−1)` factor, while BM explicitly retains the measured tuning.
 - Fixed Hedge and Exp3-IX retain their original formulas, including behavior after T updates.
 - Anytime Hedge, Tsallis-INF, and LCE-IX retain local update counts and schedules.
 - BM still updates every inner learner with `p_i*q[i,a]*reward/p_a`, preserving arithmetic order. LCE retains its original observed-loss expression and IX estimator.

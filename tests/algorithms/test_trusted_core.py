@@ -70,6 +70,7 @@ def test_valid_runs_preserve_trusted_core_invariants(monkeypatch, mode, name, fa
 
     for time in range(100):
         action = learner.sample_action()
+        assert learner.current_action == action
         if environment == "fixed":
             game.step((action, time % n_actions))
             payoffs = game.deviation_payoffs(0)

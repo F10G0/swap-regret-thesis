@@ -17,6 +17,23 @@ class EquilibriumDistanceResult:
     nearest_distribution: np.ndarray
 
 
+def _validated_payoff_tensor(payoff_tensor) -> np.ndarray:
+    try:
+        payoffs = np.asarray(payoff_tensor, dtype=float)
+    except (TypeError, ValueError) as error:
+        raise ValueError("payoff_tensor must be a rectangular numeric array") from error
+    if payoffs.ndim < 2 or payoffs.shape[0] != payoffs.ndim - 1:
+        raise ValueError(
+            "payoff_tensor must have one action axis per player "
+            "(shape[0] must equal ndim - 1)"
+        )
+    if any(dimension == 0 for dimension in payoffs.shape):
+        raise ValueError("payoff_tensor dimensions must be non-empty")
+    if not np.all(np.isfinite(payoffs)):
+        raise ValueError("payoff_tensor must contain only finite values")
+    return payoffs
+
+
 def _validated_distribution(empirical_distribution, action_shape: tuple[int, ...]) -> np.ndarray:
     empirical = np.asarray(empirical_distribution, dtype=float)
     if empirical.shape != action_shape:
@@ -87,9 +104,10 @@ class _PreparedDistanceLP:
 
 def equilibrium_l1_distance(payoff_tensor, empirical_distribution, equilibrium: str = "ce") -> EquilibriumDistanceResult:
     """Return exact full-dimensional L1 distance and a nearest CE/CCE."""
-    action_shape = np.asarray(payoff_tensor).shape[1:]
+    payoffs = _validated_payoff_tensor(payoff_tensor)
+    action_shape = payoffs.shape[1:]
     empirical = _validated_distribution(empirical_distribution, action_shape)
-    prepared = _PreparedDistanceLP(payoff_tensor, equilibrium)
+    prepared = _PreparedDistanceLP(payoffs, equilibrium)
     result = prepared.solve(empirical.ravel(order="C"))
     nearest = result.x[:prepared.n_profiles].reshape(action_shape, order="C")
     return EquilibriumDistanceResult(float(result.fun), nearest)
@@ -114,8 +132,9 @@ def equilibrium_distance_trajectory(
     payoff_tensor,
     empirical: EmpiricalDistributionTrajectory,
 ) -> EquilibriumDistanceTrajectory:
-    ce = _PreparedDistanceLP(payoff_tensor, "ce")
-    cce = _PreparedDistanceLP(payoff_tensor, "cce")
+    payoffs = _validated_payoff_tensor(payoff_tensor)
+    ce = _PreparedDistanceLP(payoffs, "ce")
+    cce = _PreparedDistanceLP(payoffs, "cce")
     if empirical.action_shape != ce.action_shape:
         raise ValueError("empirical action shape must match the payoff tensor")
     ce_distances = []

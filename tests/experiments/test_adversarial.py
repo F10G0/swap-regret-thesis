@@ -269,11 +269,11 @@ def test_adversarial_loader_rejects_unversioned_csv(tmp_path) -> None:
 def test_adversarial_implementation_version_changes_run_identity() -> None:
     common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 10, "seed": 7}
 
-    assert AdversarialExperimentSpec(**common).implementation_version == 5
+    assert AdversarialExperimentSpec(**common).implementation_version == 6
     assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=2).run_id
 
 
-@pytest.mark.parametrize("version", [2, 3, 4])
+@pytest.mark.parametrize("version", [3, 4, 5])
 def test_adversarial_loader_rejects_stale_results_without_modifying_them(tmp_path, version) -> None:
     common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 3, "seed": 7}
     current_path = run_adversarial_experiment(**common, output_dir=tmp_path)
@@ -287,7 +287,7 @@ def test_adversarial_loader_rejects_stale_results_without_modifying_them(tmp_pat
         writer.writerows(row | {"implementation_version": str(version), "run_id": legacy.run_id} for row in rows)
     legacy_bytes = legacy_path.read_bytes()
 
-    assert {row["implementation_version"] for row in load_adversarial_rows(current_path)} == {"5"}
+    assert {row["implementation_version"] for row in load_adversarial_rows(current_path)} == {"6"}
     for loader in (load_adversarial_rows, load_final_adversarial_row):
         with pytest.raises(ValueError, match=f"incompatible result implementation_version {version}"):
             loader(legacy_path)

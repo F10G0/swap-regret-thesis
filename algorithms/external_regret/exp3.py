@@ -10,17 +10,21 @@ def _validate_horizon(horizon: int) -> int:
 
 
 class AuerExp3(ExponentialWeightsAlgorithm):
-    """Auer et al. (2002) Exp3 with Blum-Mansour (2007) tuning."""
+    """Auer et al. (2002) Exp3 with selectable standalone/BM tuning."""
 
-    def __init__(self, n_actions: int, horizon: int, seed: int | None = None) -> None:
+    def __init__(self, n_actions: int, horizon: int, seed: int | None = None, *, tuning: str = "auer") -> None:
         self.horizon = _validate_horizon(horizon)
+        if tuning not in {"auer", "blum_mansour"}:
+            raise ValueError("tuning must be 'auer' or 'blum_mansour'")
+        self.tuning = tuning
         super().__init__(n_actions, seed=seed)
-        self._explicit_exploration = min(1.0, np.sqrt(self.n_actions * np.log(self.n_actions) / self.horizon))
+        denominator = np.e - 1.0 if tuning == "auer" else 1.0
+        self._explicit_exploration = min(1.0, np.sqrt(self.n_actions * np.log(self.n_actions) / (denominator * self.horizon)))
         self._learning_rate = self._explicit_exploration / self.n_actions
 
     @property
     def explicit_exploration(self) -> float:
-        """Return gamma = min(1, sqrt(K log(K) / T))."""
+        """Return the selected Auer or Blum-Mansour exploration rate."""
         return self._explicit_exploration
 
     @property

@@ -160,6 +160,11 @@ def test_distance_supports_heterogeneous_three_player_games() -> None:
     assert distance == pytest.approx(0.0, abs=EQUILIBRIUM_LP_TOLERANCE)
 
 
+def test_distance_rejects_payoffs_without_one_action_axis_per_player() -> None:
+    with pytest.raises(ValueError, match="one action axis per player"):
+        equilibrium_l1_distance(np.zeros((3, 2, 2)), np.full((2, 2), 0.25))
+
+
 def test_distance_rejects_unknown_equilibrium_concept() -> None:
     with pytest.raises(ValueError, match="unknown equilibrium concept"):
         equilibrium_l1_distance(coordination_game_payoffs(), np.full((2, 2), 0.25), "nash")

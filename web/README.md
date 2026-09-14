@@ -38,7 +38,7 @@ PNG previews have matching vector PDFs. Regret plots update after a run; a manua
 | `results/cache/` | Regenerable plot and equilibrium-distance caches |
 | `data/custom_games/` | Saved custom games |
 
-`make reset` removes experiment CSVs, figures, and their row cache, but keeps custom games and equilibrium-distance caches. **Clear results** in the one-player mode removes both its CSVs and figures. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
+`make reset` and **Clear results** remove all experiment-derived data, generated figures (including detail and Figure Builder outputs), and experiment-dependent caches. Source and configuration inputs such as custom games, plus `.gitkeep` placeholders, are preserved. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
 
 POST parameters, CSRF tokens, and filenames are validated. For a stable session secret across restarts:
 

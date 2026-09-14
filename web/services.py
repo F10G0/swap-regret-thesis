@@ -19,6 +19,7 @@ from config import (
     REPLICATES,
     SEED,
 )
+from experiments.cleanup import clear_experiment_artifacts
 from experiments.algorithm_labels import algorithm_label, algorithm_profile_label
 from experiments.game_catalog import (
     GameCatalog,
@@ -100,20 +101,6 @@ def _validate_result_figure(directory: Path, filename: str, records: list[dict])
     return filename
 
 
-def _clear_result_files(raw_dirs: tuple[Path, ...], figure_dirs: tuple[Path, ...]) -> tuple[int, int]:
-    csv_paths = [path for directory in raw_dirs if directory.exists() for path in directory.glob("*.csv")]
-    figure_paths = [
-        path
-        for directory in figure_dirs
-        if directory.exists()
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES
-    ]
-    for path in csv_paths + figure_paths:
-        path.unlink()
-    return len(csv_paths), sum(path.suffix.lower() == ".png" for path in figure_paths)
-
-
 class PlotUpdateError(RuntimeError):
     pass
 
@@ -153,6 +140,18 @@ class DashboardService:
         )
         self._convergence_future_lock = Lock()
         self._convergence_futures: dict[str, Future[Path]] = {}
+
+    def _clear_generated_artifacts(self, roots: tuple[Path, ...]) -> tuple[Path, ...]:
+        return clear_experiment_artifacts(
+            roots,
+            preserve=(self.game_catalog.custom_game_dir,),
+        )
+
+    def _clear_experiment_caches(self) -> None:
+        self._clear_generated_artifacts((
+            self.results_dir / "cache",
+            self.adversarial_dir / "cache",
+        ))
 
     @property
     def games(self) -> list[str]:
@@ -537,6 +536,7 @@ class DashboardService:
                     figures_moved = True
                 rebuild_started = True
                 rebuild()
+                self._clear_experiment_caches()
             except Exception as error:
                 try:
                     if rebuild_started:
@@ -669,12 +669,21 @@ class DashboardService:
         )
 
     def clear_adversarial_results(self) -> tuple[int, int]:
-        return self.jobs.run_maintenance(
-            lambda: _clear_result_files(
-                (self.adversarial_raw_dir, self.adversarial_scaling_raw_dir),
-                (self.adversarial_figure_dir, self.adversarial_scaling_figure_dir),
+        def operation() -> tuple[int, int]:
+            generated = (
+                [path for path in self.adversarial_dir.rglob("*") if path.is_file()]
+                if self.adversarial_dir.exists()
+                else []
             )
-        )
+            csv_count = sum(path.suffix.lower() == ".csv" for path in generated)
+            figure_count = sum(path.suffix.lower() == ".png" for path in generated)
+            self._clear_generated_artifacts((
+                self.adversarial_dir,
+                self.results_dir / "cache",
+            ))
+            return csv_count, figure_count
+
+        return self.jobs.run_maintenance(operation)
 
     def _spec(self, form: ExperimentForm, replicate: int) -> ExperimentSpec:
         return ExperimentSpec(
@@ -956,10 +965,7 @@ class DashboardService:
             self._convergence_futures.clear()
         with self._detail_figure_lock:
             self._detail_figure_generation += 1
-            if self.detail_figure_dir.exists():
-                for path in self.detail_figure_dir.iterdir():
-                    if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES:
-                        path.unlink()
+            self._clear_generated_artifacts((self.detail_figure_dir,))
 
     def delete_experiment(self, filename: str) -> None:
         filename = validate_leaf_filename(filename, ".csv")
@@ -971,6 +977,8 @@ class DashboardService:
 
             self._invalidate_detail_figures()
             csv_path.unlink()
+            self._clear_experiment_caches()
+            self._clear_generated_artifacts((self.figure_dir,))
             try:
                 self._publish_plots()
             except Exception as error:
@@ -985,10 +993,12 @@ class DashboardService:
     def clear_results(self) -> None:
         def operation() -> None:
             self._invalidate_detail_figures()
-            _clear_result_files(
-                (self.raw_dir, self.adversarial_raw_dir, self.adversarial_scaling_raw_dir),
-                (self.figure_dir, self.adversarial_figure_dir, self.adversarial_scaling_figure_dir),
-            )
+            self._clear_generated_artifacts((
+                self.raw_dir,
+                self.figure_dir,
+                self.adversarial_dir,
+                self.results_dir / "cache",
+            ))
 
         self.jobs.run_maintenance(operation)
 

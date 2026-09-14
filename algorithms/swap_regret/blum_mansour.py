@@ -29,7 +29,10 @@ class BanditBM(StationaryReduction):
         if not isinstance(horizon, (int, np.integer)) or isinstance(horizon, bool) or horizon <= 0:
             raise ValueError("horizon must be a positive integer")
         self.horizon = horizon
-        super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, horizon=horizon), seed=seed)
+        inner_kwargs = {"horizon": horizon}
+        if inner_algorithm_factory is AuerExp3:
+            inner_kwargs["tuning"] = "blum_mansour"
+        super().__init__(n_actions, partial(inner_algorithm_factory, n_actions, **inner_kwargs), seed=seed)
 
     def _update_state(self, reward: float) -> None:
         probability = self.current_strategy[self.current_action]

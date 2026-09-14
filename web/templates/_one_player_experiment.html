@@ -45,7 +45,7 @@
             <details class="data-management">
                 <summary>Data management</summary>
                 <div class="maintenance-actions">
-                    <form method="post" action="{{ url_for('dashboard.clear_adversarial_results') }}" data-confirm="Delete all adversarial experiment CSVs and figures?">
+                    <form method="post" action="{{ url_for('dashboard.clear_adversarial_results') }}" data-confirm="Delete all adversarial experiment data, figures, and caches?">
                         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                         <button class="button-danger" type="submit" {% if busy or not (summaries or scaling_summaries or scaling_figures or warnings) %}disabled{% endif %}>Clear results</button>
                     </form>

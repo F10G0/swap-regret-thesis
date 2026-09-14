@@ -17,7 +17,6 @@ def test_registered_bandit_learners_use_literature_specific_inner_learners() -> 
     assert list(BANDIT_ALGORITHMS) == ["auer_exp3", "exp3_ix", "bm", "ito", "lce_ix"]
     assert list(FULL_ALGORITHMS) == ["hedge", "bm", "ito", "regret_matching", "stationary_regret_matching"]
     assert isinstance(auer_exp3, AuerExp3) and auer_exp3.horizon == 100
-    assert auer_exp3.explicit_exploration == pytest.approx(np.sqrt(3 * np.log(3) / 100))
     assert isinstance(exp3_ix, Exp3IX) and exp3_ix.horizon == 100
     assert all(isinstance(inner, AuerExp3) and inner.horizon == 100 for inner in bandit_bm.learners)
     assert all(isinstance(inner, TsallisINF) for inner in bandit_ito.learners)
