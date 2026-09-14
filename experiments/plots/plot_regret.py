@@ -1,10 +1,5 @@
-import csv
-import json
-import logging
-import os
 from collections import defaultdict
 from pathlib import Path
-import tempfile
 
 import matplotlib
 
@@ -13,152 +8,29 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from config import FIGURE_DIR, RAW_DIR
-from experiments.game_catalog import CUSTOM_GAME_PREFIX
-from experiments.games import PAYOFF_FACTORIES
-from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
+from config import FIGURE_DIR
+from experiments.plots import save_figure_pair
 from experiments.plots.style import publication_plot, curve_labels, algorithm_style, regret_axis_label, finish_line_figure
 from experiments.results import average_regret_column, iter_result_rows, regret_column
-from experiments.result_schema import REGRET_NAMES
-from experiments.result_catalog import fixed_plot_key
 from experiments.sampling import CheckpointRows
 
 
-logger = logging.getLogger(__name__)
-
 MAX_PLOT_POINTS_PER_PLAYER = 2000
-PLOT_ROW_CACHE_VERSION = 5
-
-def _cached_rows(cache_path: Path, input_path: Path, source_stat, max_points: int) -> list[dict] | None:
-    try:
-        with cache_path.open("r", encoding="utf-8") as file:
-            cached = json.load(file)
-    except (OSError, TypeError, ValueError):
-        return None
-    if not isinstance(cached, dict):
-        return None
-    expected = {
-        "version": PLOT_ROW_CACHE_VERSION,
-        "source": str(input_path.resolve()),
-        "mtime_ns": source_stat.st_mtime_ns,
-        "size": source_stat.st_size,
-        "max_points_per_player": max_points,
-    }
-    rows = cached.get("rows")
-    if any(cached.get(key) != value for key, value in expected.items()) or not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-        return None
-    return rows
-
-
-def _write_row_cache(cache_path: Path, input_path: Path, source_stat, max_points: int, rows: list[dict]) -> None:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "version": PLOT_ROW_CACHE_VERSION,
-        "source": str(input_path.resolve()),
-        "mtime_ns": source_stat.st_mtime_ns,
-        "size": source_stat.st_size,
-        "max_points_per_player": max_points,
-        "rows": rows,
-    }
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_path.parent, delete=False) as file:
-            temporary_path = Path(file.name)
-            json.dump(payload, file, separators=(",", ":"))
-        os.replace(temporary_path, cache_path)
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
 
 
 def load_rows(
     input_path: str | Path,
     max_points_per_player: int = MAX_PLOT_POINTS_PER_PLAYER,
-    cache_dir: str | Path | None = None,
 ) -> list[dict]:
     if max_points_per_player <= 0:
         raise ValueError("max_points_per_player must be positive")
     input_path = Path(input_path)
-    source_stat = input_path.stat()
-    cache_path = Path(cache_dir) / f"{input_path.stem}.json" if cache_dir is not None else None
-    if cache_path is not None:
-        rows = _cached_rows(cache_path, input_path, source_stat, max_points_per_player)
-        if rows is not None:
-            return rows
-
     sampler = None
     for row in iter_result_rows(input_path):
         if sampler is None:
             sampler = CheckpointRows(int(row["horizon"]), max_points_per_player)
         sampler.add({key: value for key, value in row.items() if key != "action_history"})
-    sampled_rows = sampler.rows() if sampler is not None else []
-
-    current_stat = input_path.stat()
-    source_unchanged = current_stat.st_mtime_ns == source_stat.st_mtime_ns and current_stat.st_size == source_stat.st_size
-    if cache_path is not None and source_unchanged:
-        try:
-            _write_row_cache(cache_path, input_path, source_stat, max_points_per_player, sampled_rows)
-        except OSError as error:
-            logger.warning("Could not cache plot rows for %s: %s", input_path, error)
-
-    return sampled_rows
-
-
-def collect_results(
-    input_dir: str | Path = RAW_DIR,
-    game_name: str | None = None,
-    skip_invalid: bool = False,
-    cache_dir: str | Path | None = None,
-) -> dict[str, dict[str, list[dict]]]:
-    input_dir = Path(input_dir)
-    if cache_dir is None:
-        cache_dir = input_dir.parent / "cache" / "plot_rows" if input_dir.name == "raw" else input_dir / ".plot-cache"
-    results = defaultdict(dict)
-    paths = sorted(input_dir.glob("*.csv"))
-    if game_name is not None:
-        paths = [path for path in paths if path.name.startswith(f"{game_name}_")]
-
-    for path in paths:
-        try:
-            cache_path = Path(cache_dir) / f"{path.stem}.json"
-            rows = _cached_rows(cache_path, path, path.stat(), MAX_PLOT_POINTS_PER_PLAYER)
-            if rows is None:
-                # Identify retired games before schema validation or cache writes.
-                # Valid cache hits still avoid reading the source CSV entirely.
-                with path.open("r", encoding="utf-8", newline="") as file:
-                    result_game = next(csv.DictReader(file), {}).get("game")
-                if result_game is not None and result_game not in PAYOFF_FACTORIES and not result_game.startswith(CUSTOM_GAME_PREFIX):
-                    logger.warning("Skipping result %s for unsupported game %s", path, result_game)
-                    continue
-                rows = load_rows(path, cache_dir=cache_dir)
-        except (OSError, KeyError, TypeError, ValueError, csv.Error) as error:
-            if not skip_invalid:
-                raise
-            logger.warning("Skipping invalid result %s: %s", path, error)
-            continue
-        if not rows:
-            continue
-
-        result_game = rows[0]["game"]
-        if result_game not in PAYOFF_FACTORIES and not result_game.startswith(CUSTOM_GAME_PREFIX):
-            logger.warning("Skipping result %s for unsupported game %s", path, result_game)
-            continue
-        if game_name is not None and result_game != game_name:
-            continue
-        run_id = rows[0]["run_id"]
-        if run_id in results[result_game]:
-            raise ValueError(f"duplicate run_id {run_id} in {input_dir}")
-        results[result_game][run_id] = rows
-
-    return {result_game: dict(rows_by_run) for result_game, rows_by_run in results.items()}
-
-
-def group_replicate_runs(rows_by_run: dict[str, list[dict]]) -> list[list[list[dict]]]:
-    groups = defaultdict(list)
-    for rows in rows_by_run.values():
-        groups[fixed_plot_key(rows[0])].append(rows)
-
-    return [sorted(group, key=lambda rows: int(rows[0]["replicate"])) for group in groups.values()]
+    return sampler.rows() if sampler is not None else []
 
 
 def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column: str, divide_by_sqrt_time: bool = False) -> tuple[np.ndarray, np.ndarray]:
@@ -224,43 +96,3 @@ def plot_regret(game_name: str, replicate_groups: list[list[list[dict]]], regret
     save_figure_pair(figure, output_path)
     plt.close(figure)
 
-
-def clear_game_figures(game_name: str, output_dir: str | Path = FIGURE_DIR) -> None:
-    output_dir = Path(output_dir)
-    if not output_dir.exists():
-        return
-
-    for suffix in FIGURE_SUFFIXES:
-        for path in output_dir.glob(f"{game_name}_*{suffix}"):
-            path.unlink()
-
-
-def plot_game_results(game_name: str, rows_by_run: dict[str, list[dict]], output_dir: str | Path) -> None:
-    clear_game_figures(game_name, output_dir)
-    replicate_groups = group_replicate_runs(rows_by_run)
-    players = sorted({int(row["player"]) for rows in rows_by_run.values() for row in rows})
-    for player in players:
-        for regret_name in REGRET_NAMES:
-            plot_regret(game_name, replicate_groups, regret_name, player, average=True, output_dir=output_dir)
-            plot_regret(game_name, replicate_groups, regret_name, player, average=False, output_dir=output_dir)
-
-
-def plot_selected_results(game_name: str, input_dir: str | Path = RAW_DIR, output_dir: str | Path = FIGURE_DIR, skip_invalid: bool = False) -> None:
-    results = collect_results(input_dir, game_name, skip_invalid)
-    if game_name not in results:
-        return
-    plot_game_results(game_name, results[game_name], output_dir)
-
-
-def plot_all_results(input_dir: str | Path = RAW_DIR, output_dir: str | Path = FIGURE_DIR, skip_invalid: bool = False) -> None:
-    results = collect_results(input_dir, skip_invalid=skip_invalid)
-    for game_name, rows_by_run in results.items():
-        plot_game_results(game_name, rows_by_run, output_dir)
-
-
-def main() -> None:
-    plot_all_results()
-
-
-if __name__ == "__main__":
-    main()

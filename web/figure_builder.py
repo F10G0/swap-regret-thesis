@@ -84,9 +84,6 @@ class FigureBuilder:
         return [(str(path.resolve()), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
                 for path in paths for stat in [path.stat()]]
 
-    def build(self, selection) -> dict:
-        return self._build(selection, self._contexts(selection.mode).get(selection.context_id), {})
-
     def build_collection(self, selection) -> dict:
         context = self._contexts(selection.mode).get(selection.context_id)
         paths = [path for profile in sorted(set(selection.profiles))

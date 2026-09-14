@@ -71,11 +71,6 @@
                 <details class="data-management">
                     <summary>Data management</summary>
                     <div class="maintenance-actions">
-                        <form id="rebuild-plots-form" method="post" action="{{ url_for('dashboard.rebuild_plots') }}">
-                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" data-busy-control {% if busy %}disabled{% endif %}>Rebuild figures</button>
-                        </form>
-
                         <form
                             method="post"
                             action="{{ url_for('dashboard.reset_results') }}"
@@ -89,7 +84,7 @@
                         </form>
                     </div>
 
-                    {{ file_list(experiments, "experiments-heading", "Raw experiment files", "dashboard.delete_experiment", "and rebuild all figures", busy, "No experiments recorded.") }}
+                    {{ file_list(experiments, "experiments-heading", "Raw experiment files", "dashboard.delete_experiment", "", busy, "No experiments recorded.") }}
                 </details>
             {% endif %}
         </aside>

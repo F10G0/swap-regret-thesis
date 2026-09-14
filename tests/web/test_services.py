@@ -6,7 +6,7 @@ import time
 import pytest
 
 from web.jobs import Job, JobManager, ServiceBusyError
-from web.services import DashboardService, PlotUpdateError
+from web.services import PlotUpdateError
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from tests.web.support import block_job_queue, create_service, create_test_app, wait_for_async_result, wait_for_job
 from web.validation import ExperimentForm
@@ -211,19 +211,28 @@ def test_custom_game_payoff_slice_rejects_invalid_selection(
         service.custom_game_payoff_slice(definition.id, payoff_player, row_player, column_player, fixed_actions)
 
 
-def test_fixed_delete_failure_removes_csv_and_clears_figures(tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["fixed", "adversarial"])
+def test_ordinary_deletion_preserves_results_until_invalidation_succeeds(tmp_path, monkeypatch, kind):
     service = create_service(tmp_path)
-    service.raw_dir.mkdir(parents=True)
-    service.figure_dir.mkdir(parents=True)
-    source = service.raw_dir / "result.csv"
+    raw_dir = service.raw_dir if kind == "fixed" else service.adversarial_raw_dir
+    delete = service.delete_experiment if kind == "fixed" else service.delete_adversarial_experiment
+    raw_dir.mkdir(parents=True)
+    source = raw_dir / "result.csv"
     source.write_bytes(b"recorded-result")
-    for name in ("old.png", "old.pdf"):
-        (service.figure_dir / name).write_bytes(b"old")
-    monkeypatch.setattr(service, "_publish_plots", lambda: (_ for _ in ()).throw(RuntimeError("plot failed")))
-    with pytest.raises(PlotUpdateError, match="deleted result.csv.*figures were cleared"):
-        service.delete_experiment(source.name)
+    retained = raw_dir / "retained.csv"
+    retained.write_bytes(b"retained-result")
+    artifact = service.figure_builder.output_dir / "derived.png"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"generated")
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "_clear_experiment_caches", lambda: (_ for _ in ()).throw(OSError("cleanup failed")))
+        with pytest.raises(OSError, match="cleanup failed"):
+            delete(source.name)
+        assert source.read_bytes() == b"recorded-result"
+    delete(source.name)
     assert not source.exists()
-    assert not list(service.figure_dir.iterdir())
+    assert not artifact.exists()
+    assert retained.read_bytes() == b"retained-result"
 
 
 def test_summary_loader_skips_malformed_result_file(tmp_path: Path) -> None:
@@ -292,6 +301,7 @@ def test_submission_runs_requested_replicates(
     completed = service.jobs.get(job.id)
     assert (completed.completed, completed.total) == (3, 3)
     assert len(list(service.raw_dir.glob("*.csv"))) == 3
+    assert not list(tmp_path.rglob("*.png")) and not list(tmp_path.rglob("*.pdf"))
     assert {
         summary["replicate"]
         for summary in service.result_snapshot().summaries()
@@ -325,93 +335,13 @@ def test_experiment_submissions_queue_and_reserve_run_ids(tmp_path: Path) -> Non
     assert len(list(service.raw_dir.glob("*.csv"))) == 2
 
 
-def test_plot_publication_combines_feedback_and_skips_invalid_files(tmp_path):
-    service = create_service(tmp_path)
-    run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=service.raw_dir, feedback_mode="full_information")
-    run_cross_play_experiment("rps", ["exp3_ix", "exp3_ix"], horizon=2, output_dir=service.raw_dir, feedback_mode="bandit")
-    for name in ("rps_broken.csv", "unrelated_broken.csv"):
-        (service.raw_dir / name).write_text("invalid\nvalue\n")
-    DashboardService._publish_plots(service, "rps")
-    figures = service.figure_records()
-    assert len(figures) == 12
-    assert {f["regret"] for f in figures} == {"external", "internal", "swap"}
-    assert {f["player"] for f in figures} == {0, 1}
-    assert {f["view"] for f in figures} == {"average", "sqrt_scaling"}
-    assert all((service.figure_dir / f["pdf_filename"]).is_file() for f in figures)
-
-
-def test_failed_plot_update_preserves_existing_figures(tmp_path: Path) -> None:
-    service = create_service(tmp_path)
-    service.figure_dir.mkdir(parents=True)
-    existing_figure = service.figure_dir / "rps_average_external_regret_player_0.png"
-    existing_figure.write_bytes(b"existing")
-
-    def fail_plot_update(game_name=None) -> None:
-        raise RuntimeError("plot failed")
-
-    service._publish_plots = fail_plot_update
-
-    job = service.submit_experiment(experiment_form())
-
-    assert wait_for_job(service, job.id) == "failed"
-    assert existing_figure.read_bytes() == b"existing"
-
-
-def test_adversarial_job_rebuilds_only_its_own_scope(tmp_path, monkeypatch):
-    from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT
-    from web.validation import AdversarialExperimentForm
-
-    service = create_service(tmp_path)
-    scopes = []
-    monkeypatch.setattr(service, "_publish_adversarial_plots", scopes.append)
-    form = AdversarialExperimentForm(RANDOM_WALK_ENVIRONMENT, "bandit", "auer_exp3",
-                                    7, 3, 11, 7, 2)
-    job = service.submit_adversarial_experiment(form)
-    assert wait_for_job(service, job.id) == "succeeded"
-    assert scopes == [(RANDOM_WALK_ENVIRONMENT, "bandit", 7)]
-
-
-def test_scoped_adversarial_publication_keeps_unrelated_figures(tmp_path, monkeypatch):
-    from experiments.plots import plot_adversarial as plots
-    from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT
-
-    service = create_service(tmp_path)
-    scope = (RANDOM_WALK_ENVIRONMENT, "bandit", 7)
-    prefix = plots.adversarial_figure_prefix(scope)
-    service.adversarial_figure_dir.mkdir(parents=True)
-    unrelated = service.adversarial_figure_dir / "adversarial_unrelated.png"
-    unrelated.write_bytes(b"keep")
-    stale = service.adversarial_figure_dir / f"{prefix}stale.pdf"
-    stale.write_bytes(b"old")
-
-    def plot(raw_dir, output_dir, skip_invalid, **kwargs):
-        assert kwargs["scope"] == scope
-        (output_dir / f"{prefix}new.png").write_bytes(b"new")
-
-    monkeypatch.setattr(plots, "plot_adversarial_results", plot)
-    service._publish_adversarial_plots(scope)
-    assert unrelated.read_bytes() == b"keep"
-    assert not stale.exists()
-    assert (service.adversarial_figure_dir / f"{prefix}new.png").read_bytes() == b"new"
-
-
-@pytest.mark.parametrize("result_kind", ["adversarial", "adversarial_scaling"])
-def test_one_player_delete_rolls_back_csv_and_figures_when_rebuild_fails(
+def test_scaling_delete_rolls_back_csv_and_figures_when_rebuild_fails(
     tmp_path: Path,
     monkeypatch,
-    result_kind: str,
 ) -> None:
     service = create_service(tmp_path)
-    if result_kind == "adversarial":
-        raw_dir = service.adversarial_raw_dir
-        figure_dir = service.adversarial_figure_dir
-        delete = service.delete_adversarial_experiment
-        rebuild_name = "_publish_adversarial_plots"
-    else:
-        raw_dir = service.adversarial_scaling_raw_dir
-        figure_dir = service.adversarial_scaling_figure_dir
-        delete = service.delete_adversarial_scaling_experiment
-        rebuild_name = "_publish_adversarial_scaling_plots"
+    raw_dir = service.adversarial_scaling_raw_dir
+    figure_dir = service.adversarial_scaling_figure_dir
 
     raw_dir.mkdir(parents=True)
     figure_dir.mkdir(parents=True)
@@ -421,12 +351,12 @@ def test_one_player_delete_rolls_back_csv_and_figures_when_rebuild_fails(
     figure_path.write_bytes(b"existing-figure")
     monkeypatch.setattr(
         service,
-        rebuild_name,
+        "_publish_adversarial_scaling_plots",
         lambda: (_ for _ in ()).throw(RuntimeError("plot failed")),
     )
 
     with pytest.raises(PlotUpdateError, match="were restored"):
-        delete(csv_path.name)
+        service.delete_adversarial_scaling_experiment(csv_path.name)
 
     assert csv_path.read_bytes() == b"recorded-result"
     assert figure_path.read_bytes() == b"existing-figure"

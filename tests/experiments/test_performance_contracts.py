@@ -195,7 +195,16 @@ def test_sparse_validation_still_rejects_corrupt_trajectories(tmp_path, mutate):
         list(iter_result_rows(path))
 
 
-def test_plot_loaders_align_legacy_dense_and_default_sparse_checkpoints(tmp_path):
+def test_plot_primitives_align_legacy_dense_and_default_sparse_checkpoints(tmp_path, monkeypatch):
+    from experiments.plots import plot_adversarial, plot_regret
+
+    def check_points(figure, output_path):
+        curve = figure.axes[0].lines[0]
+        assert list(curve.get_xdata()) == list(recording_checkpoints(2100))
+        assert len(curve.get_ydata()) <= 2000
+
+    monkeypatch.setattr(plot_adversarial, "save_figure_pair", check_points)
+    monkeypatch.setattr(plot_regret, "save_figure_pair", check_points)
     for runner, kwargs, loader in [
         (run_adversarial_experiment, dict(algorithm_name="auer_exp3", feedback_mode="bandit"),
          lambda path: load_adversarial_rows(path, max_points=2000)),
@@ -204,6 +213,11 @@ def test_plot_loaders_align_legacy_dense_and_default_sparse_checkpoints(tmp_path
         dense = runner(**kwargs, horizon=2100, output_dir=tmp_path / "dense", max_recorded_points=3000)
         sparse = runner(**kwargs, horizon=2100, output_dir=tmp_path / "sparse")
         assert [row["t"] for row in loader(dense)] == [row["t"] for row in loader(sparse)]
+        rows = loader(sparse)
+        if runner is run_adversarial_experiment:
+            plot_adversarial._plot_regret([(sparse, rows)], rows[0]["environment"], "bandit", int(rows[0]["n_actions"]), "external", True, tmp_path / "regret.png")
+        else:
+            plot_regret.plot_regret("rps", [[rows]], "external", 0, True, tmp_path)
 
 
 def test_replicate_aggregation_uses_only_shared_observed_times():

@@ -50,7 +50,7 @@
                         <button class="button-danger" type="submit" {% if busy or not (summaries or scaling_summaries or scaling_figures or warnings) %}disabled{% endif %}>Clear results</button>
                     </form>
                 </div>
-                {{ file_list(summaries, "adversarial-files-heading", "Adversarial CSV files", "dashboard.delete_adversarial_experiment", "and rebuild adversarial figures", busy) }}
+                {{ file_list(summaries, "adversarial-files-heading", "Adversarial CSV files", "dashboard.delete_adversarial_experiment", "", busy) }}
                 {{ file_list(scaling_summaries, "scaling-files-heading", "Action-scaling CSV files", "dashboard.delete_adversarial_scaling_experiment", "and rebuild scaling figures", busy) }}
             </details>
 {% endmacro %}

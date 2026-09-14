@@ -60,13 +60,12 @@ from web.validation import (
 logger = logging.getLogger(__name__)
 
 
-def _publish_figure_files(source_paths: list[Path], output_dir: Path, filename_prefix: str | tuple[str, ...] | None = None) -> None:
+def _publish_figure_files(source_paths: list[Path], output_dir: Path) -> None:
     generated_names = {path.name for path in source_paths}
     for path in source_paths:
         os.replace(path, output_dir / path.name)
     for path in output_dir.iterdir():
-        matches_prefix = filename_prefix is None or path.name.startswith(filename_prefix)
-        if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES and matches_prefix and path.name not in generated_names:
+        if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES and path.name not in generated_names:
             path.unlink()
 
 
@@ -120,7 +119,6 @@ class DashboardService:
         self.figure_dir = Path(figure_dir)
         self.adversarial_dir = self.results_dir / "adversarial"
         self.adversarial_raw_dir = self.adversarial_dir / "raw"
-        self.adversarial_figure_dir = self.adversarial_dir / "figures"
         self.adversarial_scaling_dir = self.adversarial_dir / "scaling"
         self.adversarial_scaling_raw_dir = self.adversarial_scaling_dir / "raw"
         self.adversarial_scaling_figure_dir = self.adversarial_scaling_dir / "figures"
@@ -219,7 +217,6 @@ class DashboardService:
             if self.raw_dir.exists() and any(path.name.startswith(result_prefix) for path in self.raw_dir.glob("*.csv")):
                 raise ValueError("delete the recorded experiments for this game before deleting the game")
             definition = self.game_catalog.delete(game_id)
-            self._clear_figure_files(game_id)
             return definition
 
         return self.jobs.run_maintenance(operation)
@@ -332,9 +329,7 @@ class DashboardService:
         description: str,
         run: Callable,
         task_kwargs: Callable,
-        rebuild: Callable[[], None],
         duplicate_message: str,
-        rebuild_error: str,
     ) -> Job:
         reserved = self.jobs.reserved_resources()
         missing = [
@@ -352,10 +347,6 @@ class DashboardService:
                 should_cancel=lambda: job.cancelled, completed=job.advance,
             )
             job.check_cancelled()
-            try:
-                rebuild()
-            except Exception as error:
-                raise PlotUpdateError(f"{rebuild_error}: {error}") from error
             return f"Completed {len(missing)} run(s); skipped {len(specs) - len(missing)} existing or queued"
 
         return self.jobs.submit(
@@ -408,9 +399,7 @@ class DashboardService:
             ),
             run_adversarial_experiment,
             task_kwargs,
-            lambda: self._publish_adversarial_plots((form.environment, form.feedback_mode, form.n_actions)),
             "all requested adversarial replicates already exist or are queued",
-            "adversarial runs were saved, but their figures could not be rebuilt",
         )
 
     def submit_adversarial_scaling_experiment(
@@ -454,21 +443,6 @@ class DashboardService:
             resource_keys={resource_key},
         )
 
-    def _publish_adversarial_plots(self, scope: tuple[str, str, int] | None = None) -> None:
-        from experiments.plots.plot_adversarial import adversarial_figure_prefix, plot_adversarial_results
-
-        plotter = plot_adversarial_results if scope is None else lambda input_dir, output_dir, skip_invalid: plot_adversarial_results(
-            input_dir, output_dir, skip_invalid=skip_invalid, scope=scope,
-        )
-
-        self._publish_generated_plots(
-            self.adversarial_raw_dir,
-            self.adversarial_figure_dir,
-            ".adversarial-figures-",
-            plotter,
-            filename_prefix=adversarial_figure_prefix(scope) if scope is not None else None,
-        )
-
     def _publish_adversarial_scaling_plots(self) -> None:
         from experiments.plots.plot_adversarial_scaling import (
             plot_adversarial_scaling_results,
@@ -487,7 +461,6 @@ class DashboardService:
         figure_dir: Path,
         prefix: str,
         plotter: Callable[..., object],
-        filename_prefix: str | tuple[str, ...] | None = None,
     ) -> None:
         parent_dir = figure_dir.parent
         parent_dir.mkdir(parents=True, exist_ok=True)
@@ -503,7 +476,7 @@ class DashboardService:
                 for path in temporary_path.iterdir()
                 if path.suffix.lower() in FIGURE_SUFFIXES
             ]
-            _publish_figure_files(generated_paths, figure_dir, filename_prefix)
+            _publish_figure_files(generated_paths, figure_dir)
 
     def _delete_result(
         self,
@@ -600,73 +573,11 @@ class DashboardService:
             self._publish_adversarial_scaling_plots,
         )
 
-    def adversarial_figure_records(self) -> list[dict]:
-        records = []
-        regret_pattern = re.compile(
-            r"adversarial_(.+?)_(full_information|bandit)_(\d+)_actions_(average_)?"
-            r"(external|internal|swap)_regret"
-            r"(_over_sqrt_t)?\.png"
-        )
-        for path in sorted(self.adversarial_figure_dir.glob("*.png")):
-            match = regret_pattern.fullmatch(path.name)
-            if match is None:
-                continue
-            environment = match.group(1)
-            if environment not in ENVIRONMENT_LABELS:
-                continue
-            average = match.group(4) is not None
-            scaled = match.group(6) is not None
-            if average == scaled:
-                continue
-            records.append({
-                **_figure_file_record(path),
-                "environment": environment,
-                "environment_label": ENVIRONMENT_LABELS[environment],
-                "feedback_mode": match.group(2),
-                "feedback_label": FEEDBACK_MODE_LABELS[match.group(2)],
-                "n_actions": int(match.group(3)),
-                "regret": match.group(5),
-                "view": "average" if average else "sqrt_scaling",
-            })
-        regret_order = {"external": 0, "internal": 1, "swap": 2}
-        view_order = {"average": 0, "sqrt_scaling": 1}
-        environment_order = {
-            environment: index
-            for index, environment in enumerate(ENVIRONMENT_LABELS)
-        }
-        feedback_order = {
-            feedback: index
-            for index, feedback in enumerate(FEEDBACK_MODE_LABELS)
-        }
-        return sorted(
-            records,
-            key=lambda record: (
-                environment_order[record["environment"]],
-                feedback_order[record["feedback_mode"]],
-                view_order[record["view"]],
-                record["n_actions"],
-                regret_order[record["regret"]],
-                record["filename"],
-            ),
-        )
-
     def validate_adversarial_csv_filename(self, filename: str) -> str:
         return _validate_result_file(self.adversarial_raw_dir, filename, ".csv")
 
-    def validate_adversarial_figure_filename(self, filename: str) -> str:
-        return _validate_result_figure(
-            self.adversarial_figure_dir,
-            filename,
-            self.adversarial_figure_records(),
-        )
-
     def delete_adversarial_experiment(self, filename: str) -> None:
-        self._delete_result(
-            self.adversarial_raw_dir,
-            self.adversarial_figure_dir,
-            filename,
-            self._publish_adversarial_plots,
-        )
+        self._delete_ordinary_result(self.adversarial_raw_dir, filename)
 
     def clear_adversarial_results(self) -> tuple[int, int]:
         def operation() -> tuple[int, int]:
@@ -718,47 +629,8 @@ class DashboardService:
             f"{form.game}: {algorithm_profile_label(form.algorithm_names)}",
             run_cross_play_experiment,
             task_kwargs,
-            lambda: self._publish_plots(form.game),
             "all requested replicates already exist or are queued",
-            "experiments were saved, but their figures could not be rebuilt",
         )
-
-    def submit_plot_rebuild(self) -> Job:
-        return self.jobs.submit(
-            "Rebuild all figures",
-            lambda job: self._rebuild_all_plots(job),
-        )
-
-    def _rebuild_all_plots(self, job: JobContext) -> str:
-        job.check_cancelled()
-        self._publish_plots()
-        self._publish_adversarial_plots()
-        self._publish_adversarial_scaling_plots()
-        job.advance()
-        return "Rebuilt all figures"
-
-    def _publish_plots(self, game_name: str | None = None) -> None:
-        from experiments.plots.plot_regret import (
-            plot_all_results,
-            plot_selected_results,
-        )
-
-        plotter = plot_all_results if game_name is None else lambda input_dir, output_dir, skip_invalid: plot_selected_results(game_name, input_dir, output_dir, skip_invalid)
-        self._publish_generated_plots(
-            self.raw_dir,
-            self.figure_dir,
-            ".figures-",
-            plotter,
-            tuple(f"{game}_" for game in self.games) if game_name is None else f"{game_name}_",
-        )
-
-    def _clear_figure_files(self, game_name: str | None = None) -> None:
-        if not self.figure_dir.exists():
-            return
-        for path in self.figure_dir.iterdir():
-            matches_game = game_name is None or path.name.startswith(f"{game_name}_")
-            if path.suffix.lower() in FIGURE_SUFFIXES and matches_game:
-                path.unlink()
 
     @property
     def detail_figure_dir(self) -> Path:
@@ -968,25 +840,20 @@ class DashboardService:
             self._clear_generated_artifacts((self.detail_figure_dir,))
 
     def delete_experiment(self, filename: str) -> None:
+        self._delete_ordinary_result(self.raw_dir, filename)
+
+    def _delete_ordinary_result(self, directory: Path, filename: str) -> None:
         filename = validate_leaf_filename(filename, ".csv")
 
         def operation() -> None:
-            csv_path = self.raw_dir / filename
+            csv_path = directory / filename
             if not csv_path.is_file():
                 raise FileNotFoundError(f"experiment {filename} does not exist")
 
-            self._invalidate_detail_figures()
-            csv_path.unlink()
+            if directory == self.raw_dir:
+                self._invalidate_detail_figures()
             self._clear_experiment_caches()
-            self._clear_generated_artifacts((self.figure_dir,))
-            try:
-                self._publish_plots()
-            except Exception as error:
-                self._clear_figure_files()
-                raise PlotUpdateError(
-                    f"deleted {filename}, but figure rebuilding failed; existing "
-                    f"figures were cleared: {error}"
-                ) from error
+            csv_path.unlink()
 
         self.jobs.run_maintenance(operation)
 
@@ -1005,48 +872,5 @@ class DashboardService:
     def result_snapshot(self, kind: ResultKind = "fixed") -> ResultSet:
         return self.results[kind].snapshot(self.game_definitions if kind == "fixed" else None)
 
-    def figure_records(self) -> list[dict]:
-        if not self.figure_dir.exists():
-            return []
-
-        records = []
-        for path in sorted(self.figure_dir.glob("*.png")):
-            metadata = self._parse_figure_filename(path.name)
-            if metadata is not None:
-                records.append({**_figure_file_record(path), **metadata})
-        regret_order = {"external": 0, "internal": 1, "swap": 2}
-        return sorted(records, key=lambda record: (record["view"], record["player"], regret_order[record["regret"]]))
-
-    def _parse_figure_filename(self, filename: str) -> dict | None:
-        for game_name in sorted(self.games, key=len, reverse=True):
-            prefix = f"{game_name}_"
-            if not filename.startswith(prefix):
-                continue
-
-            remainder = filename[len(prefix):]
-            average_match = re.fullmatch(
-                r"average_(external|internal|swap)_"
-                r"regret_player_(\d+)\.(?:png|pdf)",
-                remainder,
-            )
-            scaling_match = re.fullmatch(
-                r"(external|internal|swap)_"
-                r"regret_over_sqrt_t_player_(\d+)\.(?:png|pdf)",
-                remainder,
-            )
-            match = average_match or scaling_match
-            if match is None:
-                return None
-            return {
-                "game": game_name,
-                "regret": match.group(1),
-                "player": int(match.group(2)),
-                "view": "average" if average_match else "sqrt_scaling",
-            }
-        return None
-
     def validate_csv_filename(self, filename: str) -> str:
         return validate_leaf_filename(filename, ".csv")
-
-    def validate_figure_filename(self, filename: str) -> str:
-        return _validate_result_figure(self.figure_dir, filename, self.figure_records())

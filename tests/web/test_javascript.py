@@ -252,7 +252,7 @@ w.eval(payload.script);
 
 
 def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> None:
-    app, service = create_test_app(tmp_path, disable_adversarial_plots=True)
+    app, service = create_test_app(tmp_path)
     client = app.test_client()
     for form in (
         VALID_FORM,

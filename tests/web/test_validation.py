@@ -122,16 +122,6 @@ def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 2
 
 
-def test_plot_rebuild_uses_standard_redirect(tmp_path: Path) -> None:
-    app, service = create_test_app(tmp_path)
-    client = app.test_client()
-    response = client.post("/plots/rebuild", data={"_csrf_token": csrf_token(client)})
-
-    assert response.status_code == 302
-    job = service.jobs.recent()[0]
-    assert wait_for_job(service, job.id) == "succeeded"
-
-
 def test_dashboard_group_details_downloads_figures_and_deletion(tmp_path):
     app, service = create_test_app(tmp_path)
     paths = [run_cross_play_experiment(

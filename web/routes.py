@@ -27,7 +27,6 @@ from web.validation import (
     parse_adversarial_experiment_form,
     parse_adversarial_scaling_form,
     parse_experiment_form,
-    parse_figure_selection,
     parse_profile_selection,
     parse_non_negative_integer,
     parse_positive_integer,
@@ -178,12 +177,6 @@ def download_adversarial_scaling_experiment(filename: str):
     return _send_result(filename, service.validate_adversarial_scaling_csv_filename, service.adversarial_scaling_raw_dir, True)
 
 
-@dashboard.get("/adversarial/figures/<filename>")
-def adversarial_figure(filename: str):
-    service = get_service()
-    return _send_result(filename, service.validate_adversarial_figure_filename, service.adversarial_figure_dir)
-
-
 @dashboard.get("/adversarial/action-scaling/figures/<filename>")
 def adversarial_scaling_figure(filename: str):
     service = get_service()
@@ -194,7 +187,7 @@ def adversarial_scaling_figure(filename: str):
 def delete_adversarial_experiment():
     return _delete_one_player_result(
         get_service().delete_adversarial_experiment,
-        "Deleted {filename} and rebuilt adversarial figures.",
+        "Deleted {filename}.",
     )
 
 
@@ -299,17 +292,6 @@ def delete_custom_game():
     return redirect(url_for("dashboard.custom_games"))
 
 
-@dashboard.post("/plots/rebuild")
-def rebuild_plots():
-    try:
-        job = get_service().submit_plot_rebuild()
-    except ServiceBusyError as error:
-        flash(str(error), "error")
-    else:
-        flash(f"Queued plot job {job.id[:8]}.", "success")
-    return redirect(url_for("dashboard.index"))
-
-
 @dashboard.get("/jobs/<job_id>")
 def job_status(job_id: str):
     job = get_service().jobs.get(job_id)
@@ -337,29 +319,12 @@ def cancel_job(job_id: str):
     )
 
 
-@dashboard.get("/figures/<filename>")
-def serve_figure(filename: str):
-    service = get_service()
-    return _send_result(filename, service.validate_figure_filename, service.figure_dir)
-
-
 @dashboard.get("/figure-builder/options")
 def figure_builder_options():
     try:
         return jsonify(get_service().figure_builder.catalog(request.args.get("mode", "fixed")))
     except ValueError as error:
         return jsonify(error=str(error)), 400
-
-
-@dashboard.post("/figure-builder")
-def build_selected_figure():
-    try:
-        result = get_service().figure_builder.build(parse_figure_selection(request.form))
-    except (ValueError, FileNotFoundError) as error:
-        return jsonify(error=str(error)), 400
-    result["url"] = url_for("dashboard.selected_figure", filename=result["filename"])
-    result["pdf_url"] = url_for("dashboard.selected_figure", filename=result["pdf_filename"])
-    return jsonify(result)
 
 
 @dashboard.post("/figure-builder/collection")
@@ -387,15 +352,10 @@ def selected_figure(filename: str):
 def download_filtered_figures():
     service = get_service()
     mode = request.form.get("mode")
-    if mode == "fixed":
-        directory, validator = service.figure_dir, service.validate_figure_filename
-    elif mode == "adversarial":
-        directory, validator = service.adversarial_figure_dir, service.validate_adversarial_figure_filename
-    elif mode == "figure_builder":
-        directory = service.figure_builder.output_dir
-        validator = lambda filename: service.figure_builder.artifact_path(filename).name
-    else:
+    if mode != "figure_builder":
         return jsonify(error="Unknown experiment mode."), 400
+    directory = service.figure_builder.output_dir
+    validator = lambda filename: service.figure_builder.artifact_path(filename).name
     filenames = request.form.getlist("filenames")
     if not filenames:
         return jsonify(error="No figures match the current filters."), 400
@@ -412,7 +372,7 @@ def download_filtered_figures():
     try:
         output = merged_figure_pdf(paths)
     except (OSError, ValueError, PyPdfError):
-        return jsonify(error="Could not read a selected figure. Rebuild the figures and try again."), 422
+        return jsonify(error="Could not read a selected figure. Generate the figures again and retry."), 422
 
     response = send_file(
         output,
@@ -507,13 +467,12 @@ def delete_experiment():
     except (
         KeyError,
         FileNotFoundError,
-        PlotUpdateError,
         ServiceBusyError,
         ValueError,
     ) as error:
         flash(str(error), "error")
     else:
-        flash(f"Deleted {filename} and rebuilt the figures.", "success")
+        flash(f"Deleted {filename}.", "success")
     return redirect(url_for("dashboard.index"))
 
 

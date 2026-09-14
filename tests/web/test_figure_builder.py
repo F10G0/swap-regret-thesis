@@ -15,12 +15,11 @@ from experiments.plots.style import profile_label
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
 from tests.web.support import create_test_app, csrf_token, record_fixed_runs as result
 from tests.support import read_csv_rows
-from web.validation import FigureSelection, parse_figure_selection, parse_profile_selection
+from web.validation import parse_profile_selection
 
 
-def form(context, profiles, **changes):
-    return {"mode": context["mode"], "context_id": context["id"], "metric": "swap", "view": "average",
-            "profiles": profiles} | changes
+def form(context, profiles):
+    return {"mode": context["mode"], "context_id": context["id"], "profiles": profiles}
 
 
 def context_for(service, mode="fixed", **criteria):
@@ -34,22 +33,22 @@ def digest_files(directory):
 
 
 def test_multi_select_is_canonical_and_never_defaults_to_all():
-    data = MultiDict([("mode", "fixed"), ("context_id", "a" * 24), ("metric", "swap"), ("view", "average"),
-                      ("profiles", "ito_vs_ito"), ("profiles", "hedge_vs_hedge"), ("profiles", "ito_vs_ito")])
-    selection = parse_figure_selection(data)
+    data = MultiDict([("mode", "fixed"), ("context_id", "a" * 24), ("profiles", "ito_vs_ito"),
+                      ("profiles", "hedge_vs_hedge"), ("profiles", "ito_vs_ito")])
+    selection = parse_profile_selection(data)
     assert selection.profiles == ("hedge_vs_hedge", "ito_vs_ito")
     data.poplist("profiles")
     with pytest.raises(ValueError, match="at least one"):
-        parse_figure_selection(data)
+        parse_profile_selection(data)
 
 
 @pytest.mark.parametrize("changes", [
-    {"mode": "unknown"}, {"context_id": "../outside"}, {"metric": "unknown"},
-    {"view": "unknown"}, {"profiles": ["../outside"]}, {"profiles": [None]},
+    {"mode": "unknown"}, {"context_id": "../outside"},
+    {"profiles": ["../outside"]}, {"profiles": [None]},
 ])
 def test_selection_rejects_invalid_inputs(changes):
     with pytest.raises(ValueError):
-        parse_figure_selection(dict(mode="fixed", context_id="a" * 24, metric="swap", view="average", profiles=["hedge_vs_hedge"]) | changes)
+        parse_profile_selection(dict(mode="fixed", context_id="a" * 24, profiles=["hedge_vs_hedge"]) | changes)
 
 
 def test_options_use_real_groups_and_separate_incompatible_metadata(tmp_path):
@@ -78,15 +77,18 @@ def test_options_use_real_groups_and_separate_incompatible_metadata(tmp_path):
 def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, monkeypatch):
     import experiments.plots.plot_regret as plotting
     import web.figure_builder as builder
-    app, service = create_test_app(tmp_path)
+    _, service = create_test_app(tmp_path)
     paths = result(service, "hedge_vs_hedge")
     result(service, "ito_vs_ito")
     context = context_for(service, player=0)
-    build = lambda profiles, **kwargs: service.figure_builder.build(parse_figure_selection(form(context, profiles, **kwargs)))
+
+    def build(profiles, metric="swap", view="average"):
+        collection = service.figure_builder.build_collection(parse_profile_selection(form(context, profiles)))
+        return next(figure for figure in collection["figures"] if (figure["metric"], figure["view"]) == (metric, view))
+
     with pytest.raises(ValueError, match="at least one"):
-        service.figure_builder.build(FigureSelection("fixed", context["id"], "swap", "average", ()))
-    first = service.figure_builder.build(FigureSelection("fixed", context["id"], "swap", "average",
-        ("ito_vs_ito", "hedge_vs_hedge", "ito_vs_ito")))
+        build([])
+    first = build(["ito_vs_ito", "hedge_vs_hedge", "ito_vs_ito"])
     assert first["profiles"] == ["hedge_vs_hedge", "ito_vs_ito"]
     output = service.figure_builder.output_dir / first["filename"]
     timestamp = output.stat().st_mtime_ns
@@ -103,49 +105,6 @@ def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, mo
     assert styled["artifact_id"] != one["artifact_id"]
     paths[0].touch()
     assert build(["hedge_vs_hedge"])["artifact_id"] != styled["artifact_id"]
-
-
-@pytest.mark.parametrize("mode,relative_paths", [("fixed", True), ("adversarial", False)])
-def test_selected_png_pdf_routes_and_compatibility_boundaries(tmp_path, mode, relative_paths, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    app, service = create_test_app(Path("results") if relative_paths else tmp_path)
-    if mode == "fixed":
-        profile = "auer_exp3_vs_bm"
-        result(service, profile, mode="bandit")
-        result(service, "hedge_vs_hedge")
-    else:
-        profile = "auer_exp3"
-        for name in (profile, "ito"):
-            for replicate in (0, 1):
-                run_adversarial_experiment(name, n_actions=3, horizon=30, seed=42,
-                    replicate=replicate, environment=RANDOM_WALK_ENVIRONMENT,
-                    feedback_mode="bandit", output_dir=service.adversarial_raw_dir)
-        run_adversarial_experiment("hedge", horizon=30, output_dir=service.adversarial_raw_dir)
-    context = context_for(service, mode, player=0, feedback_mode="bandit")
-    client = app.test_client()
-    data = form(context, [profile]) | {"_csrf_token": csrf_token(client)}
-    originals = digest_files(tmp_path)
-    response = client.post("/figure-builder", data=data)
-    assert response.status_code == 200
-    artifact_path = service.figure_builder.artifact_path(response.json["filename"])
-    assert artifact_path.is_absolute()
-    image = client.get(response.json["url"])
-    pdf = client.get(response.json["pdf_url"])
-    assert image.status_code == pdf.status_code == 200
-    assert image.mimetype == "image/png" and image.data.startswith(b"\x89PNG")
-    assert pdf.mimetype == "application/pdf" and "attachment" in pdf.headers["Content-Disposition"]
-    assert len(PdfReader(BytesIO(pdf.data)).pages) == 1
-    assert client.post("/figure-builder", data=data | {"profiles": []}).status_code == 400
-    assert client.post("/figure-builder", data=data | {"profiles": ["hedge_vs_hedge" if mode == "fixed" else "hedge"]}).status_code == 400
-    assert client.post("/figure-builder", data=data | {"context_id": "b" * 24}).status_code == 400
-    assert client.post("/figure-builder", data=form(context, [profile])).status_code == 400
-    assert client.get("/figure-builder/files/../outside.pdf").status_code == 404
-    outside = tmp_path / "outside.pdf"
-    outside.write_bytes(b"private")
-    (service.figure_builder.output_dir / "link.pdf").symlink_to(outside)
-    assert client.get("/figure-builder/files/link.pdf").status_code == 404
-    assert digest_files(tmp_path) == originals
-    assert not service.jobs.recent()
 
 
 @pytest.mark.parametrize("mode", ["fixed", "adversarial"])
@@ -286,5 +245,5 @@ def test_builder_rejects_source_mutation_before_publication(tmp_path, monkeypatc
 
     monkeypatch.setattr(plotting, "plot_regret", render)
     with pytest.raises(ValueError, match="Results changed during rendering"):
-        service.figure_builder.build(parse_figure_selection(form(context, ["hedge_vs_hedge"])))
+        service.figure_builder.build_collection(parse_profile_selection(form(context, ["hedge_vs_hedge"])))
     assert not list(service.figure_builder.output_dir.iterdir())

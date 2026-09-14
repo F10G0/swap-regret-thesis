@@ -150,7 +150,7 @@
                     {% for row in rows %}
                         <li>
                             <a href="{{ row.download_url }}" title="Download {{ row.filename }}">{{ row.filename }}</a>
-                            <form method="post" action="{{ url_for(delete_endpoint) }}" data-confirm="Delete {{ row.filename }} {{ delete_detail }}?">
+                            <form method="post" action="{{ url_for(delete_endpoint) }}" data-confirm="Delete {{ row.filename }}{% if delete_detail %} {{ delete_detail }}{% endif %}?">
                                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="filename" value="{{ row.filename }}">
                                 <button class="icon-button" type="submit" aria-label="Delete {{ row.filename }}" data-busy-control {% if busy %}disabled{% endif %}>Delete</button>

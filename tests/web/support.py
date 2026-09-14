@@ -25,25 +25,20 @@ def record_fixed_runs(service, profile, *, mode="full_information", game="rps", 
 
 
 def create_service(tmp_path: Path) -> DashboardService:
-    service = DashboardService(
+    return DashboardService(
         results_dir=tmp_path,
         raw_dir=tmp_path / "raw",
         figure_dir=tmp_path / "figures",
         custom_game_dir=tmp_path / "custom-games",
     )
-    service._publish_plots = lambda game_name=None: None
-    return service
 
 
 def create_test_app(
     tmp_path: Path,
     *,
     max_replicates: int = 100,
-    disable_adversarial_plots: bool = False,
 ):
     service = create_service(tmp_path)
-    if disable_adversarial_plots:
-        service._publish_adversarial_plots = lambda scope=None: None
     config = {
         "TESTING": True,
         "SECRET_KEY": "test-secret",

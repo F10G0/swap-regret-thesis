@@ -84,8 +84,8 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
     raw = tmp_path / "raw"
     output = tmp_path / (family + ".png")
     if family in {"rps", "bandit"}:
-        fixed_results(raw, family == "bandit")
-        groups = module.group_replicate_runs(module.collect_results(raw)["rps"])
+        rows = [module.load_rows(path) for path in fixed_results(raw, family == "bandit")]
+        groups = [rows[:2], rows[2:]]
         module.plot_regret("rps", groups, "swap", 0, True, tmp_path)
     elif family == "ilrw":
         for name in ("auer_exp3", "bm", "ito", "exp3_ix", "lce_ix"):
@@ -93,7 +93,8 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
                 run_adversarial_experiment(name, n_actions=9, horizon=100, seed=42,
                     feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT,
                     environment_seed=7, replicate=replicate, output_dir=raw)
-        module._plot_regret(module.collect_adversarial_results(raw), RANDOM_WALK_ENVIRONMENT,
+        runs = [(path, module.load_adversarial_rows(path)) for path in sorted(raw.glob("*.csv"))]
+        module._plot_regret(runs, RANDOM_WALK_ENVIRONMENT,
                             "bandit", 9, "swap", False, output)
     elif family == "scaling":
         spec = AdversarialScalingSpec(environment=RANDOM_WALK_ENVIRONMENT,

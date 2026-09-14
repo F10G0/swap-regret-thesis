@@ -33,12 +33,6 @@ FIXED_COMPARISON_FIELDS = ("game", "game_payoff_digest", "feedback_mode", "horiz
                            "stationary_method", "implementation_version", "runtime_fingerprint")
 
 
-def fixed_plot_key(row: dict[str, str]) -> tuple:
-    # Plotting groups wire strings and the persisted profile label, not decoded
-    # metadata. Field order is immaterial here: groups retain insertion order.
-    return (*(row.get(field, "") for field in FIXED_COMPARISON_FIELDS), row.get("algorithm", ""))
-
-
 def adversarial_plot_key(row: dict[str, str]) -> tuple:
     # Unlike builder compatibility, this key includes reward_step, retains wire
     # strings, and determines plot sorting. Do not substitute comparison_key.

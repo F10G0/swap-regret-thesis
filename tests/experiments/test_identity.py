@@ -4,14 +4,13 @@ from hashlib import sha256
 import json
 import os
 
-import experiments.plots.plot_regret as plot_regret_module
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 from experiments.scenarios.cross_play import run_cross_play_experiment, player_seed
 from experiments.game_catalog import GameCatalog, payoff_tensor_digest
-from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret
+from experiments.plots.plot_regret import aggregate_metric_curve, plot_regret
 from experiments.plots.style import curve_labels
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
 from experiments.results import (
@@ -66,19 +65,6 @@ def write_result(path, spec: ExperimentSpec) -> None:
                         "player": player,
                     }
                 )
-
-
-def test_fixed_plotting_retains_duplicate_replicates_but_rejects_duplicate_run_ids(tmp_path):
-    import shutil
-    from experiments.plots.plot_regret import collect_results, group_replicate_runs
-
-    rows = {name: [{"replicate": replicate, "game": "rps"}] for name, replicate in
-            (("last", "4"), ("first", "3"), ("duplicate", "3"))}
-    assert group_replicate_runs(rows) == [[rows["first"], rows["duplicate"], rows["last"]]]
-    path = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=tmp_path, feedback_mode="full_information")
-    shutil.copyfile(path, tmp_path / "duplicate.csv")
-    with pytest.raises(ValueError, match="duplicate run_id"):
-        collect_results(tmp_path)
 
 
 def test_run_id_changes_with_experiment_configuration() -> None:
@@ -247,17 +233,6 @@ def test_metric_curves_are_averaged_across_replicates() -> None:
     assert np.array_equal(means, [2.0, 3.0])
 
 
-def test_plot_collection_keeps_feedback_modes_separate(tmp_path) -> None:
-    full_spec = make_spec(feedback_mode="full_information")
-    bandit_spec = make_spec(feedback_mode="bandit")
-    write_result(tmp_path / f"{full_spec.run_id}.csv", full_spec)
-    write_result(tmp_path / f"{bandit_spec.run_id}.csv", bandit_spec)
-
-    results = collect_results(tmp_path)
-
-    assert set(results["rps"]) == {full_spec.run_id, bandit_spec.run_id}
-
-
 def test_fixed_game_loader_rejects_missing_version(tmp_path) -> None:
     spec = make_spec()
     result_path = tmp_path / f"{spec.run_id}.csv"
@@ -278,35 +253,6 @@ def test_fixed_game_loader_rejects_missing_version(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="incompatible result implementation_version 0"):
         list(iter_result_rows(result_path))
-
-
-def test_plot_collection_reuses_validated_sample_cache(tmp_path, monkeypatch) -> None:
-    spec = make_spec()
-    write_result(tmp_path / f"{spec.run_id}.csv", spec)
-    cache_dir = tmp_path / "cache"
-    expected = collect_results(tmp_path, cache_dir=cache_dir)
-
-    def fail_if_csv_is_read(path):
-        raise AssertionError(f"unexpected CSV read: {path}")
-
-    monkeypatch.setattr(plot_regret_module, "iter_result_rows", fail_if_csv_is_read)
-
-    assert collect_results(tmp_path, cache_dir=cache_dir) == expected
-
-
-def test_plot_collection_invalidates_cache_when_source_changes(tmp_path, monkeypatch) -> None:
-    spec = make_spec()
-    result_path = tmp_path / f"{spec.run_id}.csv"
-    write_result(result_path, spec)
-    cache_dir = tmp_path / "cache"
-    collect_results(tmp_path, cache_dir=cache_dir)
-    stat = result_path.stat()
-    os.utime(result_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
-
-    monkeypatch.setattr(plot_regret_module, "iter_result_rows", lambda path: (_ for _ in ()).throw(AssertionError(path)))
-
-    with pytest.raises(AssertionError):
-        collect_results(tmp_path, cache_dir=cache_dir)
 
 
 def test_plot_legend_uses_algorithm_abbreviations() -> None:

@@ -9,7 +9,7 @@ from experiments.game_catalog import (
     CUSTOM_GAME_PREFIX,
     GameCatalog,
 )
-from experiments.plots.plot_regret import plot_selected_results
+from experiments.plots.plot_regret import load_rows, plot_regret
 from tests.support import read_csv_rows
 
 
@@ -145,7 +145,7 @@ def test_custom_game_can_be_deleted_without_affecting_other_games(tmp_path) -> N
         catalog.delete("rps")
 
 
-def test_three_player_custom_game_runs_and_plots_regret_for_every_player(tmp_path) -> None:
+def test_three_player_custom_game_runs_and_plots_selected_player_regret(tmp_path) -> None:
     game_dir = tmp_path / "games"
     raw_dir = tmp_path / "raw"
     figure_dir = tmp_path / "figures"
@@ -167,7 +167,7 @@ def test_three_player_custom_game_runs_and_plots_regret_for_every_player(tmp_pat
     assert "player_algorithm" not in rows[0]
     assert "average_swap_regret" in rows[0]
 
-    plot_selected_results(definition.id, raw_dir, figure_dir)
+    plot_regret(definition.id, [[load_rows(output_path)]], "external", 2, True, figure_dir)
 
     assert (figure_dir / f"{definition.id}_average_external_regret_player_2.png").is_file()
 

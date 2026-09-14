@@ -2,10 +2,7 @@ import csv
 
 import pytest
 
-from experiments.plots.plot_adversarial import (
-    aggregate_adversarial_regret,
-    plot_adversarial_results,
-)
+from experiments.plots.plot_adversarial import aggregate_adversarial_regret
 from experiments.runner import ExperimentCancelled
 from experiments.seeding import (
     ENVIRONMENT_SEED_DOMAIN,
@@ -325,73 +322,6 @@ def test_adversarial_experiment_is_atomic_on_cancellation(tmp_path) -> None:
         )
 
     assert list(tmp_path.iterdir()) == []
-
-
-def test_adversarial_plotter_creates_average_and_scaled_regret_figures(
-    tmp_path,
-) -> None:
-    raw_dir = tmp_path / "raw"
-    figure_dir = tmp_path / "figures"
-    run_adversarial_experiment(
-        "hedge",
-        n_actions=3,
-        horizon=5,
-        seed=7,
-        output_dir=raw_dir,
-    )
-    run_adversarial_experiment(
-        "exp3_ix",
-        feedback_mode="bandit",
-        environment=RANDOM_WALK_ENVIRONMENT,
-        environment_seed=17,
-        n_actions=3,
-        horizon=5,
-        seed=8,
-        output_dir=raw_dir,
-    )
-
-    generated = plot_adversarial_results(raw_dir, figure_dir)
-
-    expected_regret_figures = {
-        f"adversarial_{environment}_{feedback}_3_actions_average_{regret}_regret.png"
-        for environment, feedback in (
-            (HISTORICAL_FREQUENCY_ENVIRONMENT, "full_information"),
-            (RANDOM_WALK_ENVIRONMENT, "bandit"),
-        )
-        for regret in ("external", "internal", "swap")
-    }
-    expected_scaling_figures = {
-        f"adversarial_{environment}_{feedback}_3_actions_{regret}_regret_over_sqrt_t.png"
-        for environment, feedback in (
-            (HISTORICAL_FREQUENCY_ENVIRONMENT, "full_information"),
-            (RANDOM_WALK_ENVIRONMENT, "bandit"),
-        )
-        for regret in ("external", "internal", "swap")
-    }
-    assert len(generated) == 12
-    assert {path.name for path in generated} == expected_regret_figures | expected_scaling_figures
-    assert all(path.with_suffix(".pdf").is_file() for path in generated)
-
-
-def test_adversarial_plotter_caches_mean_only_figures_for_replicates(tmp_path) -> None:
-    raw_dir = tmp_path / "raw"
-    figure_dir = tmp_path / "figures"
-    run_adversarial_experiment("hedge", horizon=5, seed=7, output_dir=raw_dir)
-    run_adversarial_experiment(
-        "hedge",
-        horizon=5,
-        seed=7,
-        replicate=1,
-        output_dir=raw_dir,
-    )
-
-    generated = plot_adversarial_results(raw_dir, figure_dir)
-
-    regret_path = next(path for path in generated if "average_external" in path.name)
-    assert regret_path.is_file()
-    assert regret_path.with_suffix(".pdf").is_file()
-    assert len(list(figure_dir.glob("*.png"))) == len(generated)
-    assert len(list(figure_dir.glob("*.pdf"))) == len(generated)
 
 
 @pytest.mark.parametrize(

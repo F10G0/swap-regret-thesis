@@ -27,7 +27,7 @@ CUSTOM_GAME_DIR ?= data/custom_games
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n"} /^##@ / {printf "\n%s:\n", substr($$0, 5)} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-all: install plot ## Install and refresh existing plots
+all: install plot ## Install and refresh scaling plots
 
 ##@ Setup
 
@@ -41,9 +41,7 @@ web: ## Start the local experiment dashboard
 
 ##@ Generated outputs
 
-plot: ## Regenerate plots from existing raw results
-	$(PYTHON) -m experiments.plots.plot_regret
-	$(PYTHON) -m experiments.plots.plot_adversarial
+plot: ## Regenerate action-space scaling plots from existing results
 	$(PYTHON) -m experiments.plots.plot_adversarial_scaling
 
 ##@ Validation

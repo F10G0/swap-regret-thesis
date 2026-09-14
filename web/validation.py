@@ -22,15 +22,6 @@ class FigureSelection:
     profiles: tuple[str, ...]
 
 
-def parse_figure_selection(values: Mapping[str, str]) -> FigureSelection:
-    selection = parse_profile_selection(values)
-    metric = values.get("metric", "")
-    view = values.get("view", "")
-    if metric not in {"external", "internal", "swap"} or view not in {"average", "sqrt_scaling"}:
-        raise ValueError("Unknown regret metric or view")
-    return FigureSelection(selection.mode, selection.context_id, metric, view, selection.profiles)
-
-
 def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
     mode = values.get("mode", "")
     context_id = values.get("context_id", "")

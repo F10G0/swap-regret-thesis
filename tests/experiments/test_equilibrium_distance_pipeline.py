@@ -165,17 +165,3 @@ def test_selected_horizons_use_exact_compressed_action_history(tmp_path, monkeyp
         np.add.at(counts, tuple(profiles[:horizon].T), 1)
         np.testing.assert_array_equal(vector, counts.ravel() / horizon)
 
-
-def test_cleanup_removes_only_distance_figure_files(tmp_path):
-    remove = {"foo_equilibrium_distance.png", "foo_equilibrium_distance.pdf",
-              "group_replicate_mean_equilibrium_distance.png", "group_replicate_mean_equilibrium_distance.PDF"}
-    keep = {"foo_joint_actions_blue_lower_origin.png", "unrelated.png", "foo_equilibrium_distance.csv",
-            "foo_equilibrium_distance_detail.png", "payoffs.pdf"}
-    for name in remove | keep:
-        (tmp_path / name).write_bytes(b"unchanged")
-    (tmp_path / "directory_equilibrium_distance.png").mkdir()
-    removed = plotting.remove_equilibrium_distance_figures(tmp_path)
-    assert {path.name for path in removed} == remove
-    for name in keep:
-        assert (tmp_path / name).read_bytes() == b"unchanged"
-    assert (tmp_path / "directory_equilibrium_distance.png").is_dir()

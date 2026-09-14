@@ -18,7 +18,7 @@ import numpy as np
 
 from config import CUSTOM_GAME_DIR, EQUILIBRIUM_LP_TOLERANCE
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
-from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
+from experiments.plots import save_figure_pair
 from experiments.plots.style import publication_plot, finish_line_figure
 from experiments.result_trajectories import load_result_action_profiles
 from experiments.results import iter_result_rows, result_game_payoff_digest
@@ -111,18 +111,6 @@ def _load_result_distances(path: Path, payoff_tensor: np.ndarray, checkpoints, c
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
     return distances
-
-
-def remove_equilibrium_distance_figures(detail_figure_dir: str | Path) -> list[Path]:
-    """Remove only result CE/CCE distance figures, never unrelated detail files."""
-    directory = Path(detail_figure_dir)
-    removed = []
-    if directory.is_dir():
-        for path in sorted(directory.iterdir()):
-            if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES and path.stem.endswith("_equilibrium_distance"):
-                path.unlink()
-                removed.append(path)
-    return removed
 
 
 @publication_plot

@@ -20,7 +20,7 @@ def figure_paths(output_path: str | Path) -> tuple[Path, Path]:
     return preview_path, preview_path.with_suffix(".pdf")
 
 
-def remove_stale_figure_pairs(output_dir: str | Path, generated_paths, filename_prefix: str | None = None) -> None:
+def remove_stale_figure_pairs(output_dir: str | Path, generated_paths) -> None:
     output_dir = Path(output_dir)
     generated_names = {
         Path(path).with_suffix(suffix).name
@@ -29,7 +29,7 @@ def remove_stale_figure_pairs(output_dir: str | Path, generated_paths, filename_
     }
     for suffix in FIGURE_SUFFIXES:
         for path in output_dir.glob(f"*{suffix}"):
-            if path.name not in generated_names and (filename_prefix is None or path.name.startswith(filename_prefix)):
+            if path.name not in generated_names:
                 path.unlink()
 
 

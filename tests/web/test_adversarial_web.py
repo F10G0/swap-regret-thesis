@@ -24,7 +24,7 @@ ENVIRONMENTS = {HISTORICAL_FREQUENCY_ENVIRONMENT, RANDOM_WALK_ENVIRONMENT}
 
 
 def _app(tmp_path: Path):
-    return create_test_app(tmp_path, max_replicates=10, disable_adversarial_plots=True)
+    return create_test_app(tmp_path, max_replicates=10)
 
 
 def _opening_tag(page: str, element_id: str) -> str:
@@ -195,6 +195,7 @@ def test_adversarial_page_queues_replicates_with_common_seed_schedule(tmp_path, 
         "environment": RANDOM_WALK_ENVIRONMENT, "replicates": "3"})
     completed = service.jobs.get(job.id)
     assert (completed.completed, completed.total) == (3, 3)
+    assert not list(tmp_path.rglob("*.png")) and not list(tmp_path.rglob("*.pdf"))
     results = service.result_snapshot("adversarial")
     summaries, warnings = results.summaries(), list(results.warnings)
     assert warnings == [] and {row["replicate"] for row in summaries} == {0, 1, 2}
@@ -229,7 +230,7 @@ def test_adversarial_submission_results_and_deletion(tmp_path, environment, feed
     assert response.status_code == 302 and not path.exists()
 
 
-def test_adversarial_download_and_figure_routes_are_scoped(tmp_path):
+def test_adversarial_csv_download_is_scoped(tmp_path):
     app, service = _app(tmp_path)
     client = app.test_client()
     service.adversarial_raw_dir.mkdir(parents=True)
@@ -238,31 +239,16 @@ def test_adversarial_download_and_figure_routes_are_scoped(tmp_path):
     assert download.status_code == 200 and download.data == b"recorded"
     assert download.headers["Content-Disposition"].startswith("attachment")
     assert client.get("/adversarial/experiments/../outside.csv").status_code == 404
-    assert client.get("/adversarial/figures/../outside.png").status_code == 404
-    service.adversarial_figure_dir.mkdir(parents=True)
-    for stem in (
-        f"adversarial_{HISTORICAL_FREQUENCY_ENVIRONMENT}_full_information_3_actions_average_external_regret",
-        f"adversarial_{RANDOM_WALK_ENVIRONMENT}_bandit_3_actions_external_regret_over_sqrt_t",
-    ):
-        for extension, mimetype in (("png", "image/png"), ("pdf", "application/pdf")):
-            (service.adversarial_figure_dir / f"{stem}.{extension}").write_bytes(b"figure")
-            response = client.get(f"/adversarial/figures/{stem}.{extension}")
-            assert response.status_code == 200 and response.mimetype == mimetype
 
 
 def test_clear_adversarial_results_deletes_csvs_and_figures(tmp_path) -> None:
     app, service = _app(tmp_path)
     client = app.test_client()
     service.adversarial_raw_dir.mkdir(parents=True)
-    service.adversarial_figure_dir.mkdir(parents=True)
     service.adversarial_scaling_raw_dir.mkdir(parents=True)
     service.adversarial_scaling_figure_dir.mkdir(parents=True)
     csv_path = service.adversarial_raw_dir / "result.csv"
     csv_path.write_text("data", encoding="utf-8")
-    for index in range(2):
-        (service.adversarial_figure_dir / f"figure-{index}.png").write_bytes(
-            b"png"
-        )
     scaling_csv = service.adversarial_scaling_raw_dir / "scaling.csv"
     scaling_csv.write_text("data", encoding="utf-8")
     scaling_figure = service.adversarial_scaling_figure_dir / "scaling.png"
@@ -274,7 +260,6 @@ def test_clear_adversarial_results_deletes_csvs_and_figures(tmp_path) -> None:
     )
 
     assert response.status_code == 302
-    assert list(service.adversarial_figure_dir.glob("*.png")) == []
     assert not csv_path.exists()
     assert not scaling_csv.exists()
     assert not scaling_figure.exists()

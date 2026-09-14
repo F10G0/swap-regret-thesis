@@ -1,7 +1,6 @@
 """Contracts shared by every empirical feedback setting and result family."""
 
 import csv
-import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,7 +8,6 @@ import pytest
 
 from environments import BanditRepeatedGame, RepeatedGame
 from experiments.scenarios.cross_play import run_cross_play_experiment
-from experiments.plots import plot_adversarial, plot_regret
 from experiments.result_schema import REGRET_FIELDNAMES, RESULT_IMPLEMENTATION_VERSION
 from experiments.results import iter_result_rows, load_final_result_rows
 from experiments.runner import run_game
@@ -147,34 +145,3 @@ def test_stale_csv_is_rejected_without_rewriting(tmp_path, kind, version):
         assert snapshot.summaries() == []
         assert "incompatible result implementation_version" in snapshot.warnings[0]
     assert path.read_bytes() == before
-
-
-@pytest.mark.parametrize("kind", ["fixed", "adversarial"])
-def test_previous_plot_cache_version_cannot_bypass_csv_validation(tmp_path, monkeypatch, kind):
-    cache = tmp_path / "cache"
-    if kind == "fixed":
-        module = plot_regret
-        path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=3, output_dir=tmp_path, feedback_mode="bandit")
-        collect = lambda: module.collect_results(tmp_path, cache_dir=cache)
-        loader_name = "iter_result_rows"
-    else:
-        module = plot_adversarial
-        path = adversarial.run_adversarial_experiment("hedge", horizon=3, output_dir=tmp_path)
-        collect = lambda: module.collect_adversarial_results(tmp_path, cache_dir=cache)
-        loader_name = "load_adversarial_rows"
-    collect()
-    cache_path = cache / f"{path.stem}.json"
-    payload = json.loads(cache_path.read_text())
-    identity = payload if kind == "fixed" else payload["identity"]
-    identity["version"] = module.PLOT_ROW_CACHE_VERSION - 1
-    cache_path.write_text(json.dumps(payload))
-    original = getattr(module, loader_name)
-    calls = []
-
-    def load(*args, **kwargs):
-        calls.append(args[0])
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(module, loader_name, load)
-    collect()
-    assert calls == [path]
