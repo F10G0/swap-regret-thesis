@@ -6,16 +6,17 @@ import pytest
 
 import experiments.results as results
 import experiments.runtime_environment as runtime
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.recording import encode_action_block
 from experiments.result_trajectories import load_result_action_profiles
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from tests.support import read_csv_rows
 
 
 def create_run(directory, max_recorded_points=6):
-    return run_full_information_cross_play_experiment(
+    return run_cross_play_experiment(
         "rps", ["hedge", "bm"], horizon=30,
         output_dir=directory, max_recorded_points=max_recorded_points,
+        feedback_mode="full_information",
     )
 
 
@@ -80,15 +81,34 @@ def test_first_row_still_establishes_valid_file_metadata(tmp_path, field, value)
         list(results.iter_result_rows(path))
 
 
-def test_alternative_algorithm_profile_columns_still_load(tmp_path):
+@pytest.mark.parametrize("legacy,override", [
+    (False, None), (False, " other "), (False, "0"), (False, ""), (True, "0"), (True, ""),
+])
+def test_profile_compatibility_and_catalog_decoding_budget(tmp_path, monkeypatch, legacy, override):
+    from experiments import result_catalog
     path = create_run(tmp_path)
     rows = read_csv_rows(path)
     for row in rows:
-        del row["algorithm_profile"]
-        row.update(algorithm_player_0="hedge", algorithm_player_1="bm")
+        if legacy:
+            del row["algorithm_profile"]
+            row.update(algorithm_player_0="hedge", algorithm_player_1="bm")
+        if override is not None:
+            row["player_algorithm"] = override
     rewrite_rows(path, rows)
-    loaded = list(results.iter_result_rows(path))
-    assert loaded == rows
+    assert list(results.iter_result_rows(path)) == rows
+    calls = 0
+    original = json.loads
+
+    def loads(value, *args, **kwargs):
+        nonlocal calls
+        calls += value == rows[0].get("algorithm_profile")
+        return original(value, *args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", loads)
+    record = result_catalog.ResultRecord.read(path, "fixed")
+    assert calls <= 2  # A file-level budget, not a required helper call sequence.
+    expected = ("other", "other") if override == " other " else ("hedge", "bm")
+    assert tuple(record.summary(player)["player_algorithm"] for player in (0, 1)) == expected
 
 
 def test_runtime_fingerprint_does_not_reparse_canonical_input(monkeypatch):

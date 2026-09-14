@@ -2,11 +2,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
 from algorithms.base import Algorithm
-from config import CUSTOM_GAME_DIR
-from environments.base import FixedGameEnvironment
+from algorithms.external_regret import AuerExp3, Exp3IX, Hedge
+from algorithms.internal_regret import RegretMatching, StationaryRegretMatching
+from algorithms.swap_regret import BanditBM, BanditIto, FullBM, FullIto, LCEIX
+from config import CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
+from environments import BanditRepeatedGame, RepeatedGame
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.recorder import CsvRecorder
 from experiments.recording import MAX_RECORDED_POINTS, recording_checkpoints
@@ -26,6 +27,28 @@ class AlgorithmFactory:
         if self.uses_horizon:
             return self.algorithm_class(n_actions=n_actions, horizon=horizon, seed=seed)
         return self.algorithm_class(n_actions=n_actions, seed=seed)
+
+
+ALGORITHMS_BY_FEEDBACK_MODE = {
+    "full_information": {
+        "hedge": AlgorithmFactory(Hedge, uses_horizon=True),
+        "bm": AlgorithmFactory(FullBM, uses_horizon=True),
+        "ito": AlgorithmFactory(FullIto, uses_horizon=False),
+        "regret_matching": AlgorithmFactory(RegretMatching, uses_horizon=False),
+        "stationary_regret_matching": AlgorithmFactory(StationaryRegretMatching, uses_horizon=False),
+    },
+    "bandit": {
+        "auer_exp3": AlgorithmFactory(AuerExp3, uses_horizon=True),
+        "exp3_ix": AlgorithmFactory(Exp3IX, uses_horizon=True),
+        "bm": AlgorithmFactory(BanditBM, uses_horizon=True),
+        "ito": AlgorithmFactory(BanditIto, uses_horizon=False),
+        "lce_ix": AlgorithmFactory(LCEIX, uses_horizon=False),
+    },
+}
+FEEDBACK_MODE_LABELS = {
+    "full_information": "Full information",
+    "bandit": "Bandit feedback",
+}
 
 
 def player_seed(spec: ExperimentSpec, player_id: int) -> int:
@@ -49,10 +72,13 @@ def replicate_player_seeds(
     return tuple(first_seed + player for player in range(n_players))
 
 
-def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_names: list[str], horizon: int, seed: int, replicate: int,
-                              environment_factory: Callable[[np.ndarray], FixedGameEnvironment], algorithm_registry: dict[str, AlgorithmFactory], output_dir: str | Path,
-                              should_cancel: Callable[[], bool] | None = None, custom_game_dir: str | Path = CUSTOM_GAME_DIR,
-                              max_recorded_points: int = MAX_RECORDED_POINTS) -> Path:
+def run_cross_play_experiment(game_name: str, algorithm_names: list[str], horizon: int = HORIZON, seed: int = SEED, replicate: int = 0,
+                              output_dir: str | Path | None = None, should_cancel: Callable[[], bool] | None = None,
+                              custom_game_dir: str | Path = CUSTOM_GAME_DIR, max_recorded_points: int = MAX_RECORDED_POINTS,
+                              *, feedback_mode: str) -> Path:
+    if feedback_mode not in ALGORITHMS_BY_FEEDBACK_MODE:
+        raise ValueError(f"unknown feedback mode: {feedback_mode}")
+    algorithm_registry = ALGORITHMS_BY_FEEDBACK_MODE[feedback_mode]
     for name in algorithm_names:
         if name not in algorithm_registry:
             raise ValueError(f"unknown algorithm: {name}")
@@ -69,12 +95,12 @@ def run_cross_play_experiment(game_name: str, feedback_mode: str, algorithm_name
         replicate,
         game_payoff_digest=payoff_tensor_digest(payoff_tensor),
     )
-    game = environment_factory(payoff_tensor)
+    game = (RepeatedGame if feedback_mode == "full_information" else BanditRepeatedGame)(payoff_tensor)
     players = [
         algorithm_registry[name].create(n_actions, horizon, player_seed(spec, player_id))
         for player_id, (name, n_actions) in enumerate(zip(spec.algorithm_names, game.n_actions))
     ]
-    output_path = Path(output_dir) / f"{spec.run_id}.csv"
+    output_path = Path(RAW_DIR if output_dir is None else output_dir) / f"{spec.run_id}.csv"
 
     if output_path.exists():
         raise FileExistsError(f"experiment {spec.run_id} already exists at {output_path}")

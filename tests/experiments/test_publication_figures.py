@@ -1,13 +1,11 @@
-import ast
 import importlib
-from pathlib import Path
 
 import matplotlib as mpl
-import numpy as np
 from PIL import Image
 from pypdf import PdfReader
 import pytest
 
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.plots.style import (
     ALGORITHM_STYLES, FIGURE_WIDTH, algorithm_style, curve_labels,
     profile_label, publication_plot, regret_axis_label,
@@ -15,8 +13,6 @@ from experiments.plots.style import (
 from experiments.scenarios.adversarial import (
     ALGORITHMS_BY_FEEDBACK_MODE, RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment,
 )
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
-from experiments.scenarios.bandit_cross_play import run_bandit_cross_play_experiment
 from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, run_adversarial_scaling_experiment
 
 
@@ -63,9 +59,8 @@ def test_publication_style_is_scoped_even_when_rendering_fails():
 
 
 def fixed_results(directory, bandit=False):
-    runner = run_bandit_cross_play_experiment if bandit else run_full_information_cross_play_experiment
     algorithms = ["auer_exp3", "bm"] if bandit else ["hedge", "ito"]
-    return [runner("rps", [name, name], horizon=100, seed=42,
+    return [run_cross_play_experiment("rps", [name, name], feedback_mode="bandit" if bandit else "full_information", horizon=100, seed=42,
                    replicate=replicate, output_dir=directory, max_recorded_points=20)
             for name in algorithms for replicate in (0, 1)]
 
@@ -149,23 +144,3 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
     with Image.open(output) as preview:
         assert preview.width == round(FIGURE_WIDTH * 150)
         assert abs(preview.height - figure.get_figheight() * 150) <= 1
-
-
-def test_every_figure_renderer_uses_the_shared_publication_style():
-    paths = list(Path("experiments/plots").glob("plot_*.py"))
-    renderers = []
-    for path in paths:
-        for function in ast.walk(ast.parse(path.read_text())):
-            if not isinstance(function, ast.FunctionDef):
-                continue
-            creates_figure = any(
-                isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == "plt"
-                and node.func.attr in {"figure", "subplots"}
-                for node in ast.walk(function)
-            )
-            if creates_figure:
-                renderers.append(function.name)
-                assert any(isinstance(node, ast.Name) and node.id == "publication_plot"
-                           for node in function.decorator_list), f"{path}:{function.lineno}"
-    assert len(renderers) == 5

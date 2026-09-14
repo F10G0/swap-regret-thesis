@@ -6,6 +6,7 @@ import pytest
 
 import experiments.scenarios.adversarial as scenario
 import experiments.plots.plot_adversarial as plots
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from tests.support import read_csv_rows
 
 
@@ -165,3 +166,32 @@ def test_scoped_plot_generation_preserves_other_figures(tmp_path, monkeypatch):
     assert len(generated) == 6
     assert unrelated.read_bytes() == b"preserve"
     assert not stale.exists()
+
+
+def test_mutation_during_row_loading_preserves_format_specific_policy(tmp_path, monkeypatch):
+    from experiments.plots import plot_regret as fixed
+
+    fixed_path = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=tmp_path, feedback_mode="full_information")
+    adversarial_path = create_run(tmp_path / "adversarial")
+
+    def mutate(path):
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    original_fixed, original_adversarial = fixed.iter_result_rows, plots.load_adversarial_rows
+
+    def fixed_rows(path):
+        yield from original_fixed(path)
+        mutate(path)
+
+    def adversarial_rows(path, **kwargs):
+        rows = original_adversarial(path, **kwargs)
+        mutate(path)
+        return rows
+
+    monkeypatch.setattr(fixed, "iter_result_rows", fixed_rows)
+    monkeypatch.setattr(plots, "load_adversarial_rows", adversarial_rows)
+    assert fixed.load_rows(fixed_path, cache_dir=tmp_path / "fixed-cache")
+    assert not list((tmp_path / "fixed-cache").glob("*.json"))
+    with pytest.raises(ValueError, match="changed while its trajectory"):
+        plots._load_plot_rows(adversarial_path, tmp_path / "adversarial-cache")

@@ -20,6 +20,7 @@ from experiments.plots import FIGURE_SUFFIXES, save_figure_pair
 from experiments.plots.style import publication_plot, curve_labels, algorithm_style, regret_axis_label, finish_line_figure
 from experiments.results import average_regret_column, iter_result_rows, regret_column
 from experiments.result_schema import REGRET_NAMES
+from experiments.result_catalog import fixed_plot_key
 from experiments.sampling import CheckpointRows
 
 
@@ -27,19 +28,6 @@ logger = logging.getLogger(__name__)
 
 MAX_PLOT_POINTS_PER_PLAYER = 2000
 PLOT_ROW_CACHE_VERSION = 5
-
-REPLICATE_GROUP_COLUMNS = (
-    "game",
-    "feedback_mode",
-    "algorithm",
-    "horizon",
-    "seed",
-    "stationary_method",
-    "game_payoff_digest",
-    "implementation_version",
-    "runtime_fingerprint",
-)
-
 
 def _cached_rows(cache_path: Path, input_path: Path, source_stat, max_points: int) -> list[dict] | None:
     try:
@@ -168,9 +156,7 @@ def collect_results(
 def group_replicate_runs(rows_by_run: dict[str, list[dict]]) -> list[list[list[dict]]]:
     groups = defaultdict(list)
     for rows in rows_by_run.values():
-        first_row = rows[0]
-        key = tuple(first_row.get(column, "") for column in REPLICATE_GROUP_COLUMNS)
-        groups[key].append(rows)
+        groups[fixed_plot_key(rows[0])].append(rows)
 
     return [sorted(group, key=lambda rows: int(rows[0]["replicate"])) for group in groups.values()]
 

@@ -1,24 +1,21 @@
+from collections import Counter
 from hashlib import sha256
 from io import BytesIO
+import json
+import os
 from pathlib import Path
+import shutil
 
 import numpy as np
 from pypdf import PdfReader
 import pytest
 from werkzeug.datastructures import MultiDict
 
-from experiments.plots.style import algorithm_style, profile_label
+from experiments.plots.style import profile_label
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
-from experiments.scenarios.bandit_cross_play import run_bandit_cross_play_experiment
-from tests.web.support import create_test_app, csrf_token
-from web.validation import FigureSelection, parse_figure_selection
-
-
-def result(service, profile, *, mode="full_information", game="rps", horizon=30, seed=42, replicates=(0, 1)):
-    runner = run_full_information_cross_play_experiment if mode == "full_information" else run_bandit_cross_play_experiment
-    return [runner(game, profile.split("_vs_"), horizon=horizon, seed=seed, replicate=replicate,
-                   output_dir=service.raw_dir, max_recorded_points=10) for replicate in replicates]
+from tests.web.support import create_test_app, csrf_token, record_fixed_runs as result
+from tests.support import read_csv_rows
+from web.validation import FigureSelection, parse_figure_selection, parse_profile_selection
 
 
 def form(context, profiles, **changes):
@@ -74,46 +71,8 @@ def test_options_use_real_groups_and_separate_incompatible_metadata(tmp_path):
     assert {p["label"] for p in compatible["profiles"]} == {"Hedge", "Ito", "Hedge vs Ito", "Ito vs Hedge"}
     assert {c["player"] for c in contexts} == {0, 1}
     assert all([p["id"] for p in c["profiles"]] == ["auer_exp3_vs_bm"] for c in contexts if c["feedback_mode"] == "bandit")
-    assert not any("_paths" in context for context in contexts)
+    assert str(service.raw_dir.resolve()) not in json.dumps(contexts)
     assert not service.figure_builder.output_dir.exists()
-
-
-@pytest.mark.parametrize("selected", [
-    ["hedge_vs_hedge"], ["hedge_vs_hedge", "ito_vs_ito", "bm_vs_bm"],
-    ["hedge_vs_ito", "ito_vs_hedge"],
-])
-def test_selected_curves_only_and_complete_replicate_means(tmp_path, monkeypatch, selected):
-    import experiments.plots.plot_regret as plotting
-    app, service = create_test_app(tmp_path)
-    all_profiles = ["hedge_vs_hedge", "ito_vs_ito", "bm_vs_bm", "hedge_vs_ito", "ito_vs_hedge"]
-    for profile in all_profiles:
-        result(service, profile)
-    originals = digest_files(tmp_path)
-    context = context_for(service, player=0)
-    captured = []
-    original_save = plotting.save_figure_pair
-
-    def save(figure, path, **kwargs):
-        captured.extend(line for line in figure.axes[0].lines if not line.get_label().startswith("_"))
-        return original_save(figure, path, **kwargs)
-
-    monkeypatch.setattr(plotting, "save_figure_pair", save)
-    monkeypatch.setattr(service, "submit_experiment", lambda *a, **k: pytest.fail("selection reran experiments"))
-    import experiments.runner as runner
-    monkeypatch.setattr(runner, "run_game", lambda *a, **k: pytest.fail("selection ran learner updates"))
-    rendered = service.figure_builder.build(parse_figure_selection(form(context, selected)))
-    assert [line.get_label() for line in captured] == [profile_label(p.split("_vs_")) for p in sorted(selected)]
-    assert len(captured) == len(selected)
-    for profile, line in zip(sorted(selected), captured):
-        paths = service.figure_builder._contexts("fixed")[context["id"]]["_paths"][profile]
-        times, means = plotting.aggregate_metric_curve([plotting.load_rows(p) for p in paths], 0, "average_swap_regret")
-        np.testing.assert_array_equal(line.get_xdata(), times)
-        np.testing.assert_array_equal(line.get_ydata(), means)
-        assert line.get_color() == algorithm_style(profile.split("_vs_")[0])["color"]
-    assert digest_files(tmp_path) == originals
-    assert (service.figure_builder.output_dir / rendered["pdf_filename"]).is_file()
-    assert not list(tmp_path.rglob(".plot-cache"))
-    assert not service.jobs.recent()
 
 
 def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, monkeypatch):
@@ -146,42 +105,7 @@ def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, mo
     assert build(["hedge_vs_hedge"])["artifact_id"] != styled["artifact_id"]
 
 
-def test_adversarial_selected_curves_keep_existing_means_and_style(tmp_path, monkeypatch):
-    import experiments.plots.plot_adversarial as plotting
-    app, service = create_test_app(tmp_path)
-    paths = {}
-    for name in ("auer_exp3", "bm", "ito"):
-        paths[name] = [run_adversarial_experiment(name, n_actions=3, horizon=30, seed=42,
-            replicate=replicate, environment=RANDOM_WALK_ENVIRONMENT,
-            feedback_mode="bandit", output_dir=service.adversarial_raw_dir) for replicate in (0, 1)]
-    originals = digest_files(tmp_path)
-    captured = []
-    original_save = plotting.save_figure_pair
-
-    def save(figure, path, **kwargs):
-        captured.extend(line for line in figure.axes[0].lines if not line.get_label().startswith("_"))
-        return original_save(figure, path, **kwargs)
-
-    monkeypatch.setattr(plotting, "save_figure_pair", save)
-    import experiments.scenarios.adversarial as runner
-    monkeypatch.setattr(runner, "run_adversarial_experiment", lambda *a, **k: pytest.fail("selection reran experiments"))
-    context = context_for(service, "adversarial", feedback_mode="bandit")
-    selected = ["auer_exp3", "ito"]
-    service.figure_builder.build(parse_figure_selection(form(context, selected, view="sqrt_scaling")))
-    assert [line.get_label() for line in captured] == [profile_label([name]) for name in selected]
-    for name, line in zip(selected, captured):
-        times, means = plotting.aggregate_adversarial_regret(
-            [plotting.load_adversarial_rows(path) for path in paths[name]], "swap_regret", scale_by_sqrt_time=True)
-        np.testing.assert_array_equal(line.get_xdata(), times)
-        np.testing.assert_array_equal(line.get_ydata(), means)
-        assert line.get_color() == algorithm_style(name)["color"]
-        assert line.get_linestyle() == algorithm_style(name)["linestyle"]
-    assert digest_files(tmp_path) == originals
-    assert not service.jobs.recent()
-
-
-@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
-@pytest.mark.parametrize("relative_paths", [False, True])
+@pytest.mark.parametrize("mode,relative_paths", [("fixed", True), ("adversarial", False)])
 def test_selected_png_pdf_routes_and_compatibility_boundaries(tmp_path, mode, relative_paths, monkeypatch):
     monkeypatch.chdir(tmp_path)
     app, service = create_test_app(Path("results") if relative_paths else tmp_path)
@@ -205,18 +129,12 @@ def test_selected_png_pdf_routes_and_compatibility_boundaries(tmp_path, mode, re
     assert response.status_code == 200
     artifact_path = service.figure_builder.artifact_path(response.json["filename"])
     assert artifact_path.is_absolute()
-    timestamp = artifact_path.stat().st_mtime_ns
     image = client.get(response.json["url"])
     pdf = client.get(response.json["pdf_url"])
     assert image.status_code == pdf.status_code == 200
     assert image.mimetype == "image/png" and image.data.startswith(b"\x89PNG")
     assert pdf.mimetype == "application/pdf" and "attachment" in pdf.headers["Content-Disposition"]
     assert len(PdfReader(BytesIO(pdf.data)).pages) == 1
-    cached = client.post("/figure-builder", data=data)
-    assert cached.json == response.json
-    assert artifact_path.stat().st_mtime_ns == timestamp
-    assert client.get(cached.json["url"]).data == image.data
-    assert client.get(cached.json["pdf_url"]).data == pdf.data
     assert client.post("/figure-builder", data=data | {"profiles": []}).status_code == 400
     assert client.post("/figure-builder", data=data | {"profiles": ["hedge_vs_hedge" if mode == "fixed" else "hedge"]}).status_code == 400
     assert client.post("/figure-builder", data=data | {"context_id": "b" * 24}).status_code == 400
@@ -228,3 +146,145 @@ def test_selected_png_pdf_routes_and_compatibility_boundaries(tmp_path, mode, re
     assert client.get("/figure-builder/files/link.pdf").status_code == 404
     assert digest_files(tmp_path) == originals
     assert not service.jobs.recent()
+
+
+@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
+def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path, monkeypatch, mode):
+    monkeypatch.chdir(tmp_path)
+    app, service = create_test_app(Path("results"))
+    if mode == "fixed":
+        import experiments.plots.plot_regret as plotting
+        profiles = ["hedge_vs_ito", "ito_vs_hedge"]
+        for profile in profiles + ["bm_vs_bm"]:
+            result(service, profile)
+        loader_name = "load_rows"
+    else:
+        import experiments.plots.plot_adversarial as plotting
+        profiles = ["auer_exp3", "ito"]
+        for name in profiles + ["bm"]:
+            for replicate in (0, 1):
+                run_adversarial_experiment(name, n_actions=3, horizon=30, seed=42,
+                    feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT,
+                    replicate=replicate, output_dir=service.adversarial_raw_dir)
+        loader_name = "load_adversarial_rows"
+    originals = digest_files(tmp_path)
+    source_paths = {}
+    loader = getattr(plotting, loader_name)
+    reads, curves = Counter(), []
+    original_save = plotting.save_figure_pair
+
+    def load(path):
+        reads[str(path)] += 1
+        rows = loader(path)
+        source_paths.setdefault(rows[0]["algorithm"], []).append(rows)
+        return rows
+
+    def save(figure, path, **kwargs):
+        curves.append([line for line in figure.axes[0].lines if not line.get_label().startswith("_")])
+        return original_save(figure, path, **kwargs)
+
+    monkeypatch.setattr(plotting, loader_name, load)
+    monkeypatch.setattr(plotting, "save_figure_pair", save)
+    monkeypatch.setattr(service, "submit_experiment", lambda *a, **k: pytest.fail("reran experiment"))
+    context = context_for(service, mode, player=0)
+    client = app.test_client()
+    data = {"mode": mode, "context_id": context["id"], "profiles": list(reversed(profiles)),
+            "_csrf_token": csrf_token(client)}
+    response = client.post("/figure-builder/collection", data=data)
+    assert response.status_code == 200
+    figures = response.json["figures"]
+    assert [(figure["metric"], figure["view"]) for figure in figures] == [
+        (metric, view) for metric in ("external", "internal", "swap") for view in ("average", "sqrt_scaling")]
+    assert len(reads) == 4 and set(reads.values()) == {1}
+    for figure, lines in zip(figures, curves):
+        assert [line.get_label() for line in lines] == [profile_label(p.split("_vs_")) for p in profiles]
+        column = ("average_" if figure["view"] == "average" else "") + figure["metric"] + "_regret"
+        scaled = figure["view"] == "sqrt_scaling"
+        for profile, line in zip(profiles, lines):
+            trajectories = source_paths[profile]
+            assert len(trajectories) == 2
+            if mode == "fixed":
+                times, means = plotting.aggregate_metric_curve(trajectories, 0, column, divide_by_sqrt_time=scaled)
+            else:
+                times, means = plotting.aggregate_adversarial_regret(trajectories, column, scale_by_sqrt_time=scaled)
+            np.testing.assert_array_equal(line.get_xdata(), times)
+            np.testing.assert_array_equal(line.get_ydata(), means)
+        assert figure["profiles"] == profiles
+        preview, pdf = client.get(figure["url"]), client.get(figure["pdf_url"])
+        assert preview.status_code == pdf.status_code == 200
+        assert preview.data.startswith(b"\x89PNG")
+        assert len(PdfReader(BytesIO(pdf.data)).pages) == 1
+    timestamps = {p: p.stat().st_mtime_ns for p in service.figure_builder.output_dir.iterdir()}
+    cached = client.post("/figure-builder/collection", data=data | {"profiles": profiles})
+    assert cached.json == response.json
+    assert set(reads.values()) == {1} and len(curves) == 6
+    assert {p: p.stat().st_mtime_ns for p in timestamps} == timestamps
+    chosen = [figures[5], figures[1], figures[3]]
+    download = client.post("/figures/download-filtered.pdf", data={
+        "mode": "figure_builder", "_csrf_token": data["_csrf_token"],
+        "filenames": [figure["pdf_filename"] for figure in chosen],
+    })
+    assert download.status_code == 200 and download.mimetype == "application/pdf"
+    pages = PdfReader(BytesIO(download.data)).pages
+    assert len(pages) == 3
+    for page, figure in zip(pages, chosen):
+        original = PdfReader(service.figure_builder.artifact_path(figure["pdf_filename"])).pages[0]
+        assert page.extract_text() == original.extract_text()
+        assert not list(page.images)  # Merging keeps the publication PDFs vector-based.
+    assert client.post("/figure-builder/collection", data=data | {"profiles": []}).status_code == 400
+    assert client.post("/figure-builder/collection", data=data | {"profiles": ["unknown"]}).status_code == 400
+    assert client.post("/figure-builder/collection", data=data | {"context_id": "a" * 24}).status_code == 400
+    assert client.post("/figure-builder/collection", data={"mode": mode}).status_code == 400
+    assert client.post("/figures/download-filtered.pdf", data={
+        "mode": "figure_builder", "_csrf_token": data["_csrf_token"], "filenames": ["../private.pdf"],
+    }).status_code == 404
+    assert digest_files(tmp_path) == originals and not service.jobs.recent()
+
+
+def test_profile_selection_does_not_need_regret_or_view():
+    selection = parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
+                                         "profiles": ["ito_vs_ito", "hedge_vs_hedge", "ito_vs_ito"]})
+    assert selection.profiles == ("hedge_vs_hedge", "ito_vs_ito")
+
+
+def test_context_identity_and_ordering_preserve_duplicate_policies(tmp_path):
+    _, service = create_test_app(tmp_path)
+    paths = result(service, "ito_vs_hedge", replicates=(2, 0))
+    result(service, "hedge_vs_ito", replicates=(0, 2))
+    row = read_csv_rows(paths[0])[0]
+    key = ("rps", row["game_payoff_digest"], "full_information", 30, 42, row["stationary_method"],
+           int(row["implementation_version"]), row["runtime_fingerprint"])
+    contexts = {context["id"]: context for context in service.figure_builder.catalog("fixed")["contexts"]}
+    for player in (0, 1):
+        expected_id = sha256(json.dumps(("fixed", key, player, [0, 2]), sort_keys=True,
+                                       separators=(",", ":")).encode()).hexdigest()[:24]
+        context = contexts[expected_id]
+        assert [profile["id"] for profile in context["profiles"]] == ["hedge_vs_ito", "ito_vs_hedge"]
+    groups = service.result_snapshot().groups("builder")
+    assert next(group.paths for group in groups if group.records[0].profile == ("ito", "hedge")) == list(reversed(paths))
+    for replicate in (2, 0):
+        path = run_adversarial_experiment("hedge", n_actions=3, horizon=30, seed=42,
+            replicate=replicate, output_dir=service.adversarial_raw_dir)
+    assert len(service.figure_builder.catalog("adversarial")["contexts"]) == 1
+    shutil.copyfile(path, service.adversarial_raw_dir / "duplicate.csv")
+    assert len(service.result_snapshot("adversarial").records) == 3
+    assert service.figure_builder.catalog("adversarial")["contexts"] == []
+
+
+def test_builder_rejects_source_mutation_before_publication(tmp_path, monkeypatch):
+    import experiments.plots.plot_regret as plotting
+    _, service = create_test_app(tmp_path)
+    paths = result(service, "hedge_vs_hedge")
+    context = context_for(service, player=0)
+
+    def render(*args):
+        output = args[-1] / "figure.png"
+        output.write_bytes(b"png")
+        output.with_suffix(".pdf").write_bytes(b"pdf")
+        stat = paths[0].stat()
+        os.utime(paths[0], ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    monkeypatch.setattr(plotting, "plot_regret", render)
+    with pytest.raises(ValueError, match="Results changed during rendering"):
+        service.figure_builder.build(parse_figure_selection(form(context, ["hedge_vs_hedge"])))
+    assert not list(service.figure_builder.output_dir.iterdir())

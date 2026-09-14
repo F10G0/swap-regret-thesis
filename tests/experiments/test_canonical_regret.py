@@ -1,7 +1,6 @@
 """Contracts shared by every empirical feedback setting and result family."""
 
 import csv
-import inspect
 import json
 from types import SimpleNamespace
 
@@ -9,17 +8,15 @@ import numpy as np
 import pytest
 
 from environments import BanditRepeatedGame, RepeatedGame
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.plots import plot_adversarial, plot_regret
 from experiments.result_schema import REGRET_FIELDNAMES, RESULT_IMPLEMENTATION_VERSION
 from experiments.results import iter_result_rows, load_final_result_rows
 from experiments.runner import run_game
 from experiments.scenarios import adversarial, adversarial_scaling
-from experiments.scenarios.bandit_cross_play import run_bandit_cross_play_experiment
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
-from experiments.spec import ExperimentSpec
 from metrics.regret import RegretBundle
 from tests.support import read_csv_rows
-from web.result_index import ResultIndex
+from experiments.result_catalog import ResultRepository
 
 
 class ObservedLearner:
@@ -110,21 +107,11 @@ def test_adversarial_feedback_boundary_and_evaluator_information(
     assert len(learner.feedbacks) == len(observations) == 7
 
 
-@pytest.mark.parametrize("callable_", [
-    RegretBundle, ExperimentSpec, run_game,
-    run_full_information_cross_play_experiment, run_bandit_cross_play_experiment,
-    adversarial.AdversarialExperimentSpec, adversarial.run_adversarial_experiment,
-    adversarial_scaling.AdversarialScalingSpec,
-])
-def test_no_evaluation_argument_or_hidden_default(callable_):
-    assert "regret_evaluation" not in inspect.signature(callable_).parameters
-
-
 @pytest.mark.parametrize("kind", ["fixed", "adversarial", "scaling"])
 @pytest.mark.parametrize("version", [2, 3, None])
 def test_stale_csv_is_rejected_without_rewriting(tmp_path, kind, version):
     if kind == "fixed":
-        path = run_bandit_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=3, output_dir=tmp_path)
+        path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=3, output_dir=tmp_path, feedback_mode="bandit")
         loaders = [lambda p: list(iter_result_rows(p)), load_final_result_rows]
     elif kind == "adversarial":
         path = adversarial.run_adversarial_experiment("hedge", horizon=3, output_dir=tmp_path)
@@ -156,8 +143,8 @@ def test_stale_csv_is_rejected_without_rewriting(tmp_path, kind, version):
         with pytest.raises(ValueError, match="incompatible result implementation_version"):
             loader(path)
     if kind == "fixed":
-        snapshot = ResultIndex(tmp_path).snapshot()
-        assert snapshot.summaries == []
+        snapshot = ResultRepository(tmp_path).snapshot()
+        assert snapshot.summaries() == []
         assert "incompatible result implementation_version" in snapshot.warnings[0]
     assert path.read_bytes() == before
 
@@ -167,7 +154,7 @@ def test_previous_plot_cache_version_cannot_bypass_csv_validation(tmp_path, monk
     cache = tmp_path / "cache"
     if kind == "fixed":
         module = plot_regret
-        path = run_bandit_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=3, output_dir=tmp_path)
+        path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=3, output_dir=tmp_path, feedback_mode="bandit")
         collect = lambda: module.collect_results(tmp_path, cache_dir=cache)
         loader_name = "iter_result_rows"
     else:

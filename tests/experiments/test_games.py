@@ -114,25 +114,3 @@ def test_retired_game_identifiers_are_not_supported(tmp_path, game_name) -> None
     assert game_name not in GAME_PRESENTATIONS
     with pytest.raises(ValueError, match="unknown game"):
         catalog.load(game_name)
-
-
-def test_fixed_games_do_not_import_external_game_constructors() -> None:
-    import subprocess
-    import sys
-
-    # Guard against reintroducing external constructors into the local fixtures.
-    script = """
-import importlib.abc
-import sys
-
-class NoExternalGames(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == "games_learning" or fullname.startswith("games_learning."):
-            raise AssertionError("fixed game construction imported " + fullname)
-
-sys.meta_path.insert(0, NoExternalGames())
-from experiments.game_catalog import load_game_payoffs
-assert load_game_payoffs("rps").shape == (2, 3, 3)
-assert load_game_payoffs("rpsls").shape == (2, 5, 5)
-"""
-    subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)

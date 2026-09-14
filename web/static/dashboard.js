@@ -3,7 +3,7 @@
 const dashboardDataElement = document.getElementById("dashboard-data");
 const dashboardData = dashboardDataElement
     ? JSON.parse(dashboardDataElement.textContent)
-    : {mode: "fixed", gameDefinitions: {}, gamePresentations: {}, jobs: [], summaries: [], algorithms: {}, algorithmLabels: {}};
+    : {mode: "fixed", gameDefinitions: {}, gamePresentations: {}, summaries: [], algorithms: {}, algorithmLabels: {}};
 const onePlayerMode = dashboardData.mode === "adversarial";
 const formStorageKey = onePlayerMode ? "swap-regret-adversarial-form" : "swap-regret-experiment-form";
 let resultFilters = null;
@@ -31,7 +31,6 @@ async function queueExperiment(event) {
         if (!response.ok || !data.job) {
             throw new Error(data.error || "Could not queue the experiment. Refresh the page and try again.");
         }
-        dashboardData.jobs.unshift(data.job);
         const panel = document.querySelector(".jobs-panel");
         panel.querySelector(".job-list").insertAdjacentHTML("afterbegin", data.job_html);
         panel.hidden = false;
@@ -455,9 +454,7 @@ async function pollActiveJobs() {
     if (jobPollInFlight) return;
     window.clearTimeout(jobPollTimer);
     jobPollTimer = null;
-    const activeJobs = dashboardData.jobs.filter((job) => (
-        job.status === "queued" || job.status === "running"
-    ));
+    const activeJobs = [...document.querySelectorAll('[data-job-id][data-status="queued"], [data-job-id][data-status="running"]')];
     if (activeJobs.length === 0) {
         setBusy(false);
         return;
@@ -465,12 +462,12 @@ async function pollActiveJobs() {
 
     jobPollInFlight = true;
     try {
-        const responses = await Promise.all(activeJobs.map((job) => fetch(job.url)));
+        const responses = await Promise.all(activeJobs.map((job) => fetch(job.dataset.statusUrl)));
         if (responses.some((response) => !response.ok)) {
             throw new Error("job status request failed");
         }
         const jobs = await Promise.all(responses.map((response) => response.json()));
-        jobs.forEach(updateJob);
+        jobs.forEach((job) => updateJobElement(document.querySelector(`[data-job-id="${job.id}"]`), job));
 
         const terminalJobs = jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status));
         if (terminalJobs.length > 0) {
@@ -480,23 +477,10 @@ async function pollActiveJobs() {
         console.warn("Could not refresh job status", error);
     } finally {
         jobPollInFlight = false;
-        const busy = dashboardData.jobs.some((job) => ["queued", "running"].includes(job.status));
+        const busy = Boolean(document.querySelector('[data-job-id][data-status="queued"], [data-job-id][data-status="running"]'));
         setBusy(busy);
         if (busy) jobPollTimer = window.setTimeout(pollActiveJobs, 1200);
     }
-}
-
-function updateJob(job) {
-    const storedJob = dashboardData.jobs.find((candidate) => candidate.id === job.id);
-    if (storedJob) {
-        Object.assign(storedJob, job);
-    }
-    const item = document.querySelector(`[data-job-id="${job.id}"]`);
-    if (!item) {
-        return;
-    }
-
-    updateJobElement(item, job);
 }
 
 listen("feedback-mode", "change", updateAlgorithmsForFeedbackMode);

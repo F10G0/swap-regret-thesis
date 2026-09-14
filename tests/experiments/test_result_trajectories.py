@@ -3,6 +3,7 @@ import csv
 import numpy as np
 import pytest
 
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.plots.plot_joint_actions import (
     joint_action_distribution,
     mean_joint_action_distribution,
@@ -10,9 +11,6 @@ from experiments.plots.plot_joint_actions import (
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
 from experiments.result_trajectories import load_result_action_profiles
 from experiments.results import iter_result_rows, load_final_result_rows
-from experiments.scenarios.full_information_cross_play import (
-    run_full_information_cross_play_experiment,
-)
 
 
 def test_result_loader_keeps_three_player_profiles_and_final_rows(
@@ -55,11 +53,12 @@ def test_result_loader_keeps_three_player_profiles_and_final_rows(
 
 
 def test_streaming_result_loader_accepts_checkpoint_gaps(tmp_path) -> None:
-    output_path = run_full_information_cross_play_experiment(
+    output_path = run_cross_play_experiment(
         "rps",
         ["hedge", "hedge"],
         horizon=3,
         output_dir=tmp_path,
+        feedback_mode="full_information",
     )
     with output_path.open(newline="") as file:
         reader = csv.DictReader(file)
@@ -80,13 +79,14 @@ def test_joint_action_distributions_are_averaged_across_replicates(
     tmp_path,
 ) -> None:
     paths = [
-        run_full_information_cross_play_experiment(
+        run_cross_play_experiment(
             "rps",
             ["hedge", "hedge"],
             horizon=4,
             seed=42,
             replicate=replicate,
             output_dir=tmp_path,
+            feedback_mode="full_information",
         )
         for replicate in range(2)
     ]

@@ -15,6 +15,7 @@ import numpy as np
 
 from config import ADVERSARIAL_FIGURE_DIR, ADVERSARIAL_RAW_DIR
 from experiments.plots import remove_stale_figure_pairs, save_figure_pair
+from experiments.result_catalog import adversarial_plot_key
 from experiments.plots.style import publication_plot, curve_labels, algorithm_style, regret_axis_label, finish_line_figure
 from experiments.scenarios.adversarial import (
     ADVERSARIAL_BASE_FIELDNAMES,
@@ -27,29 +28,12 @@ MAX_PLOT_POINTS = 2_000
 PLOT_ROW_CACHE_VERSION = 3
 
 
-def _group_key(rows: list[dict[str, str]]) -> tuple:
-    first = rows[0]
-    environment_seed = first["environment_seed"]
-    return (
-        first["environment"],
-        first["reward_step"],
-        first["feedback_mode"],
-        first["implementation_version"],
-        first["runtime_fingerprint"],
-        first["n_actions"],
-        first["algorithm"],
-        first["horizon"],
-        int(first["base_environment_seed"]) if environment_seed else None,
-        int(first["base_learner_seed"]),
-    )
-
-
 def group_adversarial_results(
     results: list[tuple[Path, list[dict[str, str]]]],
 ) -> list[list[list[dict[str, str]]]]:
     groups = defaultdict(list)
     for _, rows in results:
-        groups[_group_key(rows)].append(rows)
+        groups[adversarial_plot_key(rows[0])].append(rows)
     return [
         sorted(group, key=lambda rows: int(rows[0]["replicate"]))
         for _, group in sorted(groups.items())

@@ -1,32 +1,21 @@
 import numpy as np
 import pytest
 
-from algorithms.external_regret import AuerExp3, Exp3IX, Hedge, TsallisINF
-from algorithms.internal_regret import RegretMatching
-from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT_ALGORITHMS
-from experiments.scenarios.full_information_cross_play import ALGORITHMS as FULL_ALGORITHMS
-from experiments.scenarios.cross_play import AlgorithmFactory
+from algorithms.external_regret import AuerExp3, Exp3IX, TsallisINF
+from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE
+
+BANDIT_ALGORITHMS = ALGORITHMS_BY_FEEDBACK_MODE["bandit"]
+FULL_ALGORITHMS = ALGORITHMS_BY_FEEDBACK_MODE["full_information"]
 
 
-def test_algorithm_factory_passes_the_experiment_horizon() -> None:
-    learner = AlgorithmFactory(Hedge, uses_horizon=True).create(n_actions=3, horizon=100, seed=0)
-
-    assert learner.horizon == 100
-
-
-def test_algorithm_factory_omits_unused_horizon() -> None:
-    learner = AlgorithmFactory(RegretMatching, uses_horizon=False).create(n_actions=3, horizon=100, seed=0)
-
-    assert not hasattr(learner, "horizon")
-
-
-def test_bandit_cross_play_uses_literature_specific_inner_learners() -> None:
+def test_registered_bandit_learners_use_literature_specific_inner_learners() -> None:
     auer_exp3 = BANDIT_ALGORITHMS["auer_exp3"].create(n_actions=3, horizon=100, seed=0)
     exp3_ix = BANDIT_ALGORITHMS["exp3_ix"].create(n_actions=3, horizon=100, seed=0)
     bandit_bm = BANDIT_ALGORITHMS["bm"].create(n_actions=3, horizon=100, seed=0)
     bandit_ito = BANDIT_ALGORITHMS["ito"].create(n_actions=3, horizon=100, seed=0)
 
-    assert set(BANDIT_ALGORITHMS) == {"auer_exp3", "exp3_ix", "bm", "ito", "lce_ix"}
+    assert list(BANDIT_ALGORITHMS) == ["auer_exp3", "exp3_ix", "bm", "ito", "lce_ix"]
+    assert list(FULL_ALGORITHMS) == ["hedge", "bm", "ito", "regret_matching", "stationary_regret_matching"]
     assert isinstance(auer_exp3, AuerExp3) and auer_exp3.horizon == 100
     assert auer_exp3.explicit_exploration == pytest.approx(np.sqrt(3 * np.log(3) / 100))
     assert isinstance(exp3_ix, Exp3IX) and exp3_ix.horizon == 100

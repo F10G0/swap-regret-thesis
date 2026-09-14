@@ -26,13 +26,13 @@ from metrics.empirical_distribution import (
     EmpiricalDistributionTrajectory,
     empirical_distribution_trajectory,
 )
-from metrics.equilibrium_convergence import (
+from metrics.equilibrium_distance import (
+    EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION,
     EquilibriumDistanceTrajectory,
     ReplicateEquilibriumDistanceTrajectory,
     aggregate_equilibrium_distance_trajectories,
     equilibrium_distance_trajectory,
 )
-from metrics.equilibrium_distance import EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION
 
 
 MAX_EQUILIBRIUM_DISTANCE_POINTS = 160
@@ -165,23 +165,6 @@ def _plot_equilibrium_distance(
     plt.close(figure)
 
 
-def load_equilibrium_result_inputs(
-    input_paths: str | Path | Iterable[str | Path],
-    custom_game_dir: str | Path = CUSTOM_GAME_DIR,
-) -> tuple[str, np.ndarray, list[np.ndarray]]:
-    paths = (
-        [Path(input_paths)]
-        if isinstance(input_paths, (str, Path))
-        else [Path(path) for path in input_paths]
-    )
-    game_name, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
-    profiles = [
-        load_result_action_profiles(path, payoff_tensor.shape[1:])
-        for path in paths
-    ]
-    return game_name, payoff_tensor, profiles
-
-
 def _load_equilibrium_game(paths: list[Path], custom_game_dir: str | Path) -> tuple[str, np.ndarray, list[dict]]:
     if not paths:
         raise ValueError("at least one result file is required")
@@ -212,21 +195,6 @@ def _load_equilibrium_game(paths: list[Path], custom_game_dir: str | Path) -> tu
             "recorded payoff tensor does not match the current game definition"
         )
     return game_name, payoff_tensor, first_rows
-
-
-def empirical_distribution_trajectories(
-    profiles: list[np.ndarray],
-    action_shape: tuple[int, ...],
-    checkpoints: Iterable[int] | None,
-) -> list[EmpiricalDistributionTrajectory]:
-    return [
-        empirical_distribution_trajectory(
-            action_profiles,
-            action_shape,
-            checkpoints,
-        )
-        for action_profiles in profiles
-    ]
 
 
 def plot_result_equilibrium_distance(

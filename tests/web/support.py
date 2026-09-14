@@ -1,9 +1,27 @@
+from experiments.scenarios.cross_play import run_cross_play_experiment
+import json
+import shutil
+import subprocess
+
+import pytest
 from pathlib import Path
 from threading import Event
 import time
 
 from web import create_app
 from web.services import DashboardService
+
+
+ADVERSARIAL_FORM = {
+    "experiment_type": "adversarial", "environment": "historical_frequency_v3",
+    "feedback_mode": "full_information", "algorithm_names": ["hedge"],
+    "n_actions": "3", "horizon": "4", "environment_seed": "11", "seed": "7", "replicates": "1",
+}
+
+
+def record_fixed_runs(service, profile, *, mode="full_information", game="rps", horizon=30, seed=42, replicates=(0, 1)):
+    return [run_cross_play_experiment(game, profile.split("_vs_"), feedback_mode=mode, horizon=horizon, seed=seed, replicate=replicate,
+                   output_dir=service.raw_dir, max_recorded_points=10) for replicate in replicates]
 
 
 def create_service(tmp_path: Path) -> DashboardService:
@@ -85,3 +103,34 @@ def wait_for_async_result(request_result, timeout: int = 5):
             return result, error
         time.sleep(0.01)
     raise AssertionError("asynchronous operation did not finish")
+
+
+def dashboard_data(response):
+    assert response.status_code == 200
+    return json.loads(response.get_data(as_text=True).split(
+        '<script id="dashboard-data" type="application/json">', 1)[1].split('</script>', 1)[0])
+
+
+def submit_and_wait(client, service, values, url="/"):
+    response = client.post(url, data=values | {"_csrf_token": csrf_token(client)})
+    assert response.status_code == 302
+    job = service.jobs.recent()[0]
+    assert wait_for_job(service, job.id) == "succeeded"
+    return job
+
+
+def run_node(script, *args, payload=None, jsdom=False):
+    node = shutil.which("node")
+    if node is None or (jsdom and subprocess.run([node, "-e", "require('jsdom')"], capture_output=True).returncode):
+        pytest.skip("Node.js" + (" with jsdom" if jsdom else "") + " is unavailable")
+    completed = subprocess.run([node, "-e", script, *map(str, args)],
+        input=json.dumps(payload) if payload is not None else None, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+
+
+def run_ui(app, service, script, mode="fixed", **data):
+    static = Path(__file__).parents[2] / "web/static"
+    payload = {"page": app.test_client().get("/", query_string={"mode": mode}).get_data(as_text=True),
+               "catalog": service.figure_builder.catalog(mode),
+               "script": "\n".join((static / name).read_text() for name in ("common.js", "dashboard.js", "figure_builder.js"))} | data
+    run_node(script, payload=payload, jsdom=True)

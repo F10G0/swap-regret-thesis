@@ -6,15 +6,16 @@ import pytest
 
 import experiments.plots.plot_equilibrium_convergence as plotting
 import metrics.equilibrium_distance as metric
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.game_catalog import load_game_payoffs
 from experiments.result_trajectories import load_result_action_profiles
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 
 
 def create_result(directory, replicate=0):
-    return run_full_information_cross_play_experiment(
+    return run_cross_play_experiment(
         "rps", ["hedge", "bm"], horizon=300, seed=7, replicate=replicate,
         output_dir=directory, max_recorded_points=8,
+        feedback_mode="full_information",
     )
 
 

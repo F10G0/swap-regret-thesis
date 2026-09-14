@@ -9,11 +9,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
+from experiments.scenarios.cross_play import run_cross_play_experiment, player_seed
 from experiments.game_catalog import GameCatalog, payoff_tensor_digest
 from experiments.plots.plot_regret import aggregate_metric_curve, collect_results, plot_regret
 from experiments.plots.style import curve_labels
-from experiments.scenarios.cross_play import player_seed
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
 from experiments.results import (
     iter_result_rows,
@@ -67,6 +66,19 @@ def write_result(path, spec: ExperimentSpec) -> None:
                         "player": player,
                     }
                 )
+
+
+def test_fixed_plotting_retains_duplicate_replicates_but_rejects_duplicate_run_ids(tmp_path):
+    import shutil
+    from experiments.plots.plot_regret import collect_results, group_replicate_runs
+
+    rows = {name: [{"replicate": replicate, "game": "rps"}] for name, replicate in
+            (("last", "4"), ("first", "3"), ("duplicate", "3"))}
+    assert group_replicate_runs(rows) == [[rows["first"], rows["duplicate"], rows["last"]]]
+    path = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=tmp_path, feedback_mode="full_information")
+    shutil.copyfile(path, tmp_path / "duplicate.csv")
+    with pytest.raises(ValueError, match="duplicate run_id"):
+        collect_results(tmp_path)
 
 
 def test_run_id_changes_with_experiment_configuration() -> None:
@@ -175,19 +187,21 @@ def test_payoff_tensor_fingerprint_changes_run_identity_and_csv_metadata(
     second_definition = GameCatalog(second_games).create_random("same", 2, [2, 2], 2)
     assert first_definition.id == second_definition.id
 
-    first_path = run_full_information_cross_play_experiment(
+    first_path = run_cross_play_experiment(
         first_definition.id,
         ["hedge", "hedge"],
         horizon=1,
         output_dir=tmp_path / "first-results",
         custom_game_dir=first_games,
+        feedback_mode="full_information",
     )
-    second_path = run_full_information_cross_play_experiment(
+    second_path = run_cross_play_experiment(
         second_definition.id,
         ["hedge", "hedge"],
         horizon=1,
         output_dir=tmp_path / "second-results",
         custom_game_dir=second_games,
+        feedback_mode="full_information",
     )
 
     assert first_path.name != second_path.name

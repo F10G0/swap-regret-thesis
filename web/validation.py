@@ -3,6 +3,8 @@ from pathlib import Path
 import re
 from typing import Mapping
 
+from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec
+
 
 @dataclass(frozen=True)
 class ProfileSelection:
@@ -68,18 +70,6 @@ class AdversarialExperimentForm:
     environment_seed: int
     learner_seed: int
     replicates: int
-
-
-@dataclass(frozen=True)
-class AdversarialScalingForm:
-    environment: str
-    feedback_mode: str
-    algorithm_name: str
-    action_counts: tuple[int, ...]
-    replicates: int
-    horizon: int
-    environment_seed: int
-    learner_seed: int
 
 
 def _parse_integer(value: str, field_name: str) -> int:
@@ -152,18 +142,6 @@ def _form_algorithm_names(values: Mapping[str, str]) -> tuple[str, ...]:
     return names
 
 
-def _validate_learning_configuration(
-    feedback_mode: str,
-    algorithm_names: tuple[str, ...],
-    algorithms_by_feedback_mode: Mapping[str, list[str]],
-) -> None:
-    if feedback_mode not in algorithms_by_feedback_mode:
-        raise ValueError(f"unknown feedback mode: {feedback_mode}")
-    for algorithm_name in algorithm_names:
-        if algorithm_name not in algorithms_by_feedback_mode[feedback_mode]:
-            raise ValueError(f"algorithm {algorithm_name} is not available for {feedback_mode}")
-
-
 def _parse_learning_configuration(
     values: Mapping[str, str],
     algorithms_by_feedback_mode: Mapping[str, list[str]],
@@ -173,17 +151,17 @@ def _parse_learning_configuration(
     except KeyError as error:
         raise ValueError("missing form field: feedback_mode") from error
     algorithm_names = _form_algorithm_names(values)
-    _validate_learning_configuration(
-        feedback_mode,
-        algorithm_names,
-        algorithms_by_feedback_mode,
-    )
+    if feedback_mode not in algorithms_by_feedback_mode:
+        raise ValueError(f"unknown feedback mode: {feedback_mode}")
+    for algorithm_name in algorithm_names:
+        if algorithm_name not in algorithms_by_feedback_mode[feedback_mode]:
+            raise ValueError(f"algorithm {algorithm_name} is not available for {feedback_mode}")
     return feedback_mode, algorithm_names
 
 
 def parse_experiment_form(
     values: Mapping[str, str],
-    games: set[str] | Mapping[str, int],
+    games: Mapping[str, int],
     algorithms_by_feedback_mode: dict[str, list[str]],
     max_horizon: int,
     max_replicates: int = 100,
@@ -201,7 +179,7 @@ def parse_experiment_form(
         values,
         algorithms_by_feedback_mode,
     )
-    expected_players = games[game] if isinstance(games, Mapping) else 2
+    expected_players = games[game]
     if len(algorithm_names) != expected_players:
         raise ValueError(f"game {game} requires {expected_players} player algorithms")
 
@@ -280,7 +258,7 @@ def parse_adversarial_scaling_form(
     max_actions: int,
     max_horizon: int,
     max_replicates: int,
-) -> AdversarialScalingForm:
+) -> AdversarialScalingSpec:
     action_counts = parse_action_counts(
         values.get("scaling_action_counts", ""),
         max_actions,
@@ -296,7 +274,7 @@ def parse_adversarial_scaling_form(
         max_horizon,
         max_replicates,
     )
-    return AdversarialScalingForm(
+    return AdversarialScalingSpec(
         environment=common.environment,
         feedback_mode=common.feedback_mode,
         algorithm_name=common.algorithm_name,

@@ -3,13 +3,13 @@ import json
 import numpy as np
 import pytest
 
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.game_catalog import (
     CUSTOM_GAME_FORMAT_VERSION,
     CUSTOM_GAME_PREFIX,
     GameCatalog,
 )
 from experiments.plots.plot_regret import plot_selected_results
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from tests.support import read_csv_rows
 
 
@@ -151,12 +151,13 @@ def test_three_player_custom_game_runs_and_plots_regret_for_every_player(tmp_pat
     figure_dir = tmp_path / "figures"
     definition = GameCatalog(game_dir).create_random("three", 3, [2, 3, 2], 9)
 
-    output_path = run_full_information_cross_play_experiment(
+    output_path = run_cross_play_experiment(
         definition.id,
         ["hedge", "hedge", "hedge"],
         horizon=2,
         output_dir=raw_dir,
         custom_game_dir=game_dir,
+        feedback_mode="full_information",
     )
     rows = read_csv_rows(output_path)
 
@@ -175,10 +176,11 @@ def test_custom_game_requires_one_algorithm_per_player(tmp_path) -> None:
     definition = GameCatalog(tmp_path / "games").create_random("three", 3, [2, 2, 2], 0)
 
     with pytest.raises(ValueError, match="requires 3"):
-        run_full_information_cross_play_experiment(
+        run_cross_play_experiment(
             definition.id,
             ["hedge", "hedge"],
             horizon=1,
             output_dir=tmp_path / "raw",
             custom_game_dir=tmp_path / "games",
+            feedback_mode="full_information",
         )

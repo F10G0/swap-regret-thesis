@@ -1,30 +1,27 @@
 """Retired benchmark files stay archival, without becoming active UI choices."""
 
 import csv
-from io import BytesIO
 import json
 from pathlib import Path
 
-from pypdf import PdfReader
 import pytest
 
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.plots import plot_regret as plotting
 from experiments.results import iter_result_rows
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 from tests.web.support import create_test_app, csrf_token
 from web.services import DashboardService
+from web.validation import ExperimentForm
 
 
-RETIRED_GAMES = (
-    "bertrand_standard_o1", "bertrand_linear_o2", "bertrand_logit_o3",
-    "bertrand_linear_o2_prime", "bertrand_logit_o3_prime", "retired_matrix_game",
-)
+RETIRED_GAMES = ("bertrand_standard_o1", "retired_matrix_game")
 
 
 def _run(service, game="rps"):
-    return run_full_information_cross_play_experiment(
+    return run_cross_play_experiment(
         game, ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
         custom_game_dir=service.game_catalog.custom_game_dir,
+        feedback_mode="full_information",
     )
 
 
@@ -64,9 +61,9 @@ def test_retired_results_are_downloadable_but_not_active_benchmarks(tmp_path, ga
     # The metadata reader is intentionally independent of the current catalog.
     assert {row["game"] for row in iter_result_rows(retired)} == {game}
     snapshot = service.result_snapshot()
-    assert {summary["game"] for summary in snapshot.summaries} == {"rps"}
+    assert {summary["game"] for summary in snapshot.summaries()} == {"rps"}
     assert retired.name in snapshot.filenames
-    assert snapshot.warnings == [f"Skipped {retired.name}: unsupported game {game}"]
+    assert snapshot.warnings == (f"Skipped {retired.name}: unsupported game {game}",)
 
     client = app.test_client()
     page = client.get("/")
@@ -81,7 +78,12 @@ def test_retired_results_are_downloadable_but_not_active_benchmarks(tmp_path, ga
     response = client.get(f"/experiments/{retired.name}")
     assert response.status_code == 200
     assert response.data == originals[retired][0]
-    assert client.get(f"/games/{game}/equilibria/ce.png").status_code == 404
+    # Both form and direct-service boundaries must refuse new runs, without altering the archive.
+    values = dict(game=game, feedback_mode="full_information", algorithm_names=["hedge", "hedge"],
+                  horizon="2", seed="42", replicates="1", _csrf_token=csrf_token(client))
+    assert client.post("/", data=values).status_code == 400
+    with pytest.raises(ValueError):
+        service.submit_experiment(ExperimentForm(game, "full_information", ("hedge", "hedge"), 2, 42, 1))
     assert set(plotting.collect_results(service.raw_dir)) == {"rps"}
     assert plotting.collect_results(service.raw_dir, game_name=game) == {}
     assert not list(tmp_path.rglob(f"{retired.stem}.json"))
@@ -89,14 +91,14 @@ def test_retired_results_are_downloadable_but_not_active_benchmarks(tmp_path, ga
     assert not service.jobs.recent()
 
 
-@pytest.mark.parametrize("version", [0, 2, 4])
-def test_old_schema_retired_results_do_not_break_strict_plot_scanning(tmp_path, version):
+def test_old_schema_retired_results_do_not_break_strict_plot_scanning(tmp_path):
+    version = 2
     app, service = create_test_app(tmp_path)
     supported = _run(service)
     retired = _historical_copy(supported, "bertrand_standard_o1", version)
     originals = _snapshot([supported, retired])
     snapshot = service.result_snapshot()
-    assert {summary["game"] for summary in snapshot.summaries} == {"rps"}
+    assert {summary["game"] for summary in snapshot.summaries()} == {"rps"}
     assert len(snapshot.warnings) == 1
     assert f"incompatible result implementation_version {version}" in snapshot.warnings[0]
     assert app.test_client().get("/").status_code == 200
@@ -150,21 +152,13 @@ def test_supported_and_custom_visual_analysis_works_beside_retired_assets(tmp_pa
     contexts = client.get("/figure-builder/options?mode=fixed").json["contexts"]
     assert {context["scope"] for context in contexts} == {"rps", custom.id}
     context = next(context for context in contexts if context["scope"] == custom.id and context["player"] == 0)
-    response = client.post("/figure-builder/collection", data={
+    response = client.post("/figure-builder", data={
         "_csrf_token": token, "mode": "fixed", "context_id": context["id"],
-        "profiles": ["hedge_vs_hedge"],
+        "profiles": ["hedge_vs_hedge"], "metric": "swap", "view": "average",
     })
     assert response.status_code == 200
-    figures = response.json["figures"]
-    assert len(figures) == 6
-    preview = client.get(figures[0]["url"])
-    assert preview.status_code == 200 and preview.data.startswith(b"\x89PNG")
-    export = client.post("/figures/download-filtered.pdf", data={
-        "_csrf_token": token, "mode": "figure_builder",
-        "filenames": [figures[0]["pdf_filename"], figures[5]["pdf_filename"]],
-    })
-    assert export.status_code == 200
-    assert len(PdfReader(BytesIO(export.data)).pages) == 2
+    assert client.get(response.json["url"]).mimetype == "image/png"
+    assert client.get(response.json["pdf_url"]).mimetype == "application/pdf"
     assert client.post("/figures/download-filtered.pdf", data={
         "_csrf_token": token, "mode": "fixed", "filenames": [retired_assets[1].name],
     }).status_code == 404

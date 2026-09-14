@@ -36,10 +36,7 @@ from experiments.seeding import (
     LEARNER_SEED_DOMAIN,
     domain_separated_seed,
 )
-from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT_ALGORITHMS
-from experiments.scenarios.full_information_cross_play import (
-    ALGORITHMS as FULL_INFORMATION_ALGORITHMS,
-)
+from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE
 from metrics.regret import RegretBundle
 
 
@@ -50,14 +47,6 @@ ENVIRONMENT_LABELS = {
     RANDOM_WALK_ENVIRONMENT: "Independent lazy random walk",
 }
 MAX_ADVERSARIAL_ACTIONS = 100
-ALGORITHMS_BY_FEEDBACK_MODE = {
-    "full_information": FULL_INFORMATION_ALGORITHMS,
-    "bandit": BANDIT_ALGORITHMS,
-}
-FEEDBACK_MODE_LABELS = {
-    "full_information": "Full information",
-    "bandit": "Bandit feedback",
-}
 TARGET_REGRET_BY_ALGORITHM = {
     "hedge": "external",
     "auer_exp3": "external",

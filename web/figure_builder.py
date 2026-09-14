@@ -1,6 +1,5 @@
 """Presentation-only selection of complete, compatible replicate groups."""
 
-from collections import defaultdict
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -10,7 +9,8 @@ from threading import Lock
 from experiments.plots import figure_paths, publish_figure_pair
 from experiments.plots.style import PUBLICATION_STYLE_VERSION, profile_label
 from experiments.result_schema import REGRET_NAMES
-from web.result_groups import RESULT_GROUP_FIELDS, aggregate_result_summaries
+from experiments.algorithm_labels import algorithm_label
+from experiments.scenarios.adversarial import ENVIRONMENT_LABELS
 from web.validation import FigureSelection, validate_leaf_filename
 
 
@@ -31,56 +31,37 @@ class FigureBuilder:
     def _contexts(self, mode: str) -> dict:
         if mode not in {"fixed", "adversarial"}:
             raise ValueError("Unknown experiment mode")
-        groups = []
-        if mode == "fixed":
-            presentations = self.service.game_presentations
-            for group in aggregate_result_summaries(self.service.result_snapshot().summaries):
-                if group["game"] not in presentations:
-                    continue
-                key = tuple(group.get(field, "") for field in RESULT_GROUP_FIELDS)
-                groups.append((group, key, group["game"], presentations[group["game"]]["label"],
-                               "_vs_".join(group["algorithm_profile"]),
-                               [self.service.raw_dir / run["experiment"] for run in group["runs"]]))
-        else:
-            summaries, _ = self.service.adversarial_result_summaries()
-            fields = ("environment", "feedback_mode", "n_actions", "horizon", "base_learner_seed",
-                      "base_environment_seed", "implementation_version", "runtime_fingerprint")
-            by_profile = defaultdict(list)
-            for row in summaries:
-                by_profile[(tuple(row.get(field, "") for field in fields), row["algorithm"])].append(row)
-            for (key, profile), runs in by_profile.items():
-                runs.sort(key=lambda row: row["replicate"])
-                replicates = [row["replicate"] for row in runs]
-                if len(set(replicates)) != len(replicates):
-                    continue  # Duplicated replicate files do not define a unique curve.
-                first = runs[0]
-                group = first | {"player": 0, "replicates": replicates}
-                groups.append((group, key, first["environment"], first["environment_label"], profile,
-                               [self.service.adversarial_raw_dir / row["filename"] for row in runs]))
-
+        presentations = self.service.game_presentations if mode == "fixed" else {}
         contexts = {}
-        for group, key, scope, label, profile, paths in groups:
-            context_id = _digest((mode, key, group["player"], group["replicates"]))[:24]
-            context = contexts.setdefault(context_id, {
-                "id": context_id, "mode": mode, "scope": scope, "scope_label": label,
-                "feedback_mode": group["feedback_mode"], "player": group["player"],
-                "batch_label": (
-                    f"T={group['horizon']:,} · "
-                    + (f"K={group['n_actions']} · " if mode == "adversarial" else "")
-                    + f"seed {group.get('seed', group.get('base_learner_seed'))} · "
-                    + (f"env seed {group['base_environment_seed']} · " if group.get("base_environment_seed") is not None else "")
-                    + (f"{group['stationary_method']} · " if mode == "fixed" else "")
-                    + "replicates " + ",".join(map(str, group["replicates"]))
-                    + f" · {context_id[:6]}"
-                ),
-                "profiles": [], "result_keys": [], "_paths": {},
-            })
-            metrics = [name for name in REGRET_NAMES if mode == "adversarial" or f"average_{name}_regret" in group]
-            if not metrics:
+        for group in self.service.result_snapshot(mode).groups("builder"):
+            first = group.records[0]
+            if mode == "fixed" and first.scope not in presentations:
                 continue
-            context["profiles"].append({"id": profile, "label": profile_label(profile.split("_vs_")), "metrics": metrics})
-            context["_paths"][profile] = paths
-            context["result_keys"].extend([group["group_id"]] if mode == "fixed" else [path.name for path in paths])
+            info = first.details
+            profile = "_vs_".join(first.profile)
+            label = presentations[first.scope]["label"] if mode == "fixed" else ENVIRONMENT_LABELS[first.scope]
+            for player in range(len(first.profile) if mode == "fixed" else 1):
+                context_id = group.context_id(player)
+                context = contexts.setdefault(context_id, {
+                    "id": context_id, "mode": mode, "scope": first.scope, "scope_label": label,
+                    "feedback_mode": first.feedback_mode, "player": player,
+                    "batch_label": (
+                        f"T={first.horizon:,} · "
+                        + (f"K={info.n_actions} · " if mode == "adversarial" else "")
+                        + f"seed {info.seed if mode == 'fixed' else info.base_learner_seed} · "
+                        + (f"env seed {info.base_environment_seed} · " if mode == "adversarial" and info.base_environment_seed is not None else "")
+                        + (f"{info.stationary_method} · " if mode == "fixed" else "")
+                        + "replicates " + ",".join(map(str, group.replicates))
+                        + f" · {context_id[:6]}"
+                    ),
+                    "profiles": [], "result_keys": [], "_paths": {},
+                })
+                metrics = first.metrics(player)
+                if not metrics:
+                    continue
+                context["profiles"].append({"id": profile, "label": profile_label(profile.split("_vs_")), "metrics": metrics})
+                context["_paths"][profile] = group.paths
+                context["result_keys"].extend([first.group_id] if mode == "fixed" else [path.name for path in group.paths])
         for context in contexts.values():
             context["profiles"].sort(key=lambda profile: profile["id"])
         return {key: context for key, context in contexts.items() if context["profiles"]}
@@ -92,10 +73,10 @@ class FigureBuilder:
                          for context in sorted(contexts.values(), key=lambda c: (c["scope"], c["feedback_mode"], c["player"], c["id"]))],
             "metrics": [{"id": name, "label": name.title()} for name in REGRET_NAMES],
             "views": [{"id": name, "label": label} for name, label in VIEWS.items()],
-            "scaling": [{"scope": row["environment"], "scope_label": row["environment_label"],
-                         "feedback_mode": row["feedback_mode"], "player": 0,
-                         "profiles": [{"id": row["algorithm"], "label": row["algorithm_label"]}]}
-                        for row in self.service.adversarial_scaling_summaries()[0]] if mode == "adversarial" else [],
+            "scaling": [{"scope": record.scope, "scope_label": ENVIRONMENT_LABELS[record.scope],
+                         "feedback_mode": record.feedback_mode, "player": 0,
+                         "profiles": [{"id": record.profile[0], "label": algorithm_label(record.profile[0])}]}
+                        for record in self.service.result_snapshot("scaling").records] if mode == "adversarial" else [],
         }
 
     @staticmethod

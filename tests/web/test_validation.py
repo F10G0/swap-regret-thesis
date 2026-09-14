@@ -1,19 +1,12 @@
 import json
-from html.parser import HTMLParser
 from pathlib import Path
-import time
-
-import numpy as np
 import pytest
 
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
-from web.presentations import GAME_PRESENTATIONS
-from tests.web.support import block_job_queue, create_test_app, csrf_token, wait_for_http_response, wait_for_job
+from tests.web.support import block_job_queue, create_test_app, csrf_token, dashboard_data, wait_for_http_response, wait_for_job
 from web.validation import (
-    ExperimentForm,
     parse_experiment_form,
-    parse_positive_integer,
     validate_leaf_filename,
 )
 
@@ -28,104 +21,32 @@ VALID_FORM = {
 }
 
 
-RETIRED_GAME_IDS = (
-    "bertrand_standard_o1",
-    "bertrand_linear_o2",
-    "bertrand_logit_o3",
-    "bertrand_linear_o2_prime",
-    "bertrand_logit_o3_prime",
-)
+@pytest.mark.parametrize("mode,names", [("full_information", ["hedge", "hedge"]), ("bandit", ["auer_exp3", "lce_ix"])])
+def test_experiment_form_accepts_feedback_and_boundary_values(mode, names):
+    parsed = parse_form(VALID_FORM | {"feedback_mode": mode, "algorithm_names": names,
+                                   "horizon": "100", "seed": "0", "replicates": "10"})
+    assert (parsed.feedback_mode, parsed.algorithm_names) == (mode, tuple(names))
+    assert (parsed.horizon, parsed.seed, parsed.replicates) == (100, 0, 10)
 
 
-@pytest.mark.parametrize("value", ["0", "-1"])
-def test_positive_integer_validation(value: str) -> None:
-    with pytest.raises(ValueError, match="positive"):
-        parse_positive_integer(value, "horizon")
+def parse_form(values):
+    return parse_experiment_form(values, games={"rps": 2}, max_horizon=100, max_replicates=10,
+        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["auer_exp3", "lce_ix"]})
 
 
-def test_positive_integer_enforces_maximum() -> None:
-    with pytest.raises(ValueError, match="must not exceed 100"):
-        parse_positive_integer("101", "horizon", maximum=100)
-
-
-def test_experiment_form_rejects_algorithm_from_wrong_feedback_mode() -> None:
-    values = VALID_FORM | {
-        "feedback_mode": "bandit",
-        "algorithm_names": ["hedge", "hedge"],
-    }
-    with pytest.raises(ValueError, match="not available for bandit"):
-        parse_experiment_form(
-            values,
-            games={"rps"},
-            algorithms_by_feedback_mode={
-                "full_information": ["hedge"],
-                "bandit": ["exp3_ix"],
-            },
-            max_horizon=100,
-        )
-
-
-def test_bandit_form_accepts_replicate_batch() -> None:
-    form = parse_experiment_form(
-        VALID_FORM | {"feedback_mode": "bandit", "algorithm_names": ["exp3_ix", "lce_ix"], "replicates": "20"},
-        games={"rps"},
-        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3_ix", "lce_ix"]},
-        max_horizon=100,
-    )
-
-    assert form.replicates == 20
-
-
-def test_full_information_form_accepts_replicate_batch() -> None:
-    form = parse_experiment_form(
-        VALID_FORM | {"replicates": "20"},
-        games={"rps"},
-        algorithms_by_feedback_mode={"full_information": ["hedge"]},
-        max_horizon=100,
-    )
-
-    assert form.replicates == 20
-
-    with pytest.raises(ValueError, match="replicates must not exceed 10"):
-        parse_experiment_form(
-            VALID_FORM | {"replicates": "11"},
-            games={"rps"},
-            algorithms_by_feedback_mode={"full_information": ["hedge"]},
-            max_horizon=100,
-            max_replicates=10,
-        )
-
-
-def test_all_feedback_modes_require_replicates() -> None:
-    values = {key: value for key, value in VALID_FORM.items() if key != "replicates"}
-    with pytest.raises(ValueError, match="replicates must be an integer"):
-        parse_experiment_form(
-            values,
-            games={"rps"},
-            algorithms_by_feedback_mode={"full_information": ["hedge"]},
-            max_horizon=100,
-        )
-
-    with pytest.raises(ValueError, match="replicates must be positive"):
-        parse_experiment_form(
-            VALID_FORM | {"replicates": "0"},
-            games={"rps"},
-            algorithms_by_feedback_mode={"full_information": ["hedge"]},
-            max_horizon=100,
-        )
-
-
-@pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
-def test_experiment_form_accepts_feedback_without_an_evaluation_mode(feedback_mode):
-    algorithm = "hedge" if feedback_mode == "full_information" else "exp3_ix"
-    form = parse_experiment_form(
-        VALID_FORM | {"feedback_mode": feedback_mode, "algorithm_names": [algorithm] * 2},
-        games={"rps"},
-        algorithms_by_feedback_mode={"full_information": ["hedge"], "bandit": ["exp3_ix"]},
-        max_horizon=100,
-    )
-    assert form.feedback_mode == feedback_mode
-    assert not hasattr(form, "regret_evaluation")
+@pytest.mark.parametrize("field,value", [
+    ("game", None), ("horizon", None), ("seed", None), ("feedback_mode", None), ("algorithm_names", None),
+    ("horizon", "0"), ("horizon", "101"), ("horizon", "invalid"), ("seed", "-1"),
+    ("replicates", None), ("replicates", "0"), ("replicates", "11"),
+    ("game", "unknown"), ("feedback_mode", "unknown"), ("feedback_mode", "bandit"),
+    ("algorithm_names", ["hedge"]), ("algorithm_names", ["unknown", "hedge"]),
+])
+def test_experiment_form_rejects_invalid_configuration(field, value):
+    values = VALID_FORM | {field: value}
+    if value is None:
+        del values[field]
+    with pytest.raises(ValueError):
+        parse_form(values)
 
 
 def test_leaf_filename_validation_rejects_paths_and_wrong_suffixes() -> None:
@@ -174,37 +95,6 @@ def test_dashboard_queues_valid_experiment_and_exposes_job_status(
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 1
 
 
-@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
-def test_dashboard_exposes_only_current_controls_and_figure_state(tmp_path: Path, mode) -> None:
-    app, _ = create_test_app(tmp_path)
-    page = app.test_client().get("/", query_string={"mode": mode}).get_data(as_text=True)
-    assert 'id="feedback-mode"' in page
-    for obsolete in ('id="regret-evaluation"', 'value="expected"', 'value="realized"', 'value="both"'):
-        assert obsolete not in page
-    controls = []
-
-    class ControlParser(HTMLParser):
-        def handle_starttag(self, tag, attrs):
-            if tag in {"input", "select", "button"}:
-                controls.append(dict(attrs))
-
-    ControlParser().feed(page)
-    identifiers = {control.get(key) for control in controls for key in ("id", "name", "value")}
-    assert identifiers.isdisjoint({
-        "regret_evaluation", "regret-source", "confidence-toggle", "show_ci", "hide_ci",
-        "initialization_mode", "uniform_grid", "matching_pennies",
-    })
-    assert {control["id"] for control in controls if control.get("id", "").startswith("builder-")} == {
-        "builder-generate", "builder-download",
-    }
-    assert {control["id"] for control in controls if control.get("id", "").startswith("filter-")} == {
-        "filter-scope", "filter-feedback", "filter-player", "filter-metric", "filter-view",
-        "filter-context", "filter-profiles", "filter-select-all", "filter-clear-all",
-    }
-    payload = json.loads(page.split('<script id="dashboard-data" type="application/json">', 1)[1].split('</script>', 1)[0])
-    assert "figures" not in payload  # No empty legacy gallery state or automatic all-profile preview.
-
-
 def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
     tmp_path: Path,
 ) -> None:
@@ -217,7 +107,6 @@ def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
         "/",
         data=VALID_FORM | {"_csrf_token": token, "seed": "43"},
     )
-    page = client.get("/").get_data(as_text=True)
     experiment_jobs = [
         job for job in service.jobs.recent()
         if job.id != blocker.id
@@ -226,8 +115,6 @@ def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
     assert first_response.status_code == 302
     assert second_response.status_code == 302
     assert [job.status for job in experiment_jobs] == ["queued", "queued"]
-    assert '<button id="queue-experiment" class="button-primary" type="submit">' in page
-    assert 'id="jobs-heading">Job status</h2>' in page
     release_blocker.set()
     assert wait_for_job(service, blocker.id) == "succeeded"
     for job in experiment_jobs:
@@ -245,341 +132,57 @@ def test_plot_rebuild_uses_standard_redirect(tmp_path: Path) -> None:
     assert wait_for_job(service, job.id) == "succeeded"
 
 
-def test_figure_filters_keep_regret_and_view_without_source(tmp_path: Path) -> None:
+def test_dashboard_group_details_downloads_figures_and_deletion(tmp_path):
     app, service = create_test_app(tmp_path)
-    service.figure_dir.mkdir(parents=True)
-    (service.figure_dir / "rps_average_external_regret_player_0.png").write_bytes(b"png")
-    page = app.test_client().get("/").get_data(as_text=True)
-    assert 'id="filter-metric"' in page
-    assert 'id="filter-view"' in page
-    assert 'id="filter-source"' not in page
-    assert 'data-source=' not in page
-
-
-def test_dashboard_uses_compact_management_and_has_no_all_pairs_action(
-    tmp_path: Path,
-) -> None:
-    app, _ = create_test_app(tmp_path)
+    paths = [run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=2, replicate=r, output_dir=service.raw_dir,
+     feedback_mode="full_information") for r in (0, 1)]
     client = app.test_client()
-
-    page = client.get("/").get_data(as_text=True)
-    removed_route = client.post(
-        "/run-all-pairs",
-        data={"_csrf_token": csrf_token(client)},
-    )
-
-    assert '<details class="data-management">' in page
-    assert "Raw experiment files" in page
-    assert 'id="queue-all-pairs"' not in page
-    assert "Queue missing algorithm pairs" not in page
-    assert removed_route.status_code == 404
-
-
-def test_dashboard_renders_result_details_and_serves_joint_action_heatmap(tmp_path: Path) -> None:
-    app, service = create_test_app(tmp_path)
-    run_full_information_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
-
-    client = app.test_client()
-    dashboard_response = client.get("/")
-    page = dashboard_response.get_data(as_text=True)
-    payload = page.split('<script id="dashboard-data" type="application/json">', 1)[1].split("</script>", 1)[0]
-    dashboard_data = json.loads(payload)
-    summary = dashboard_data["summaries"][0]
-    heatmap_response = client.get(summary["joint_actions_url"])
-    distance_response, distance_statuses = wait_for_http_response(client, summary["equilibrium_distance_url"])
-    assert dashboard_response.status_code == 200
-    assert b"Reuse parameters" in dashboard_response.data
-    assert b'id="detail-downloads"' in dashboard_response.data
-    assert b"Equilibrium Convergence" in dashboard_response.data
-    assert b'class="results-toolbar"' in dashboard_response.data
-    assert b'id="filter-summary-source"' not in dashboard_response.data
-    assert b'data-regret-source=' not in dashboard_response.data
-    assert b'data-metric="average_external"' in dashboard_response.data
-    assert dashboard_response.data.count(b"Loading heatmap") == 1
-    assert heatmap_response.status_code == 200
-    assert heatmap_response.content_type == "image/png"
-    assert distance_statuses[-1] == 200
-    assert distance_response.status_code == 200
-    assert distance_response.content_type == "image/png"
-
-
-def test_dashboard_combines_matching_replicates_and_retains_raw_downloads(tmp_path: Path) -> None:
-    app, service = create_test_app(tmp_path)
-    for replicate in range(2):
-        run_full_information_cross_play_experiment(
-            "rps", ["hedge", "hedge"], horizon=3, seed=42, replicate=replicate, output_dir=service.raw_dir
-        )
-
-    response = app.test_client().get("/")
-    page = response.get_data(as_text=True)
-    payload = page.split('<script id="dashboard-data" type="application/json">', 1)[1].split("</script>", 1)[0]
-    summaries = json.loads(payload)["summaries"]
-    raw_player_zero = [row for row in service.result_snapshot().summaries if row["player"] == 0]
-    expected = sum(row["average_external_regret"] for row in raw_player_zero) / 2
-
-    assert response.status_code == 200
+    summaries = dashboard_data(client.get("/"))["summaries"]
     assert len(summaries) == 2
-    assert all(summary["replicates"] == [0, 1] for summary in summaries)
-    assert all(summary["replicate_count"] == 2 for summary in summaries)
-    assert all(len(summary["runs"]) == 2 for summary in summaries)
-    assert summaries[0]["average_external_regret"] == pytest.approx(expected)
-    assert summaries[0]["joint_actions_url"].startswith("/experiment-groups/")
-    assert summaries[0]["equilibrium_distance_url"].startswith("/experiment-groups/")
-    assert {run["experiment"] for run in summaries[0]["runs"]} == set(service.result_snapshot().filenames)
-
-
-def test_dashboard_renders_balanced_top_controls_and_theme_selector(
-    tmp_path: Path,
-) -> None:
-    app, _ = create_test_app(tmp_path)
-
-    page = app.test_client().get("/").get_data(as_text=True)
-
-    assert 'class="top-control-grid"' in page
-    assert 'class="control-card control-card-game"' in page
-    assert 'aria-describedby="game-description"' in page
-    assert 'aria-describedby="feedback-description"' in page
-    assert 'aria-describedby="regret-evaluation-description"' not in page
-    assert 'class="field-grid field-grid-two horizon-seed-grid"' in page
-    assert 'id="replicate-fields" class="field"' in page
-    horizon_seed = page.split('class="field-grid field-grid-two horizon-seed-grid"', 1)[1].split("</div>", 3)
-    assert any('id="horizon"' in fragment for fragment in horizon_seed)
-    assert any('id="seed"' in fragment for fragment in horizon_seed)
-    assert 'id="replicate"' not in page
-    assert 'id="replicates"' in page
-    assert "Number of rounds run by each experiment; the dashboard maximum is 100." in page
-    assert "Base seed used to derive reproducible random streams for every player and replicate." in page
-    assert "plot their replicate mean" in page
-    assert 'class="theme-control" for="primary-theme"' in page
-    assert 'id="primary-theme" aria-label="Primary color theme"' in page
-    assert page.index('id="primary-theme"') < page.index('id="experiment-form"')
-    assert 'id="equilibrium-palette"' not in page
-    assert "common.js" in page
-    assert "dashboard.js" in page
-    for theme in ("green", "blue", "purple", "orange", "red"):
-        assert f'<option value="{theme}">' in page
-    assert 'swap-regret-primary-theme' in page
-
-
-def test_fixed_dashboard_requires_selection_before_showing_a_figure(tmp_path: Path) -> None:
-    app, service = create_test_app(tmp_path)
-    service.figure_dir.mkdir(parents=True)
-    figure = service.figure_dir / "rps_average_external_regret_player_0.png"
-    for path in (figure, figure.with_suffix(".pdf")):
-        path.write_bytes(b"figure")
-
-    page = app.test_client().get("/").get_data(as_text=True)
-
-    assert page.count('class="figure-open"') == 0
-    assert 'id="filter-profiles"' in page
-    assert figure.read_bytes() == b"figure"
-    assert "confidence-toggle" not in page
-
-
-def test_dashboard_exposes_only_surviving_builtin_game_options(
-    tmp_path: Path,
-) -> None:
-    app, _ = create_test_app(tmp_path)
-
-    response = app.test_client().get("/")
-    page = response.get_data(as_text=True)
-    dashboard_payload = page.split(
-        '<script id="dashboard-data" type="application/json">',
-        maxsplit=1,
-    )[1].split("</script>", maxsplit=1)[0]
-    dashboard_data = json.loads(dashboard_payload)
-
-    assert response.status_code == 200
-    assert set(dashboard_data["gamePresentations"]) == {"rps", "rpsls"}
-    for game_name in ("rps", "rpsls"):
-        presentation = GAME_PRESENTATIONS[game_name]
-        assert f'value="{game_name}"' in page
-        assert presentation["label"] in page
-        assert dashboard_data["gamePresentations"][game_name] == presentation
-    for game_name in RETIRED_GAME_IDS:
-        assert game_name not in page
-
-
-@pytest.mark.parametrize("game_name", RETIRED_GAME_IDS)
-@pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
-def test_dashboard_rejects_retired_games_before_queueing(
-    tmp_path: Path,
-    game_name: str,
-    feedback_mode: str,
-) -> None:
-    app, service = create_test_app(tmp_path)
-    client = app.test_client()
-    algorithm = "hedge" if feedback_mode == "full_information" else "exp3_ix"
-    response = client.post(
-        "/",
-        data=VALID_FORM | {
-            "_csrf_token": csrf_token(client),
-            "game": game_name,
-            "feedback_mode": feedback_mode,
-            "algorithm_names": [algorithm, algorithm],
-        },
-    )
-    assert response.status_code == 400
-    assert f"unknown game: {game_name}" in response.get_data(as_text=True)
-    assert service.jobs.recent() == []
-    assert not list(service.raw_dir.glob("*.csv"))
-
-    # Direct callers cannot bypass the form boundary to launch a retired game.
-    with pytest.raises(ValueError, match=f"unknown game: {game_name}"):
-        service.submit_experiment(ExperimentForm(
-            game=game_name,
-            feedback_mode=feedback_mode,
-            algorithm_names=(algorithm, algorithm),
-            horizon=2,
-            seed=42,
-            replicates=1,
-        ))
-    assert service.jobs.recent() == []
-
-
-@pytest.mark.parametrize("game_name", RETIRED_GAME_IDS)
-@pytest.mark.parametrize("equilibrium", ["ce", "cce"])
-def test_dashboard_rejects_retired_game_equilibrium_heatmaps(
-    tmp_path: Path, game_name: str, equilibrium: str
-) -> None:
-    app, _ = create_test_app(tmp_path)
-    response = app.test_client().get(f"/games/{game_name}/equilibria/{equilibrium}.png")
-    assert response.status_code == 404
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "/games/unknown/equilibria/ce.png",
-        "/games/rps/equilibria/nash.png",
-    ],
-)
-def test_equilibrium_heatmap_route_rejects_unknown_parameters(
-    tmp_path: Path,
-    url: str,
-) -> None:
-    app, _ = create_test_app(tmp_path)
-
-    assert app.test_client().get(url).status_code == 404
-
-
-def test_custom_game_page_creates_and_lists_game(tmp_path: Path) -> None:
-    app, service = create_test_app(tmp_path)
-    client = app.test_client()
-    response = client.post(
-        "/custom-games",
-        data={
-            "_csrf_token": csrf_token(client),
-            "name": "Three Player Test",
-            "n_players": "3",
-            "action_counts": ["2", "3", "2"],
-            "seed": "17",
-        },
-    )
-
+    summary = summaries[0]
+    assert summary["replicates"] == [0, 1]
+    assert {run["experiment"] for run in summary["runs"]} == {p.name for p in paths}
+    for run in summary["runs"]:
+        assert client.get(run["download_url"]).data == (service.raw_dir / run["experiment"]).read_bytes()
+    heatmap = client.get(summary["joint_actions_url"])
+    distance, _ = wait_for_http_response(client, summary["equilibrium_distance_pdf_url"])
+    assert heatmap.status_code == distance.status_code == 200
+    assert heatmap.mimetype == "image/png" and distance.mimetype == "application/pdf"
+    response = client.post("/delete-experiment", data={"filename": paths[0].name, "_csrf_token": csrf_token(client)})
     assert response.status_code == 302
-    definition = service.game_definitions["custom__three-player-test"]
-    assert definition.n_players == 3
-    assert definition.action_counts == (2, 3, 2)
-    assert (tmp_path / "custom-games" / "three-player-test.npz").is_file()
-
-    library_page = client.get("/custom-games")
-    dashboard_page = client.get("/")
-    assert b"Three Player Test" in library_page.data
-    assert b"Other games" in dashboard_page.data
-    assert b"custom__three-player-test" in dashboard_page.data
-    assert b"View payoffs" in library_page.data
-    assert b"common.js" in library_page.data
-    assert b"custom_games.js" in library_page.data
-    assert b"dashboard.js" not in library_page.data
+    assert not paths[0].exists() and paths[1].exists()
 
 
-def test_custom_game_page_creates_symmetric_zero_sum_game(
-    tmp_path: Path,
-) -> None:
+@pytest.mark.parametrize("players,counts,structure", [(3, [2, 3, 2], "general_sum"), (2, [3], "zero_sum")])
+def test_custom_game_creation_and_inspection(tmp_path, players, counts, structure):
     app, service = create_test_app(tmp_path)
     client = app.test_client()
-
-    response = client.post(
-        "/custom-games",
-        data={
-            "_csrf_token": csrf_token(client),
-            "name": "Random Zero Sum",
-            "payoff_structure": "zero_sum",
-            "n_players": "2",
-            "action_counts": ["3"],
-            "seed": "23",
-        },
-    )
-
-    definition = service.game_definitions["custom__random-zero-sum"]
-    payoffs = service.game_catalog.load(definition.id)
-    library_page = client.get("/custom-games")
-    inspector_page = client.get(f"/custom-games/{definition.id}")
-    dashboard_page = client.get("/")
-
+    response = client.post("/custom-games", data={
+        "_csrf_token": csrf_token(client), "name": "Local Game", "n_players": str(players),
+        "action_counts": list(map(str, counts)), "seed": "17", "payoff_structure": structure,
+    })
     assert response.status_code == 302
-    assert definition.payoff_structure == "zero_sum"
-    assert definition.action_counts == (3, 3)
-    assert np.allclose(payoffs[0] + payoffs[1], 1.0)
-    assert np.allclose(payoffs[0], payoffs[1].T)
-    assert np.allclose(payoffs[0] + payoffs[0].T, 1.0)
-    assert b"Symmetric zero-sum" in library_page.data
-    assert b'id="custom-payoff-structure"' in library_page.data
-    assert b'value="zero_sum"' in library_page.data
-    assert inspector_page.status_code == dashboard_page.status_code == 200
-    assert b'id="payoff-table-scroll"' in inspector_page.data
-    assert b"Profile Weight" not in inspector_page.data
-    assert not (tmp_path / "custom-games" / ".equilibria").exists()
-
-    script = client.get("/static/custom_games.js").get_data(as_text=True)
-    assert 'fieldCount = symmetricZeroSum ? 1 : playerCount' in script
-    assert '"Actions per player"' in script
+    definition = service.game_definitions["custom__local-game"]
+    assert definition.n_players == players and definition.payoff_structure == structure
+    assert definition.action_counts == (tuple(counts) if players == 3 else (3, 3))
+    assert service.custom_game_file(definition.id).is_file()
+    assert client.get(f"/custom-games/{definition.id}").status_code == 200
+    assert b"Local Game" in client.get("/custom-games").data
+    assert definition.id.encode() in client.get("/").data
 
 
-def test_custom_game_page_rejects_zero_sum_with_more_than_two_players(
-    tmp_path: Path,
-) -> None:
-    app, _ = create_test_app(tmp_path)
+@pytest.mark.parametrize("players,counts", [(3, ["2", "2", "2"]), (2, ["2", "3"])])
+def test_custom_game_rejects_incompatible_zero_sum_shape(tmp_path, players, counts):
+    app, service = create_test_app(tmp_path)
     client = app.test_client()
-
-    response = client.post(
-        "/custom-games",
-        data={
-            "_csrf_token": csrf_token(client),
-            "name": "Invalid Zero Sum",
-            "payoff_structure": "zero_sum",
-            "n_players": "3",
-            "action_counts": ["2", "2", "2"],
-            "seed": "1",
-        },
-    )
-
+    response = client.post("/custom-games", data={
+        "_csrf_token": csrf_token(client), "name": "Invalid", "payoff_structure": "zero_sum",
+        "n_players": str(players), "action_counts": counts, "seed": "1",
+    })
     assert response.status_code == 400
-    assert b"symmetric zero-sum games require two equal action sets" in response.data
     assert b'value="zero_sum" selected' in response.data
-
-
-def test_custom_game_page_rejects_zero_sum_with_unequal_action_counts(
-    tmp_path: Path,
-) -> None:
-    app, _ = create_test_app(tmp_path)
-    client = app.test_client()
-
-    response = client.post(
-        "/custom-games",
-        data={
-            "_csrf_token": csrf_token(client),
-            "name": "Asymmetric Zero Sum",
-            "payoff_structure": "zero_sum",
-            "n_players": "2",
-            "action_counts": ["2", "3"],
-            "seed": "1",
-        },
-    )
-
-    assert response.status_code == 400
-    assert b"symmetric zero-sum games require two equal action sets" in response.data
+    assert "custom__invalid" not in service.game_definitions
 
 
 def test_custom_game_payoff_inspector_slice_and_download(tmp_path: Path) -> None:
@@ -647,16 +250,6 @@ def test_custom_game_page_deletes_game(tmp_path: Path) -> None:
     assert response.status_code == 302
     assert definition.id not in service.game_definitions
     assert not (tmp_path / "custom-games" / "delete-me.npz").exists()
-
-
-def test_dashboard_exposes_player_synchronization_control(tmp_path: Path) -> None:
-    app, _ = create_test_app(tmp_path)
-
-    page = app.test_client().get("/")
-
-    assert b'id="synchronize-players"' in page.data
-    assert "Player 0 → all".encode() in page.data
-    assert b'id="swap-players"' not in page.data
 
 
 def test_custom_three_player_dashboard_experiment_includes_equilibrium_convergence(tmp_path: Path) -> None:

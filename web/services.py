@@ -1,6 +1,5 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 from collections.abc import Callable
-import csv
 from hashlib import sha256
 import logging
 import os
@@ -34,35 +33,24 @@ from experiments.plots import (
     publish_figure_pair,
 )
 from experiments.results import iter_result_rows
+from experiments.result_catalog import ResultRepository, ResultSet, ResultKind
 from experiments.parallel import run_replicates
 from experiments.spec import ExperimentSpec
 from experiments.scenarios.adversarial import (
-    ALGORITHMS_BY_FEEDBACK_MODE as ADVERSARIAL_ALGORITHMS_BY_FEEDBACK_MODE,
     AdversarialExperimentSpec,
     ENVIRONMENT_LABELS,
-    FEEDBACK_MODE_LABELS,
     HISTORICAL_FREQUENCY_ENVIRONMENT,
-    TARGET_REGRET_BY_ALGORITHM,
-    adversarial_environment_detail,
-    load_final_adversarial_row,
     run_adversarial_experiment,
 )
 from experiments.scenarios.adversarial_scaling import (
     AdversarialScalingSpec,
-    adversarial_scaling_environment_detail,
-    load_adversarial_scaling_rows,
     run_adversarial_scaling_experiment,
 )
-from web.experiment_modes import FEEDBACK_MODES
+from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE, FEEDBACK_MODE_LABELS, run_cross_play_experiment
 from web.jobs import Job, JobContext, JobManager
 from web.presentations import GAME_PRESENTATIONS
-from web.result_groups import (
-    result_group_filenames,
-)
-from web.result_index import ResultIndex, ResultSnapshot
 from web.validation import (
     AdversarialExperimentForm,
-    AdversarialScalingForm,
     ExperimentForm,
     validate_leaf_filename,
 )
@@ -126,17 +114,6 @@ def _clear_result_files(raw_dirs: tuple[Path, ...], figure_dirs: tuple[Path, ...
     return len(csv_paths), sum(path.suffix.lower() == ".png" for path in figure_paths)
 
 
-def _load_summaries(directory: Path, summarize: Callable[[Path], dict]) -> tuple[list[dict], list[str]]:
-    summaries = []
-    warnings = []
-    for path in sorted(directory.glob("*.csv")):
-        try:
-            summaries.append(summarize(path))
-        except (OSError, KeyError, TypeError, ValueError, csv.Error) as error:
-            warnings.append(f"Skipped {path.name}: {error}")
-    return summaries, warnings
-
-
 class PlotUpdateError(RuntimeError):
     pass
 
@@ -163,7 +140,8 @@ class DashboardService:
         self.game_catalog = GameCatalog(custom_game_dir)
         self.jobs = job_manager or JobManager()
         self.replicate_workers = replicate_workers
-        self.result_index = ResultIndex(self.raw_dir)
+        self.results = {kind: ResultRepository(directory, kind) for kind, directory in (
+            ("fixed", self.raw_dir), ("adversarial", self.adversarial_raw_dir), ("scaling", self.adversarial_scaling_raw_dir))}
         from web.figure_builder import FigureBuilder
 
         self.figure_builder = FigureBuilder(self)
@@ -301,21 +279,18 @@ class DashboardService:
 
     @property
     def feedback_modes(self) -> dict[str, str]:
-        return {name: mode.label for name, mode in FEEDBACK_MODES.items()}
+        return dict(FEEDBACK_MODE_LABELS)
 
     @property
     def algorithms_by_feedback_mode(self) -> dict[str, list[str]]:
         return {
-            name: list(mode.algorithms)
-            for name, mode in FEEDBACK_MODES.items()
+            name: list(algorithms)
+            for name, algorithms in ALGORITHMS_BY_FEEDBACK_MODE.items()
         }
 
     @property
     def adversarial_algorithms_by_feedback_mode(self) -> dict[str, list[str]]:
-        return {
-            mode: list(algorithms)
-            for mode, algorithms in ADVERSARIAL_ALGORITHMS_BY_FEEDBACK_MODE.items()
-        }
+        return self.algorithms_by_feedback_mode
 
     @property
     def algorithm_labels(self) -> dict[str, str]:
@@ -441,18 +416,8 @@ class DashboardService:
 
     def submit_adversarial_scaling_experiment(
         self,
-        form: AdversarialScalingForm,
+        spec: AdversarialScalingSpec,
     ) -> Job:
-        spec = AdversarialScalingSpec(
-            environment=form.environment,
-            feedback_mode=form.feedback_mode,
-            algorithm_name=form.algorithm_name,
-            action_counts=form.action_counts,
-            replicates=form.replicates,
-            horizon=form.horizon,
-            environment_seed=form.environment_seed,
-            learner_seed=form.learner_seed,
-        )
         resource_key = f"adversarial-scaling:{spec.run_id}"
         if resource_key in self.jobs.reserved_resources() or (
             self.adversarial_scaling_raw_dir / f"{spec.run_id}.csv"
@@ -483,8 +448,8 @@ class DashboardService:
             )
 
         return self.jobs.submit(
-            f"Action scaling: {algorithm_label(form.algorithm_name)} · "
-            f"{ENVIRONMENT_LABELS[form.environment]}",
+            f"Action scaling: {algorithm_label(spec.algorithm_name)} · "
+            f"{ENVIRONMENT_LABELS[spec.environment]}",
             operation,
             total=len(spec.action_counts) * spec.replicates,
             resource_keys={resource_key},
@@ -599,42 +564,19 @@ class DashboardService:
 
         self.jobs.run_maintenance(operation)
 
-    def adversarial_scaling_summaries(self) -> tuple[list[dict], list[str]]:
-        def summarize(path: Path) -> dict:
-            first = load_adversarial_scaling_rows(path)[0]
-            return {
-                "filename": path.name,
-                "run_id": first["run_id"],
-                "environment": first["environment"],
-                "environment_label": ENVIRONMENT_LABELS[first["environment"]],
-                "environment_detail": adversarial_scaling_environment_detail(first),
-                "feedback_label": FEEDBACK_MODE_LABELS[first["feedback_mode"]],
-                "implementation_version": int(first.get("implementation_version", 0)),
-                "algorithm_label": algorithm_label(first["algorithm"]),
-                "algorithm": first["algorithm"],
-                "feedback_mode": first["feedback_mode"],
-                "action_counts": [int(value) for value in first["action_counts"].split(",")],
-                "replicates": int(first["replicates"]),
-                "horizon": int(first["horizon"]),
-                "base_learner_seed": int(first["base_learner_seed"]),
-                "target_regret": first["target_regret"],
-            }
-
-        return _load_summaries(self.adversarial_scaling_raw_dir, summarize)
-
-    def adversarial_scaling_figure_records(self, summaries: list[dict] | None = None) -> list[dict]:
-        if summaries is None:
-            summaries, _ = self.adversarial_scaling_summaries()
+    def adversarial_scaling_figure_records(self, results: ResultSet | None = None) -> list[dict]:
+        if results is None:
+            results = self.result_snapshot("scaling")
         records = []
-        for summary in summaries:
+        for result in results.records:
             path = self.adversarial_scaling_figure_dir / (
-                f"{summary['run_id']}_regret_by_actions.png"
+                f"{result.run_id}_regret_by_actions.png"
             )
             if not path.is_file():
                 continue
             records.append(
                 {
-                    **summary,
+                    **result.summary(),
                     **_figure_file_record(path),
                 }
             )
@@ -657,41 +599,6 @@ class DashboardService:
             filename,
             self._publish_adversarial_scaling_plots,
         )
-
-    def adversarial_result_summaries(self) -> tuple[list[dict], list[str]]:
-        def summarize(path: Path) -> dict:
-            row = load_final_adversarial_row(path)
-            algorithm = row["algorithm"]
-            target_regret = TARGET_REGRET_BY_ALGORITHM.get(algorithm, "external")
-            return {
-                "filename": path.name,
-                "algorithm": algorithm,
-                "algorithm_label": algorithm_label(algorithm),
-                "feedback_mode": row["feedback_mode"],
-                "feedback_label": FEEDBACK_MODE_LABELS[row["feedback_mode"]],
-                "implementation_version": int(row["implementation_version"]),
-                "environment": row["environment"],
-                "environment_label": ENVIRONMENT_LABELS[row["environment"]],
-                "environment_detail": adversarial_environment_detail(row),
-                "n_actions": int(row["n_actions"]),
-                "horizon": int(row["horizon"]),
-                "base_environment_seed": (
-                    int(row["base_environment_seed"])
-                    if row["base_environment_seed"]
-                    else None
-                ),
-                "environment_seed": int(row["environment_seed"]) if row["environment_seed"] else None,
-                "base_learner_seed": int(row["base_learner_seed"]),
-                "learner_seed": int(row["learner_seed"]),
-                "runtime_fingerprint": row["runtime_fingerprint"],
-                "replicate": int(row["replicate"]),
-                "target_regret": target_regret,
-                "average_regret": float(row[f"average_{target_regret}_regret"]),
-                **{f"average_{name}_regret": float(row[f"average_{name}_regret"])
-                   for name in ("external", "internal", "swap")},
-            }
-
-        return _load_summaries(self.adversarial_raw_dir, summarize)
 
     def adversarial_figure_records(self) -> list[dict]:
         records = []
@@ -781,12 +688,12 @@ class DashboardService:
         )
 
     def submit_experiment(self, form: ExperimentForm) -> Job:
-        mode = FEEDBACK_MODES[form.feedback_mode]
         specs = [self._spec(form, replicate=replicate) for replicate in range(form.replicates)]
 
         def task_kwargs(spec):
             return dict(
                 game_name=spec.game_name,
+                feedback_mode=spec.feedback_mode,
                 algorithm_names=list(spec.algorithm_names),
                 horizon=spec.horizon,
                 seed=spec.seed,
@@ -800,7 +707,7 @@ class DashboardService:
             self.raw_dir,
             lambda spec: spec.run_id,
             f"{form.game}: {algorithm_profile_label(form.algorithm_names)}",
-            mode.runner,
+            run_cross_play_experiment,
             task_kwargs,
             lambda: self._publish_plots(form.game),
             "all requested replicates already exist or are queued",
@@ -851,8 +758,9 @@ class DashboardService:
     def _result_group_paths(self, group_id: str) -> list[Path]:
         if re.fullmatch(r"[0-9a-f]{16}", group_id) is None:
             raise ValueError("invalid result group")
-        filenames = result_group_filenames(self.result_snapshot().summaries, group_id)
-        paths = [self.raw_dir / validate_leaf_filename(filename, ".csv") for filename in filenames]
+        paths = self.result_snapshot().detail_paths(group_id)
+        for path in paths:
+            validate_leaf_filename(path.name, ".csv")
         if any(not path.is_file() for path in paths):
             raise FileNotFoundError(group_id)
         return paths
@@ -1084,16 +992,8 @@ class DashboardService:
 
         self.jobs.run_maintenance(operation)
 
-    def result_snapshot(self) -> ResultSnapshot:
-        snapshot = self.result_index.snapshot()
-        supported_games = self.game_definitions
-        summaries = [summary for summary in snapshot.summaries if summary["game"] in supported_games]
-        unsupported = {summary["experiment"]: summary["game"] for summary in snapshot.summaries
-                       if summary["game"] not in supported_games}
-        warnings = snapshot.warnings + [f"Skipped {filename}: unsupported game {game}"
-                                        for filename, game in sorted(unsupported.items())]
-        # Keep historical CSVs downloadable, but do not present them as active benchmarks.
-        return ResultSnapshot(snapshot.filenames, summaries, warnings)
+    def result_snapshot(self, kind: ResultKind = "fixed") -> ResultSet:
+        return self.results[kind].snapshot(self.game_definitions if kind == "fixed" else None)
 
     def figure_records(self) -> list[dict]:
         if not self.figure_dir.exists():

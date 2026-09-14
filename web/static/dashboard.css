@@ -441,8 +441,7 @@ legend {
 }
 
 .field-grid,
-.players,
-.filter-grid {
+.players {
     display: grid;
     gap: 12px;
 }
@@ -712,15 +711,6 @@ fieldset {
     padding: 4px 8px;
     color: var(--danger);
     font-size: 0.75rem;
-}
-
-.filter-grid {
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
-    margin-top: 18px;
-}
-
-.filter-grid .field {
-    margin: 0;
 }
 
 .figure-grid {
@@ -1135,7 +1125,6 @@ tbody tr:hover {
 
     .field-grid-two,
     .players,
-    .filter-grid,
     .shared-result-filters,
     .figure-grid,
     .detail-figure-grid,

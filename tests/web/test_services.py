@@ -3,20 +3,12 @@ import logging
 from threading import Event
 import time
 
-import numpy as np
 import pytest
 
-from experiments.scenarios.bandit_cross_play import (
-    run_bandit_cross_play_experiment,
-)
-from experiments.scenarios.full_information_cross_play import (
-    run_full_information_cross_play_experiment,
-)
-from web.jobs import JobManager, ServiceBusyError
-from web.presentations import GAME_PRESENTATIONS
-from web.result_groups import aggregate_result_summaries
+from web.jobs import Job, JobManager, ServiceBusyError
 from web.services import DashboardService, PlotUpdateError
-from tests.web.support import block_job_queue, create_service, wait_for_async_result, wait_for_job
+from experiments.scenarios.cross_play import run_cross_play_experiment
+from tests.web.support import block_job_queue, create_service, create_test_app, wait_for_async_result, wait_for_job
 from web.validation import ExperimentForm
 
 
@@ -39,29 +31,6 @@ def experiment_form() -> ExperimentForm:
         seed=42,
         replicates=1,
     )
-
-
-def test_bandit_dashboard_exposes_lce_ix() -> None:
-    service = DashboardService(results_dir="results", raw_dir="results/raw", figure_dir="results/figures")
-
-    assert "lce_ix" in service.algorithms_by_feedback_mode["bandit"]
-    assert service.algorithm_labels["lce_ix"] == "LCE-IX"
-    assert service.algorithm_labels["auer_exp3"] == "AuerExp3"
-    assert "auer_exp3" in service.algorithms_by_feedback_mode["bandit"]
-    assert "auer_exp3" in service.adversarial_algorithms_by_feedback_mode["bandit"]
-    assert "auer_exp3" not in service.algorithms_by_feedback_mode["full_information"]
-    assert service.algorithm_labels["regret_matching"] == "RM"
-    assert service.algorithm_labels["stationary_regret_matching"] == "SRM"
-
-
-def test_dashboard_exposes_presentations_for_surviving_benchmarks(tmp_path: Path) -> None:
-    service = create_service(tmp_path)
-
-    assert set(service.games) == {"rps", "rpsls"}
-    assert "matching_pennies" not in service.games
-    assert set(service.game_presentations) == set(service.games)
-    for game_name in ("rps", "rpsls"):
-        assert service.game_presentations[game_name] == GAME_PRESENTATIONS[game_name]
 
 
 def test_job_manager_runs_queued_operations_in_submission_order() -> None:
@@ -177,14 +146,6 @@ def test_job_manager_reports_progress_and_cancels() -> None:
     assert job.total == 4
 
 
-def test_plot_rebuild_job_completes(tmp_path: Path) -> None:
-    service = create_service(tmp_path)
-
-    job = service.submit_plot_rebuild()
-
-    assert wait_for_job(service, job.id) == "succeeded"
-
-
 def test_clear_results_preserves_unrelated_files(tmp_path: Path) -> None:
     service = create_service(tmp_path)
     service.raw_dir.mkdir(parents=True)
@@ -218,22 +179,6 @@ def test_custom_game_deletion_requires_its_experiments_to_be_deleted_first(tmp_p
     assert definition.id not in service.game_definitions
 
 
-def test_custom_game_inspection_and_payoff_slice(tmp_path: Path) -> None:
-    service = create_service(tmp_path)
-    definition = service.create_custom_game("inspect me", 3, [2, 3, 2], 7)
-    payoff_tensor = service.game_catalog.load(definition.id)
-
-    inspection = service.custom_game_inspection(definition.id)
-    payoff_slice = service.custom_game_payoff_slice(definition.id, 2, 1, 0, [0, 0, 1])
-
-    assert inspection["shape"] == (3, 2, 3, 2)
-    assert inspection["minimum"] == pytest.approx(np.min(payoff_tensor))
-    assert inspection["maximum"] == pytest.approx(np.max(payoff_tensor))
-    assert inspection["mean"] == pytest.approx(np.mean(payoff_tensor))
-    assert np.array_equal(payoff_slice["values"], payoff_tensor[2, :, :, 1].T)
-    assert service.custom_game_file(definition.id).name == "inspect-me.npz"
-
-
 @pytest.mark.parametrize(
     ("payoff_player", "row_player", "column_player", "fixed_actions", "message"),
     [
@@ -258,6 +203,21 @@ def test_custom_game_payoff_slice_rejects_invalid_selection(
         service.custom_game_payoff_slice(definition.id, payoff_player, row_player, column_player, fixed_actions)
 
 
+def test_fixed_delete_failure_removes_csv_and_clears_figures(tmp_path, monkeypatch):
+    service = create_service(tmp_path)
+    service.raw_dir.mkdir(parents=True)
+    service.figure_dir.mkdir(parents=True)
+    source = service.raw_dir / "result.csv"
+    source.write_bytes(b"recorded-result")
+    for name in ("old.png", "old.pdf"):
+        (service.figure_dir / name).write_bytes(b"old")
+    monkeypatch.setattr(service, "_publish_plots", lambda: (_ for _ in ()).throw(RuntimeError("plot failed")))
+    with pytest.raises(PlotUpdateError, match="deleted result.csv.*figures were cleared"):
+        service.delete_experiment(source.name)
+    assert not source.exists()
+    assert not list(service.figure_dir.iterdir())
+
+
 def test_summary_loader_skips_malformed_result_file(tmp_path: Path) -> None:
     service = create_service(tmp_path)
     service.raw_dir.mkdir(parents=True)
@@ -265,30 +225,16 @@ def test_summary_loader_skips_malformed_result_file(tmp_path: Path) -> None:
 
     snapshot = service.result_snapshot()
 
-    assert snapshot.summaries == []
+    assert snapshot.summaries() == []
     assert len(snapshot.warnings) == 1
     assert "missing required columns" in snapshot.warnings[0]
 
 
-def test_summary_loader_returns_final_rows_for_each_player(tmp_path: Path) -> None:
-    service = create_service(tmp_path)
-    run_full_information_cross_play_experiment(
-        game_name="rps",
-        algorithm_names=["hedge", "hedge"],
-        horizon=2,
-        output_dir=service.raw_dir,
-    )
-    snapshot = service.result_snapshot()
-
-    assert snapshot.warnings == []
-    assert [summary["player"] for summary in snapshot.summaries] == [0, 1]
-    assert all(summary["horizon"] == 2 for summary in snapshot.summaries)
-
-
 def test_result_snapshot_reuses_unchanged_file_summary(tmp_path: Path, monkeypatch) -> None:
+    from experiments import result_catalog
     service = create_service(tmp_path)
-    run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
-    summarize_file = service.result_index._summarize_file
+    run_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir, feedback_mode="full_information")
+    summarize_file = result_catalog.load_final_result_rows
     calls = 0
 
     def counted_summary(path: Path):
@@ -296,7 +242,7 @@ def test_result_snapshot_reuses_unchanged_file_summary(tmp_path: Path, monkeypat
         calls += 1
         return summarize_file(path)
 
-    monkeypatch.setattr(service.result_index, "_summarize_file", counted_summary)
+    monkeypatch.setattr(result_catalog, "load_final_result_rows", counted_summary)
 
     first = service.result_snapshot()
     second = service.result_snapshot()
@@ -304,20 +250,17 @@ def test_result_snapshot_reuses_unchanged_file_summary(tmp_path: Path, monkeypat
     after_delete = service.result_snapshot()
 
     assert calls == 1
-    assert first == second
-    assert after_delete.filenames == []
-    assert after_delete.summaries == []
+    assert first.summaries() == second.summaries()
+    assert [row["player"] for row in first.summaries()] == [0, 1]
+    assert all(row["horizon"] == 2 for row in first.summaries())
+    assert after_delete.filenames == ()
+    assert after_delete.summaries() == []
 
 
-@pytest.mark.parametrize(
-    ("feedback_mode", "algorithms"),
-    [
-        ("full_information", ("hedge", "hedge")),
-        ("bandit", ("exp3_ix", "lce_ix")),
-        ("bandit", ("auer_exp3", "exp3_ix")),
-    ],
-)
-@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("feedback_mode,algorithms,workers", [
+    ("full_information", ("hedge", "hedge"), 1),
+    ("bandit", ("auer_exp3", "lce_ix"), 2),
+])
 def test_submission_runs_requested_replicates(
     tmp_path: Path,
     feedback_mode: str,
@@ -343,7 +286,7 @@ def test_submission_runs_requested_replicates(
     assert len(list(service.raw_dir.glob("*.csv"))) == 3
     assert {
         summary["replicate"]
-        for summary in service.result_snapshot().summaries
+        for summary in service.result_snapshot().summaries()
     } == {0, 1, 2}
 
 
@@ -374,37 +317,19 @@ def test_experiment_submissions_queue_and_reserve_run_ids(tmp_path: Path) -> Non
     assert len(list(service.raw_dir.glob("*.csv"))) == 2
 
 
-def test_plot_publication_creates_structured_figure_metadata(tmp_path: Path) -> None:
-    service = DashboardService(
-        results_dir=tmp_path,
-        raw_dir=tmp_path / "raw",
-        figure_dir=tmp_path / "figures",
-    )
-    run_full_information_cross_play_experiment(
-        game_name="rps",
-        algorithm_names=["hedge", "hedge"],
-        horizon=2,
-        output_dir=service.raw_dir,
-    )
-    run_full_information_cross_play_experiment(
-        game_name="rps",
-        algorithm_names=["hedge", "hedge"],
-        horizon=2,
-        replicate=1,
-        output_dir=service.raw_dir,
-    )
-
-    service._publish_plots("rps")
+def test_plot_publication_combines_feedback_and_skips_invalid_files(tmp_path):
+    service = create_service(tmp_path)
+    run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, output_dir=service.raw_dir, feedback_mode="full_information")
+    run_cross_play_experiment("rps", ["exp3_ix", "exp3_ix"], horizon=2, output_dir=service.raw_dir, feedback_mode="bandit")
+    for name in ("rps_broken.csv", "unrelated_broken.csv"):
+        (service.raw_dir / name).write_text("invalid\nvalue\n")
+    DashboardService._publish_plots(service, "rps")
     figures = service.figure_records()
-
     assert len(figures) == 12
-    assert all("source" not in figure for figure in figures)
-    assert {figure["regret"] for figure in figures} == {"external", "internal", "swap"}
-    assert {figure["player"] for figure in figures} == {0, 1}
-    assert {figure["view"] for figure in figures} == {"average", "sqrt_scaling"}
-    assert all((service.figure_dir / figure["pdf_filename"]).is_file() for figure in figures)
-    assert len(list(service.figure_dir.glob("*.png"))) == len(figures)
-    assert len(list(service.figure_dir.glob("*.pdf"))) == len(figures)
+    assert {f["regret"] for f in figures} == {"external", "internal", "swap"}
+    assert {f["player"] for f in figures} == {0, 1}
+    assert {f["view"] for f in figures} == {"average", "sqrt_scaling"}
+    assert all((service.figure_dir / f["pdf_filename"]).is_file() for f in figures)
 
 
 def test_failed_plot_update_preserves_existing_figures(tmp_path: Path) -> None:
@@ -500,123 +425,33 @@ def test_one_player_delete_rolls_back_csv_and_figures_when_rebuild_fails(
     assert not list(raw_dir.parent.glob(".delete-result-*"))
 
 
-def test_plot_publication_skips_malformed_result_files(tmp_path: Path) -> None:
-    service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
-    run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
-    (service.raw_dir / "broken.csv").write_text("player,value\n0,1\n", encoding="utf-8")
-
-    service._publish_plots("rps")
-
-    assert len(service.figure_records()) == 12
-
-
-def test_selected_game_plotting_ignores_unrelated_malformed_results(tmp_path: Path) -> None:
-    service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
-    run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
-    (service.raw_dir / "unrelated_broken.csv").write_text("invalid\nvalue\n", encoding="utf-8")
-
-    service._publish_plots("rps")
-
-    assert len(service.figure_records()) == 12
-
-
-def test_bandit_results_contain_canonical_regret(tmp_path: Path) -> None:
-    service = DashboardService(
-        results_dir=tmp_path,
-        raw_dir=tmp_path / "raw",
-        figure_dir=tmp_path / "figures",
-    )
-    run_bandit_cross_play_experiment(
-        game_name="rps",
-        algorithm_names=["exp3_ix", "exp3_ix"],
-        horizon=2,
-        output_dir=service.raw_dir,
-    )
-
-    snapshot = service.result_snapshot()
-    service._publish_plots("rps")
-    figures = service.figure_records()
-
-    assert snapshot.warnings == []
-    assert len(snapshot.summaries) == 2
-    assert all("average_swap_regret" in summary for summary in snapshot.summaries)
-    assert len(figures) == 12
-    assert all("source" not in figure for figure in figures)
-
-
-def test_plotting_combines_feedback_curves_in_the_same_canonical_figures(tmp_path: Path) -> None:
-    service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
-    run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir)
-    run_bandit_cross_play_experiment(game_name="rps", algorithm_names=["exp3_ix", "exp3_ix"], horizon=2, output_dir=service.raw_dir)
-
-    service._publish_plots("rps")
-    figures = service.figure_records()
-
-    assert len(figures) == 12
-    assert all("source" not in figure for figure in figures)
-
-
-def test_joint_action_heatmap_is_generated_and_cached(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    from matplotlib.axes import Axes
-
-    service = DashboardService(results_dir=tmp_path, raw_dir=tmp_path / "raw", figure_dir=tmp_path / "figures")
-    result_path = run_full_information_cross_play_experiment(game_name="rps", algorithm_names=["hedge", "hedge"], horizon=3, output_dir=service.raw_dir)
-    original_pcolormesh = Axes.pcolormesh
-    colormaps = []
-    rasterized = []
-
-    def capture_colormap(axes, *args, **kwargs):
-        if kwargs.get("cmap") == "Blues":
-            colormaps.append(kwargs["cmap"])
-            rasterized.append(kwargs.get("rasterized"))
-        return original_pcolormesh(axes, *args, **kwargs)
-
-    monkeypatch.setattr(Axes, "pcolormesh", capture_colormap)
-
-    first = service.joint_action_figure(result_path.name)
-    first_timestamp = first.stat().st_mtime_ns
-    second = service.joint_action_figure(result_path.name)
-
-    assert first == second
-    assert first.name.endswith("_joint_actions_blue_lower_origin.png")
-    assert second.stat().st_mtime_ns == first_timestamp
-    assert second.stat().st_size > 0
-    assert second.with_suffix(".pdf").is_file()
-    assert colormaps == ["Blues"]
-    assert rasterized == [False]
-
-
-def test_replicate_group_joint_action_heatmap_is_generated_and_cached(tmp_path: Path) -> None:
+@pytest.mark.parametrize("grouped", [False, True])
+def test_joint_action_heatmap_is_generated_and_cached(tmp_path, grouped):
     service = create_service(tmp_path)
-    for replicate in range(2):
-        run_full_information_cross_play_experiment(
-            game_name="rps", algorithm_names=["hedge", "hedge"], horizon=3, replicate=replicate, output_dir=service.raw_dir
-        )
-    group_id = aggregate_result_summaries(service.result_snapshot().summaries)[0]["group_id"]
-
-    first = service.group_joint_action_figure(group_id)
-    first_timestamp = first.stat().st_mtime_ns
-    second = service.group_joint_action_figure(group_id)
-
-    assert first == second
-    assert first.name.endswith("_replicate_mean_joint_actions_blue_lower_origin.png")
-    assert second.stat().st_mtime_ns == first_timestamp
-    assert second.stat().st_size > 0
-    assert second.with_suffix(".pdf").is_file()
+    paths = [run_cross_play_experiment("rps", ["hedge", "hedge"],
+        horizon=3, replicate=r, output_dir=service.raw_dir, feedback_mode="full_information") for r in range(2 if grouped else 1)]
+    if grouped:
+        group_id = service.result_snapshot().summaries(grouped=True)[0]["group_id"]
+        request = lambda: service.group_joint_action_figure(group_id)
+    else:
+        request = lambda: service.joint_action_figure(paths[0].name)
+    first = request()
+    timestamp = first.stat().st_mtime_ns
+    assert request() == first and first.stat().st_mtime_ns == timestamp
+    assert first.read_bytes().startswith(b"\x89PNG")
+    assert first.with_suffix(".pdf").read_bytes().startswith(b"%PDF")
 
 
 def test_custom_zero_sum_joint_action_heatmap_uses_saved_game(tmp_path: Path) -> None:
     service = create_service(tmp_path)
     definition = service.create_custom_game("Joint Actions", 2, [3, 3], 7, "zero_sum")
-    result_path = run_full_information_cross_play_experiment(
+    result_path = run_cross_play_experiment(
         definition.id,
         ["hedge", "hedge"],
         horizon=3,
         output_dir=service.raw_dir,
         custom_game_dir=service.game_catalog.custom_game_dir,
+        feedback_mode="full_information",
     )
 
     figure = service.joint_action_figure(result_path.name)
@@ -625,103 +460,32 @@ def test_custom_zero_sum_joint_action_heatmap_uses_saved_game(tmp_path: Path) ->
     assert figure.with_suffix(".pdf").is_file()
 
 
-def test_equilibrium_convergence_figures_share_computation_and_use_paired_cache(tmp_path: Path, monkeypatch) -> None:
-    from experiments.plots import plot_equilibrium_convergence
-
+@pytest.mark.parametrize("grouped", [False, True])
+def test_equilibrium_distance_reuses_paired_cache_and_clears_it(tmp_path, monkeypatch, grouped):
+    from experiments.plots import plot_equilibrium_convergence as plotting
     service = create_service(tmp_path)
-    result_path = run_full_information_cross_play_experiment(
-        game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir
-    )
-    calls = 0
+    paths = [run_cross_play_experiment("rps", ["hedge", "hedge"],
+        horizon=2, replicate=r, output_dir=service.raw_dir, feedback_mode="full_information") for r in range(2 if grouped else 1)]
+    calls = []
 
-    def fake_plot(input_path, distance_output_path, **kwargs) -> None:
-        nonlocal calls
-        calls += 1
-        write_figure_pair(distance_output_path, b"distance")
+    def render(input_paths, output_path, **kwargs):
+        calls.append(list(input_paths))
+        write_figure_pair(output_path, b"distance")
 
-    monkeypatch.setattr(
-        plot_equilibrium_convergence,
-        "plot_result_equilibrium_distance",
-        fake_plot,
-    )
-
-    request_figure = lambda: service.request_equilibrium_convergence_figure(result_path.name)
-    first_path, first_error = wait_for_equilibrium_figure(request_figure)
-    second_path, second_error = wait_for_equilibrium_figure(request_figure)
-
-    assert calls == 1
-    assert first_error is second_error is None
-    assert first_path == second_path
-    assert first_path.read_bytes() == b"distance"
-    assert first_path.with_suffix(".pdf").read_bytes() == b"distance"
-
+    monkeypatch.setattr(plotting, "plot_result_equilibrium_distance", render)
+    if grouped:
+        group_id = service.result_snapshot().summaries(grouped=True)[0]["group_id"]
+        request = lambda: service.request_group_equilibrium_convergence_figure(group_id)
+    else:
+        request = lambda: service.request_equilibrium_convergence_figure(paths[0].name)
+    first, error = wait_for_equilibrium_figure(request)
+    assert error is None and first is not None
+    assert wait_for_equilibrium_figure(request) == (first, None)
+    assert len(calls) == 1  # Cache hits must not recompute distances.
+    assert len(calls[0]) == len(paths) and set(calls[0]) == set(paths)
+    assert first.read_bytes() == first.with_suffix(".pdf").read_bytes() == b"distance"
     service.clear_results()
-    assert not first_path.exists()
-
-
-def test_replicate_group_equilibrium_figures_share_computation_and_use_paired_cache(tmp_path: Path, monkeypatch) -> None:
-    from experiments.plots import plot_equilibrium_convergence
-
-    service = create_service(tmp_path)
-    for replicate in range(2):
-        run_full_information_cross_play_experiment(
-            game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, replicate=replicate, output_dir=service.raw_dir
-        )
-    group_id = aggregate_result_summaries(service.result_snapshot().summaries)[0]["group_id"]
-    received_paths = []
-
-    def fake_plot(input_paths, distance_output_path, **kwargs) -> None:
-        received_paths.extend(input_paths)
-        write_figure_pair(distance_output_path, b"mean distance")
-
-    monkeypatch.setattr(
-        plot_equilibrium_convergence,
-        "plot_result_equilibrium_distance",
-        fake_plot,
-    )
-
-    request_figure = lambda: service.request_group_equilibrium_convergence_figure(group_id)
-    first_path, first_error = wait_for_equilibrium_figure(request_figure)
-    second_path, second_error = wait_for_equilibrium_figure(request_figure)
-
-    assert len(received_paths) == 2
-    assert {path.name for path in received_paths} == set(service.result_snapshot().filenames)
-    assert first_error is second_error is None
-    assert first_path == second_path
-    assert first_path.read_bytes() == b"mean distance"
-    assert first_path.with_suffix(".pdf").read_bytes() == b"mean distance"
-
-
-def test_single_run_distance_generation_requests_one_render(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    from experiments.plots import plot_equilibrium_convergence
-
-    service = create_service(tmp_path)
-    result_path = run_full_information_cross_play_experiment(
-        game_name="rps", algorithm_names=["hedge", "hedge"], horizon=2, output_dir=service.raw_dir
-    )
-    calls = 0
-
-    def fake_distance(input_paths, output_path, **kwargs) -> None:
-        nonlocal calls
-        calls += 1
-        write_figure_pair(output_path, b"distance curve")
-
-    monkeypatch.setattr(
-        plot_equilibrium_convergence,
-        "plot_result_equilibrium_distance",
-        fake_distance,
-    )
-
-    generated, error = wait_for_equilibrium_figure(
-        lambda: service.request_equilibrium_convergence_figure(result_path.name)
-    )
-
-    assert calls == 1
-    assert error is None
-    assert generated is not None
+    assert not first.exists() and not first.with_suffix(".pdf").exists()
 
 
 @pytest.mark.parametrize("grouped", [False, True])
@@ -729,11 +493,12 @@ def test_annotated_equilibrium_figures_bypass_old_render_cache_without_deleting_
     from experiments.plots import plot_equilibrium_convergence
 
     service = create_service(tmp_path)
-    result_path = run_full_information_cross_play_experiment(
+    result_path = run_cross_play_experiment(
         "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
+        feedback_mode="full_information",
     )
     if grouped:
-        group_id = aggregate_result_summaries(service.result_snapshot().summaries)[0]["group_id"]
+        group_id = service.result_snapshot().summaries(grouped=True)[0]["group_id"]
         _, output_path, stem = service._group_convergence_figure_path(group_id)
         legacy_path = service.detail_figure_dir / f"{stem}_replicate_mean_equilibrium_distance.png"
         request_figure = lambda: service.request_group_equilibrium_convergence_figure(group_id)
@@ -758,3 +523,14 @@ def test_annotated_equilibrium_figures_bypass_old_render_cache_without_deleting_
     assert legacy_path.read_bytes() == legacy_path.with_suffix(".pdf").read_bytes() == b"old unannotated figure"
     assert wait_for_equilibrium_figure(request_figure) == (generated, None)
     assert len(calls) == 1
+
+
+def test_dashboard_keeps_active_jobs_outside_display_limit(tmp_path, monkeypatch):
+    app, service = create_test_app(tmp_path)
+    jobs = [Job(str(i), "Finished", "succeeded", "Done", "now") for i in range(5)]
+    jobs += [Job("active", "Active", "running", "Running", "now"), Job("old", "Old", "failed", "Failed", "now")]
+    monkeypatch.setattr(service.jobs, "recent", lambda: jobs)
+    response = app.test_client().get("/")
+    page = response.get_data(as_text=True)
+    for job in jobs:
+        assert (f'data-job-id="{job.id}"' in page) == (job.id != "old")

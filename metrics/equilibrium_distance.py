@@ -5,6 +5,7 @@ from scipy import sparse
 from scipy.optimize import linprog
 
 from config import EQUILIBRIUM_LP_TOLERANCE
+from metrics.empirical_distribution import EmpiricalDistributionTrajectory
 
 
 EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION = 1
@@ -92,3 +93,62 @@ def equilibrium_l1_distance(payoff_tensor, empirical_distribution, equilibrium: 
     result = prepared.solve(empirical.ravel(order="C"))
     nearest = result.x[:prepared.n_profiles].reshape(action_shape, order="C")
     return EquilibriumDistanceResult(float(result.fun), nearest)
+
+
+@dataclass(frozen=True)
+class EquilibriumDistanceTrajectory:
+    horizons: np.ndarray
+    ce: np.ndarray
+    cce: np.ndarray
+
+
+@dataclass(frozen=True)
+class ReplicateEquilibriumDistanceTrajectory:
+    horizons: np.ndarray
+    ce_mean: np.ndarray
+    cce_mean: np.ndarray
+    n_replicates: int
+
+
+def equilibrium_distance_trajectory(
+    payoff_tensor,
+    empirical: EmpiricalDistributionTrajectory,
+) -> EquilibriumDistanceTrajectory:
+    ce = _PreparedDistanceLP(payoff_tensor, "ce")
+    cce = _PreparedDistanceLP(payoff_tensor, "cce")
+    if empirical.action_shape != ce.action_shape:
+        raise ValueError("empirical action shape must match the payoff tensor")
+    ce_distances = []
+    cce_distances = []
+    for vector in empirical.vectors:
+        # Figures need only the objective, not a reshaped nearest equilibrium.
+        ce_distances.append(float(ce.solve(vector).fun))
+        cce_distances.append(float(cce.solve(vector).fun))
+    return EquilibriumDistanceTrajectory(
+        empirical.horizons,
+        np.asarray(ce_distances),
+        np.asarray(cce_distances),
+    )
+
+
+def aggregate_equilibrium_distance_trajectories(
+    trajectories: list[EquilibriumDistanceTrajectory],
+) -> ReplicateEquilibriumDistanceTrajectory:
+    if not trajectories:
+        raise ValueError(
+            "at least one equilibrium-distance trajectory is required"
+        )
+    horizons = trajectories[0].horizons
+    for trajectory in trajectories[1:]:
+        if not np.array_equal(trajectory.horizons, horizons):
+            raise ValueError(
+                "equilibrium-distance trajectories must have matching horizons"
+            )
+    ce = np.asarray([trajectory.ce for trajectory in trajectories])
+    cce = np.asarray([trajectory.cce for trajectory in trajectories])
+    return ReplicateEquilibriumDistanceTrajectory(
+        horizons.copy(),
+        np.mean(ce, axis=0),
+        np.mean(cce, axis=0),
+        len(trajectories),
+    )

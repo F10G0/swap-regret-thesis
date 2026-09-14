@@ -5,17 +5,16 @@ from config import SEED
 from experiments.result_schema import REGRET_NAMES
 from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
-    FEEDBACK_MODE_LABELS,
     MAX_ADVERSARIAL_ACTIONS,
     RANDOM_WALK_ENVIRONMENT,
 )
+from experiments.scenarios.cross_play import FEEDBACK_MODE_LABELS
 from experiments.game_catalog import (
     CUSTOM_PAYOFF_STRUCTURES,
     MAX_CUSTOM_ACTIONS_PER_PLAYER,
     MAX_CUSTOM_PAYOFF_VALUES,
     MAX_CUSTOM_PLAYERS,
 )
-from web.result_groups import aggregate_result_summaries
 from web.services import DashboardService
 
 
@@ -91,7 +90,7 @@ def dashboard_context(
     game_presentations = service.game_presentations
     results = service.result_snapshot()
     summaries = []
-    for summary in aggregate_result_summaries(results.summaries):
+    for summary in results.summaries(grouped=True):
         profile_label = " vs ".join(service.algorithm_labels.get(name, name) for name in summary["algorithm_profile"])
         matrix_figures_available = service.supports_matrix_figures(summary["game"])
         equilibrium_distance_available = service.supports_equilibrium_distance(summary["game"])
@@ -151,7 +150,7 @@ def dashboard_context(
             for filename in results.filenames
         ],
         "summaries": summaries,
-        "warnings": results.warnings,
+        "warnings": list(results.warnings),
     }
 
 
@@ -160,10 +159,11 @@ def one_player_context(
     form_state: dict | None = None,
     inline_error: str | None = None,
 ) -> dict:
-    summaries, warnings = service.adversarial_result_summaries()
-    scaling_summaries, scaling_warnings = service.adversarial_scaling_summaries()
+    results = service.result_snapshot("adversarial")
+    scaling = service.result_snapshot("scaling")
+    summaries, scaling_summaries = results.summaries(), scaling.summaries()
     scaling_figures = _figure_data(
-        service.adversarial_scaling_figure_records(scaling_summaries),
+        service.adversarial_scaling_figure_records(scaling),
         "dashboard.adversarial_scaling_figure",
     )
     for summary in summaries:
@@ -186,7 +186,7 @@ def one_player_context(
         "summaries": summaries,
         "scaling_summaries": scaling_summaries,
         "scaling_figures": scaling_figures,
-        "warnings": warnings + scaling_warnings,
+        "warnings": list(results.warnings + scaling.warnings),
         "max_actions": MAX_ADVERSARIAL_ACTIONS,
     }
 

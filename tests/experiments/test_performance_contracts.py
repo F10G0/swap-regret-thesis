@@ -1,3 +1,4 @@
+from functools import partial
 import csv
 from collections import Counter
 
@@ -5,6 +6,7 @@ import numpy as np
 import pytest
 
 from environments import RepeatedGame, BanditRepeatedGame
+from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE, run_cross_play_experiment
 from experiments.game_catalog import load_game_payoffs
 from experiments.plots.plot_joint_actions import joint_action_distribution
 from experiments.plots.plot_regret import load_rows, aggregate_metric_curve
@@ -17,10 +19,11 @@ from experiments.scenarios.adversarial import (
     RANDOM_WALK_ENVIRONMENT, HISTORICAL_FREQUENCY_ENVIRONMENT,
     load_adversarial_rows, run_adversarial_experiment,
 )
-from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT, run_bandit_cross_play_experiment
-from experiments.scenarios.full_information_cross_play import ALGORITHMS as FULL, run_full_information_cross_play_experiment
 from metrics.regret import RegretBundle
 from tests.support import read_csv_rows
+
+BANDIT = ALGORITHMS_BY_FEEDBACK_MODE["bandit"]
+FULL = ALGORITHMS_BY_FEEDBACK_MODE["full_information"]
 
 
 class MemoryRecorder:
@@ -120,8 +123,8 @@ def test_tracker_updates_every_round_and_summarizes_only_checkpoints(monkeypatch
 
 
 @pytest.mark.parametrize("runner,names", [
-    (run_full_information_cross_play_experiment, ["hedge", "bm"]),
-    (run_bandit_cross_play_experiment, ["auer_exp3", "ito"]),
+    (partial(run_cross_play_experiment, feedback_mode="full_information"), ["hedge", "bm"]),
+    (partial(run_cross_play_experiment, feedback_mode="bandit"), ["auer_exp3", "ito"]),
 ])
 def test_sparse_csv_preserves_all_actions_regrets_and_joint_distribution(tmp_path, runner, names):
     kwargs = dict(game_name="rps", algorithm_names=names, horizon=101, seed=7)
@@ -169,8 +172,8 @@ def test_adversarial_summaries_are_only_extracted_at_checkpoints(tmp_path, monke
 
 @pytest.mark.parametrize("mutate", ["missing_first", "missing_last", "duplicate", "reverse", "missing_player", "missing_block"])
 def test_sparse_validation_still_rejects_corrupt_trajectories(tmp_path, mutate):
-    path = run_bandit_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=25,
-                                          output_dir=tmp_path, max_recorded_points=6)
+    path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=25,
+                                          output_dir=tmp_path, max_recorded_points=6, feedback_mode="bandit")
     rows = read_csv_rows(path)
     if mutate == "missing_first":
         rows = rows[2:]
@@ -196,7 +199,7 @@ def test_plot_loaders_align_legacy_dense_and_default_sparse_checkpoints(tmp_path
     for runner, kwargs, loader in [
         (run_adversarial_experiment, dict(algorithm_name="auer_exp3", feedback_mode="bandit"),
          lambda path: load_adversarial_rows(path, max_points=2000)),
-        (run_bandit_cross_play_experiment, dict(game_name="rps", algorithm_names=["auer_exp3"] * 2), load_rows),
+        (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["auer_exp3"] * 2), load_rows),
     ]:
         dense = runner(**kwargs, horizon=2100, output_dir=tmp_path / "dense", max_recorded_points=3000)
         sparse = runner(**kwargs, horizon=2100, output_dir=tmp_path / "sparse")

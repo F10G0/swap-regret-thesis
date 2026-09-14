@@ -77,15 +77,6 @@ def result_algorithm_profile(row: dict[str, str]) -> tuple[str, ...]:
     raise ValueError("result has no algorithm profile")
 
 
-def result_player_algorithm(row: dict[str, str]) -> str:
-    player_algorithm = row.get("player_algorithm", "").strip()
-    if player_algorithm and player_algorithm != "0":
-        return player_algorithm
-    profile = result_algorithm_profile(row)
-    player = int(row["player"])
-    return profile[player] if player < len(profile) else row["algorithm"]
-
-
 def result_game_payoff_digest(row: dict[str, str]) -> str:
     digest = row.get("game_payoff_digest", "").strip()
     if not digest or digest == "0":

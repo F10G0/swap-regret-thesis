@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metrics.equilibrium_convergence import (
+from metrics.equilibrium_distance import (
     EquilibriumDistanceTrajectory,
     aggregate_equilibrium_distance_trajectories,
 )
@@ -54,7 +54,7 @@ def test_distance_aggregation_requires_a_replicate() -> None:
 @pytest.mark.parametrize("n_players", [3, 4])
 def test_full_space_convergence_supports_multiple_players(n_players):
     from metrics.empirical_distribution import empirical_distribution_trajectory
-    from metrics.equilibrium_convergence import equilibrium_distance_trajectory
+    from metrics.equilibrium_distance import equilibrium_distance_trajectory
 
     action_shape = (2,) * n_players
     payoffs = np.zeros((n_players, *action_shape))
@@ -69,7 +69,7 @@ def test_full_space_convergence_supports_multiple_players(n_players):
 
 def test_trajectory_prepares_once_per_concept_and_uses_only_scalar_objectives(monkeypatch):
     from types import SimpleNamespace
-    import metrics.equilibrium_convergence as module
+    import metrics.equilibrium_distance as module
     from metrics.empirical_distribution import EmpiricalDistributionTrajectory
     concepts, calls = [], []
 

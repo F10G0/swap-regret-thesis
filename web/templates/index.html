@@ -1,5 +1,5 @@
-{% extends "_experiment_page.html" %}
-{% from "_experiment_ui.html" import file_list, learning_configuration, regret_figure_panel, result_controls, regret_headers, regret_cells with context %}
+{% extends "base.html" %}
+{% from "_experiment_ui.html" import figure_dialog, jobs_panel, warning_panel, file_list, learning_configuration, regret_figure_panel, result_controls, regret_headers, regret_cells with context %}
 {% from "_one_player_experiment.html" import one_player_main, one_player_sidebar with context %}
 
 {% set sidebar_label = "Experiment configuration" %}
@@ -16,179 +16,202 @@
 
 {% block title %}Experiments · Swap Regret{% endblock %}
 
-{% block experiment_description %}Run reproducible fixed-game or one-player experiments and inspect their regret.{% endblock %}
+{% block content %}
+    <div class="app-shell">
+        <aside class="sidebar" aria-label="{{ sidebar_label }}">
+            <div class="brand">
+                <p class="eyebrow">Bachelor thesis laboratory</p>
+                <h1>Experiments</h1>
+                <p>Run reproducible fixed-game or one-player experiments and inspect their regret.</p>
+            </div>
+            <form class="experiment-mode-switch" method="get" action="{{ url_for('dashboard.index') }}">
+                <label for="experiment-mode">Experiment type</label>
+                <select id="experiment-mode" name="mode">
+                    <option value="fixed" {% if experiment_mode == "fixed" %}selected{% endif %}>Fixed game</option>
+                    <option value="adversarial" {% if experiment_mode == "adversarial" %}selected{% endif %}>One-player environment</option>
+                </select>
+            </form>
+            <div id="experiment-submit-status" class="notice notice-error" role="status" {% if not inline_error %}hidden{% endif %}>{{ inline_error or "" }}</div>
 
-{% block experiment_sidebar %}
-        {% if experiment_mode == "adversarial" %}
-            {{ one_player_sidebar(current_algorithms, selected_algorithm_names) }}
-        {% else %}
-            <form id="experiment-form" method="post" action="{{ url_for('dashboard.index') }}">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="experiment_type" value="fixed">
+            {% if experiment_mode == "adversarial" %}
+                {{ one_player_sidebar(current_algorithms, selected_algorithm_names) }}
+            {% else %}
+                <form id="experiment-form" method="post" action="{{ url_for('dashboard.index') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="experiment_type" value="fixed">
 
-                <div class="control-card control-card-game">
-                    <label for="game">Game</label>
-                    <select id="game" name="game" aria-describedby="game-description" required>
-                        <optgroup label="Built-in games">
-                            {% for game in built_in_games %}
-                                <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
-                            {% endfor %}
-                        </optgroup>
-                        {% if custom_games %}
-                            <optgroup label="Other games">
-                                {% for game in custom_games %}
+                    <div class="control-card control-card-game">
+                        <label for="game">Game</label>
+                        <select id="game" name="game" aria-describedby="game-description" required>
+                            <optgroup label="Built-in games">
+                                {% for game in built_in_games %}
                                     <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
                                 {% endfor %}
                             </optgroup>
-                        {% endif %}
-                    </select>
-                    <span id="game-description" class="hint">{{ selected_presentation.description }}</span>
-                </div>
+                            {% if custom_games %}
+                                <optgroup label="Other games">
+                                    {% for game in custom_games %}
+                                        <option value="{{ game }}" {% if game == selected_game %}selected{% endif %}>{{ game_presentations[game].label }}</option>
+                                    {% endfor %}
+                                </optgroup>
+                            {% endif %}
+                        </select>
+                        <span id="game-description" class="hint">{{ selected_presentation.description }}</span>
+                    </div>
 
-                {{ learning_configuration(form_state, feedback_modes, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates, "Base seed used to derive reproducible random streams for every player and replicate.") }}
+                    {{ learning_configuration(form_state, feedback_modes, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates, "Base seed used to derive reproducible random streams for every player and replicate.") }}
 
-                <div class="button-stack">
-                    <button id="queue-experiment" class="button-primary" type="submit">
-                        Queue experiment
-                    </button>
-                </div>
-            </form>
-
-            <details class="data-management">
-                <summary>Data management</summary>
-                <div class="maintenance-actions">
-                    <form id="rebuild-plots-form" method="post" action="{{ url_for('dashboard.rebuild_plots') }}">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" data-busy-control {% if busy %}disabled{% endif %}>Rebuild figures</button>
-                    </form>
-
-                    <form
-                        method="post"
-                        action="{{ url_for('dashboard.reset_results') }}"
-                        data-confirm="Delete all generated experiment and figure files?"
-                    >
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="confirmation" value="reset-results">
-                        <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>
-                            Reset generated results
+                    <div class="button-stack">
+                        <button id="queue-experiment" class="button-primary" type="submit">
+                            Queue experiment
                         </button>
-                    </form>
-                </div>
-
-                {{ file_list(experiments, "experiments-heading", "Raw experiment files", "dashboard.delete_experiment", "and rebuild all figures", busy, "No experiments recorded.") }}
-            </details>
-        {% endif %}
-{% endblock %}
-
-{% block experiment_main %}
-        {% if experiment_mode == "adversarial" %}
-            {{ one_player_main() }}
-        {% else %}
-            {{ result_controls() }}
-
-            {{ regret_figure_panel() }}
-            {% if summaries %}
-
-            <section class="panel summary-panel" aria-labelledby="summary-heading">
-                <div class="section-heading">
-                    <div>
-                        <p class="eyebrow">Recorded outcomes</p>
-                        <h2 id="summary-heading">Final regret summary</h2>
                     </div>
-                    <span>{{ summaries | length }} replicate-group player records</span>
-                </div>
+                </form>
 
-                    <div class="table-scroll">
-                        <table id="summary-table">
-                            <thead>
-                                <tr>
-                                    <th>Game</th>
-                                    <th>Feedback</th>
-                                    <th>Seed / replicates</th>
-                                    <th>Player</th>
-                                    <th>Profile</th>
-                                    <th>Horizon</th>
-                                    {{ regret_headers() }}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in summaries %}
-                                    <tr
-                                        class="summary-row"
-                                        tabindex="0"
-                                        data-summary-index="{{ loop.index0 }}"
-                                        data-scope="{{ row.game }}"
-                                        data-player="{{ row.player }}"
-                                        data-profile="{{ row.algorithm_profile | join('_vs_') }}"
-                                        data-result-key="{{ row.group_id }}"
-                                        data-feedback="{{ row.feedback_mode }}"
-                                        data-horizon="{{ row.horizon }}"
-                                        data-seed="{{ row.seed }}"
-                                        data-stationary-method="{{ row.stationary_method }}"
-                                    >
-                                        <td>{{ game_presentations[row.game].label }}</td>
-                                        <td>{{ row.feedback_mode }}</td>
-                                        <td>{{ row.seed }} / {{ row.replicate_label }}{% if row.replicate_count > 1 %} (n={{ row.replicate_count }}){% endif %}</td>
-                                        <td>{{ row.player }}</td>
-                                        <td>{{ row.profile_label }}</td>
-                                        <td>{{ row.horizon }}</td>
-                                        {{ regret_cells(row) }}
-                                    </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                <details class="data-management">
+                    <summary>Data management</summary>
+                    <div class="maintenance-actions">
+                        <form id="rebuild-plots-form" method="post" action="{{ url_for('dashboard.rebuild_plots') }}">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" data-busy-control {% if busy %}disabled{% endif %}>Rebuild figures</button>
+                        </form>
+
+                        <form
+                            method="post"
+                            action="{{ url_for('dashboard.reset_results') }}"
+                            data-confirm="Delete all generated experiment and figure files?"
+                        >
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="confirmation" value="reset-results">
+                            <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>
+                                Reset generated results
+                            </button>
+                        </form>
                     </div>
 
-                    <section id="experiment-detail" class="experiment-detail" hidden>
-                        <div class="section-heading">
-                            <div>
-                                <p class="eyebrow">Selected replicate group</p>
-                                <h2 id="detail-title"></h2>
-                            </div>
-                            <button id="reuse-experiment" type="button">Reuse parameters</button>
-                        </div>
-                        <dl id="detail-metadata" class="detail-metadata"></dl>
-                        <div id="detail-regrets" class="detail-regrets"></div>
-                        <div id="detail-downloads" class="detail-actions"></div>
-                        <section id="detail-joint-actions">
-                            <div class="detail-subheading">
-                                <h3>Mean empirical joint-action heatmap</h3>
-                                <a id="detail-heatmap-download" href="" download>Download PDF</a>
-                            </div>
-                            <div class="heatmap-frame detail-heatmap-frame">
-                                <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
-                                <span class="heatmap-loading" role="status">Loading heatmap…</span>
-                            </div>
-                        </section>
-                        <section id="detail-convergence" class="detail-convergence" aria-labelledby="detail-convergence-heading">
-                            <div class="detail-subheading">
-                                <div>
-                                    <h3 id="detail-convergence-heading">Equilibrium Convergence</h3>
-                                    <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace below.</p>
-                                </div>
-                            </div>
-                            <div class="detail-figure-grid">
-                                <article id="detail-equilibrium-distance-card" class="detail-figure-card">
-                                    <h4>Mean equilibrium distance</h4>
-                                    <div class="heatmap-frame">
-                                        <img id="detail-equilibrium-distance" alt="CE and CCE L1 distance by horizon" loading="lazy">
-                                        <span class="heatmap-loading" role="status">Loading convergence figure…</span>
-                                    </div>
-                                    <a id="detail-equilibrium-distance-download" href="" download>Download PDF</a>
-                                </article>
-                            </div>
-                        </section>
-                    </section>
-            </section>
-            {% else %}
-                <section class="panel empty-results" aria-labelledby="empty-results-heading">
-                    <p class="eyebrow">Recorded output</p>
-                    <h2 id="empty-results-heading">No results yet</h2>
-                    <p class="empty">Configure and queue an experiment to create regret figures and summaries.</p>
-                </section>
+                    {{ file_list(experiments, "experiments-heading", "Raw experiment files", "dashboard.delete_experiment", "and rebuild all figures", busy, "No experiments recorded.") }}
+                </details>
             {% endif %}
-        {% endif %}
+        </aside>
 
+        <main id="main-content" class="content">
+            {{ warning_panel(warnings, warning_heading_id) }}
+            {{ jobs_panel(jobs, busy, job_heading_id, job_return_to, busy_id=job_busy_id) }}
+            <div id="refresh-results-notice" class="notice" role="status" hidden>
+                Job status updated. Refresh when you’re ready to load the latest results.
+                <button id="refresh-results" type="button">Refresh results</button>
+            </div>
+
+            {% if experiment_mode == "adversarial" %}
+                {{ one_player_main() }}
+            {% else %}
+                {{ result_controls() }}
+
+                {{ regret_figure_panel() }}
+                {% if summaries %}
+
+                <section class="panel summary-panel" aria-labelledby="summary-heading">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">Recorded outcomes</p>
+                            <h2 id="summary-heading">Final regret summary</h2>
+                        </div>
+                        <span>{{ summaries | length }} replicate-group player records</span>
+                    </div>
+
+                        <div class="table-scroll">
+                            <table id="summary-table">
+                                <thead>
+                                    <tr>
+                                        <th>Game</th>
+                                        <th>Feedback</th>
+                                        <th>Seed / replicates</th>
+                                        <th>Player</th>
+                                        <th>Profile</th>
+                                        <th>Horizon</th>
+                                        {{ regret_headers() }}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in summaries %}
+                                        <tr
+                                            class="summary-row"
+                                            tabindex="0"
+                                            data-summary-index="{{ loop.index0 }}"
+                                            data-scope="{{ row.game }}"
+                                            data-player="{{ row.player }}"
+                                            data-profile="{{ row.algorithm_profile | join('_vs_') }}"
+                                            data-result-key="{{ row.group_id }}"
+                                            data-feedback="{{ row.feedback_mode }}"
+                                            data-horizon="{{ row.horizon }}"
+                                            data-seed="{{ row.seed }}"
+                                            data-stationary-method="{{ row.stationary_method }}"
+                                        >
+                                            <td>{{ game_presentations[row.game].label }}</td>
+                                            <td>{{ row.feedback_mode }}</td>
+                                            <td>{{ row.seed }} / {{ row.replicate_label }}{% if row.replicate_count > 1 %} (n={{ row.replicate_count }}){% endif %}</td>
+                                            <td>{{ row.player }}</td>
+                                            <td>{{ row.profile_label }}</td>
+                                            <td>{{ row.horizon }}</td>
+                                            {{ regret_cells(row) }}
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <section id="experiment-detail" class="experiment-detail" hidden>
+                            <div class="section-heading">
+                                <div>
+                                    <p class="eyebrow">Selected replicate group</p>
+                                    <h2 id="detail-title"></h2>
+                                </div>
+                                <button id="reuse-experiment" type="button">Reuse parameters</button>
+                            </div>
+                            <dl id="detail-metadata" class="detail-metadata"></dl>
+                            <div id="detail-regrets" class="detail-regrets"></div>
+                            <div id="detail-downloads" class="detail-actions"></div>
+                            <section id="detail-joint-actions">
+                                <div class="detail-subheading">
+                                    <h3>Mean empirical joint-action heatmap</h3>
+                                    <a id="detail-heatmap-download" href="" download>Download PDF</a>
+                                </div>
+                                <div class="heatmap-frame detail-heatmap-frame">
+                                    <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
+                                    <span class="heatmap-loading" role="status">Loading heatmap…</span>
+                                </div>
+                            </section>
+                            <section id="detail-convergence" class="detail-convergence" aria-labelledby="detail-convergence-heading">
+                                <div class="detail-subheading">
+                                    <div>
+                                        <h3 id="detail-convergence-heading">Equilibrium Convergence</h3>
+                                        <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace below.</p>
+                                    </div>
+                                </div>
+                                <div class="detail-figure-grid">
+                                    <article id="detail-equilibrium-distance-card" class="detail-figure-card">
+                                        <h4>Mean equilibrium distance</h4>
+                                        <div class="heatmap-frame">
+                                            <img id="detail-equilibrium-distance" alt="CE and CCE L1 distance by horizon" loading="lazy">
+                                            <span class="heatmap-loading" role="status">Loading convergence figure…</span>
+                                        </div>
+                                        <a id="detail-equilibrium-distance-download" href="" download>Download PDF</a>
+                                    </article>
+                                </div>
+                            </section>
+                        </section>
+                </section>
+                {% else %}
+                    <section class="panel empty-results" aria-labelledby="empty-results-heading">
+                        <p class="eyebrow">Recorded output</p>
+                        <h2 id="empty-results-heading">No results yet</h2>
+                        <p class="empty">Configure and queue an experiment to create regret figures and summaries.</p>
+                    </section>
+                {% endif %}
+            {% endif %}
+            {{ figure_dialog() }}
+        </main>
+    </div>
 {% endblock %}
 
 {% block scripts %}
@@ -198,7 +221,6 @@
                 "mode": experiment_mode,
                 "gameDefinitions": game_definitions,
                 "gamePresentations": game_presentations,
-                "jobs": jobs,
                 "summaries": summaries,
                 "algorithms": algorithms_by_feedback_mode,
                 "algorithmLabels": algorithm_labels,
@@ -206,7 +228,6 @@
         {% else %}
             {{ {
                 "mode": experiment_mode,
-                "jobs": jobs,
                 "summaries": summaries,
                 "algorithms": algorithms_by_feedback_mode,
                 "algorithmLabels": algorithm_labels,

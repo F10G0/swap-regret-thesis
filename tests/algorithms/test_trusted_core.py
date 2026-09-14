@@ -1,3 +1,4 @@
+from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE, AlgorithmFactory
 import numpy as np
 import pytest
 
@@ -8,10 +9,10 @@ from algorithms.swap_regret import BanditBM, BanditIto, FullIto, LCEIX
 from algorithms.swap_regret.base import StationaryReduction
 from config import NUMERICAL_TOLERANCE
 from environments import BanditRepeatedGame, HistoricalFrequencyAdversary, LazyRandomWalkEnvironment, RepeatedGame
-from experiments.scenarios.bandit_cross_play import ALGORITHMS as BANDIT
-from experiments.scenarios.cross_play import AlgorithmFactory
-from experiments.scenarios.full_information_cross_play import ALGORITHMS as FULL
 from metrics.regret import RegretBundle
+
+BANDIT = ALGORITHMS_BY_FEEDBACK_MODE["bandit"]
+FULL = ALGORITHMS_BY_FEEDBACK_MODE["full_information"]
 
 
 CASES = [

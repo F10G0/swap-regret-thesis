@@ -1,3 +1,4 @@
+from functools import partial
 import os
 from pathlib import Path
 import time
@@ -5,22 +6,21 @@ import time
 import pytest
 
 import experiments.parallel as parallel
+from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.parallel import run_replicates
 from experiments.recorder import CsvRecorder
 from experiments.runner import ExperimentCancelled
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
 from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, run_adversarial_scaling_experiment
-from experiments.scenarios.bandit_cross_play import run_bandit_cross_play_experiment
-from experiments.scenarios.full_information_cross_play import run_full_information_cross_play_experiment
 
 
 @pytest.mark.parametrize("runner,options", [
-    (run_bandit_cross_play_experiment, dict(game_name="rps", algorithm_names=["auer_exp3", "bm"])),
-    (run_full_information_cross_play_experiment, dict(game_name="rps", algorithm_names=["hedge", "ito"])),
+    (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["auer_exp3", "bm"])),
+    (partial(run_cross_play_experiment, feedback_mode="full_information"), dict(game_name="rps", algorithm_names=["hedge", "ito"])),
     (run_adversarial_experiment, dict(algorithm_name="auer_exp3", feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT)),
     *[(run_adversarial_experiment, dict(algorithm_name=name, feedback_mode="bandit", n_actions=9))
       for name in ("exp3_ix", "bm", "lce_ix", "ito")],
-    (run_bandit_cross_play_experiment, dict(game_name="rps", algorithm_names=["ito", "bm"])),
+    (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["ito", "bm"])),
 ])
 def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, runner, options):
     results = []

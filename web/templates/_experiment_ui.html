@@ -54,7 +54,25 @@
 {% endmacro %}
 
 {% macro regret_figure_panel() %}
-    {% include "_figure_builder.html" %}
+    <section class="panel figures-panel" aria-labelledby="figures-heading">
+        <div class="section-heading">
+            <div><p class="eyebrow">Visual analysis</p><h2 id="figures-heading">Figure builder</h2></div>
+        </div>
+        <p class="hint">Generate all three regrets and both views for the profiles selected in Filter results. Existing experiments are never rerun.</p>
+        <form id="figure-builder" method="post" action="{{ url_for('dashboard.build_figure_collection') }}"
+              data-export-url="{{ url_for('dashboard.download_filtered_figures') }}">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="mode" value="{{ experiment_mode }}">
+            <div class="figure-actions">
+                <button id="builder-generate" type="submit" disabled>Generate all 6 figures</button>
+                <button id="builder-download" type="button" disabled>Download merged PDF</button>
+            </div>
+        </form>
+        <p id="builder-status" class="hint" role="status">Loading available results…</p>
+        <p id="builder-export-status" class="hint" role="status"></p>
+        <div id="builder-figure" class="figure-grid"></div>
+        <noscript><p class="notice">Enable JavaScript to filter results and generate figures.</p></noscript>
+    </section>
 {% endmacro %}
 
 {% macro regret_headers() %}
