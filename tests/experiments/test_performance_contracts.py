@@ -36,7 +36,7 @@ class MemoryRecorder:
         self.rows.append(row)
 
 
-@pytest.mark.parametrize("horizon", [1, 2, 100, 200, 201, 1_000_000])
+@pytest.mark.parametrize("horizon", [1, 2, 100, 500, 501, 1_000_000])
 def test_recording_budget_and_endpoints(horizon):
     points = recording_checkpoints(horizon)
     assert points[0] == 1 and points[-1] == horizon
@@ -85,10 +85,9 @@ def test_sparse_runner_matches_original_dense_loop(mode, name):
         history.append(actions)
         game.step(actions)
         for i, (player, action) in enumerate(zip(reference_players, actions)):
-            strategy = player.strategy()
             feedback = game.feedback(i)
             deviations = feedback if mode == "full_information" else game.deviation_payoffs(i)
-            gains[i] += strategy[:, None] * (deviations[None, :] - deviations[:, None])
+            gains[i][action] += deviations - deviations[action]
             player.update(feedback)
             values = {
                 "external": float(np.max(np.sum(gains[i], axis=0))),
@@ -230,29 +229,27 @@ def test_fixed_result_validation_rejects_corrupt_trajectories(tmp_path, mutate):
 
 
 def test_regret_plots_use_default_log_checkpoints_and_axes(tmp_path, monkeypatch):
-    from experiments.plots import plot_adversarial, plot_regret
+    from experiments.plots import plot_regret
+    from experiments.plots.style import profile_series_style
 
     def check_points(figure, output_path):
-        curve = figure.axes[0].lines[0]
-        assert list(curve.get_xdata()) == list(recording_checkpoints(2100))
-        assert len(curve.get_ydata()) <= MAX_RECORDED_POINTS
-        assert curve.get_markevery() == (0, 0.24)
+        curves = [line for line in figure.axes[0].lines if not line.get_label().startswith("_")]
+        assert all(list(curve.get_xdata()) == list(recording_checkpoints(2100)) for curve in curves)
+        assert all(len(curve.get_ydata()) <= MAX_RECORDED_POINTS for curve in curves)
         assert figure.axes[0].get_xscale() == "log"
 
-    monkeypatch.setattr(plot_adversarial, "save_figure_pair", check_points)
     monkeypatch.setattr(plot_regret, "save_figure_pair", check_points)
-    for runner, kwargs, loader in [
-        (run_adversarial_experiment, dict(algorithm_name="auer_exp3", feedback_mode="bandit"),
-         load_adversarial_rows),
-        (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["auer_exp3"] * 2), load_rows),
-    ]:
-        path = runner(**kwargs, horizon=2100, output_dir=tmp_path)
-        rows = loader(path)
-        for average in (True, False):
-            if runner is run_adversarial_experiment:
-                plot_adversarial._plot_regret([(path, rows)], rows[0]["environment"], "bandit", int(rows[0]["n_actions"]), "external", average, tmp_path / "regret.png")
-            else:
-                plot_regret.plot_regret("rps", [[rows]], "external", 0, average, tmp_path)
+    adversarial_path = run_adversarial_experiment("auer_exp3", feedback_mode="bandit", horizon=2100, output_dir=tmp_path)
+    fixed_path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, feedback_mode="bandit", horizon=2100, output_dir=tmp_path)
+    adversarial_rows = load_adversarial_rows(adversarial_path)
+    fixed_rows = load_rows(fixed_path)
+    curves = []
+    for index, (times, means) in enumerate((
+        aggregate_adversarial_regret([adversarial_rows], "average_external_regret"),
+        aggregate_metric_curve([fixed_rows], 0, "average_external_regret"),
+    )):
+        curves.append(plot_regret.RegretCurve(times, means, str(index), profile_series_style(index, 2)))
+    plot_regret.plot_regret_curves(curves, "$R_T/T$", tmp_path / "regret.png")
 
 
 def test_replicate_aggregation_uses_only_shared_observed_times():

@@ -101,9 +101,7 @@ def test_experiments_page_switches_to_one_player_controls(tmp_path):
         assert f'name="{name}"'.encode() in adversarial.data
     page = adversarial.get_data(as_text=True)
     assert page.index('id="feedback-mode"') < page.index('id="actions"') < page.index('id="horizon"')
-    assert "One value runs a standard experiment; multiple values run action-space scaling." in page
-    for removed in ("Action-space scaling", "Replicates per K", "Queue scaling experiment", "Data management", "Raw experiment files", "Adversarial CSV files", "Action-scaling CSV files"):
-        assert removed not in page
+    assert "Enter one or more values; each action count queues ordinary one-player experiments." in page
     for response in (fixed, adversarial):
         rendered = response.get_data(as_text=True)
         assert rendered.count('name="seed"') == 1
@@ -187,33 +185,28 @@ def test_algorithm_options_follow_feedback_mode(tmp_path, mode) -> None:
     assert '<option value="hedge"' not in options
 
 
-def test_adversarial_page_runs_action_space_scaling_batch(tmp_path):
+def test_multiple_action_counts_queue_ordinary_one_player_results(tmp_path):
     app, service = create_test_app(tmp_path, max_replicates=10)
     client = app.test_client()
-    submit_and_wait(client, service, VALID_FORM | {"actions": "2, 4", "replicates": "2"})
-    path = next(service.adversarial_scaling_raw_dir.glob("*.csv"))
-    assert len(path.read_text().splitlines()) == 5
-    figures = service.adversarial_scaling_figure_records()
-    assert len(figures) == 1
+    job = submit_and_wait(client, service, VALID_FORM | {"actions": "2, 4", "replicates": "2"})
+    completed = service.jobs.get(job.id)
+    assert (completed.completed, completed.total) == (4, 4)
+    paths = sorted(service.adversarial_raw_dir.glob("*.csv"))
+    assert len(paths) == 4 and all(len(path.read_text().splitlines()) == 5 for path in paths)
+    results = service.result_snapshot("adversarial")
+    assert len(results.records) == 4
+    assert {(row["n_actions"], tuple(row["replicates"])) for row in results.summaries(grouped=True)} == {
+        (2, (0, 1)), (4, (0, 1))}
     catalog = client.get("/figure-builder/options?mode=adversarial").get_json()
-    assert catalog["contexts"] == [] and "scaling" not in catalog
-    rejected = client.post("/figure-builder/collection", data={
-        "_csrf_token": _csrf_token(client), "mode": "adversarial", "context_id": "a" * 24,
-        "comparison_mode": "profiles", "metric": "external", "view": "average", "profiles": "hedge",
-    })
-    assert rejected.status_code == 400
+    assert len(catalog["contexts"]) == 1
+    assert catalog["contexts"][0]["actions"] == [2, 4]
+    assert catalog["contexts"][0]["profiles"][0]["actions"] == [2, 4]
     page = client.get("/?mode=adversarial").get_data(as_text=True)
-    assert page.index('id="summary-heading"') < page.index('id="scaling-results"')
-    assert '<p class="eyebrow">Scaling</p>' in page
-    assert '<h2 id="scaling-results-heading">Action-space scaling</h2>' in page
-    assert "Final regret across action-space sizes." in page
-    assert '<p class="eyebrow">Optional</p>' not in page and "Regret by action-space size" not in page
-    assert "data-result-card" not in page and "data-result-section" not in page
-    assert client.get(f"/adversarial/action-scaling/experiments/{path.name}").data == path.read_bytes()
-    for key, mimetype in (("filename", "image/png"), ("pdf_filename", "application/pdf")):
-        response = client.get(f"/adversarial/action-scaling/figures/{figures[0][key]}")
-        assert response.status_code == 200 and response.mimetype == mimetype
-    assert path.exists()
+    assert page.count('class="summary-row"') == 2
+    assert '<label for="filter-action">Action</label>' in page
+    assert '<span>Action spaces</span>' in page
+    assert not list(tmp_path.rglob("*.png")) and not list(tmp_path.rglob("*.pdf"))
+    assert client.get(f"/adversarial/experiments/{paths[0].name}").data == paths[0].read_bytes()
 
 
 @pytest.mark.parametrize("workers", [1, 2])
@@ -262,7 +255,6 @@ def test_adversarial_submission_persists_results(tmp_path, environment, feedback
     results = service.result_snapshot("adversarial")
     summaries, warnings = results.summaries(), list(results.warnings)
     assert not warnings and len(summaries) == 1
-    assert summaries[0]["average_regret"] is not None
     assert b"Recorded output" in client.get("/?mode=adversarial").data
     assert client.get(f"/adversarial/experiments/{path.name}").data == path.read_bytes()
     assert path.exists()
@@ -283,18 +275,12 @@ def test_global_reset_from_one_player_deletes_all_experiment_artifacts(tmp_path)
     app, service = _app(tmp_path)
     client = app.test_client()
     service.adversarial_raw_dir.mkdir(parents=True)
-    service.adversarial_scaling_raw_dir.mkdir(parents=True)
-    service.adversarial_scaling_figure_dir.mkdir(parents=True)
     service.raw_dir.mkdir(parents=True)
     service.figure_builder.output_dir.mkdir(parents=True)
     fixed_csv = service.raw_dir / "fixed.csv"
     fixed_csv.write_text("data", encoding="utf-8")
     csv_path = service.adversarial_raw_dir / "result.csv"
     csv_path.write_text("data", encoding="utf-8")
-    scaling_csv = service.adversarial_scaling_raw_dir / "scaling.csv"
-    scaling_csv.write_text("data", encoding="utf-8")
-    scaling_figure = service.adversarial_scaling_figure_dir / "scaling.png"
-    scaling_figure.write_bytes(b"png")
     cached_figure = service.figure_builder.output_dir / "cached.png"
     cached_figure.write_bytes(b"png")
 
@@ -305,4 +291,4 @@ def test_global_reset_from_one_player_deletes_all_experiment_artifacts(tmp_path)
 
     assert response.status_code == 302
     assert response.headers["Location"] == "/?mode=adversarial"
-    assert not any(path.exists() for path in (fixed_csv, csv_path, scaling_csv, scaling_figure, cached_figure))
+    assert not any(path.exists() for path in (fixed_csv, csv_path, cached_figure))

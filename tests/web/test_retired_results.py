@@ -99,7 +99,7 @@ def test_supported_and_custom_visual_analysis_works_beside_retired_assets(tmp_pa
     context = next(context for context in contexts if context["scope"] == custom.id and context["player"] == 0)
     response = client.post("/figure-builder/collection", data={
         "_csrf_token": token, "mode": "fixed", "context_id": context["id"],
-        "profiles": ["hedge_vs_hedge"],
+        "metric": "external", "profiles": ["hedge_vs_hedge"],
     })
     assert response.status_code == 200
     figure = response.json["figures"][0]

@@ -5,7 +5,7 @@ import json
 import numpy as np
 
 
-MAX_RECORDED_POINTS = 200
+MAX_RECORDED_POINTS = 500
 
 
 def recording_checkpoints(horizon: int, max_points: int = MAX_RECORDED_POINTS) -> tuple[int, ...]:

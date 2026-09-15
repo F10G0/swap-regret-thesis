@@ -1,5 +1,4 @@
 from dataclasses import replace
-import csv
 from pathlib import Path
 
 import pytest
@@ -52,21 +51,3 @@ def test_duplicate_replicates_keep_first_summary_but_all_detail_sources():
     assert [run["replicate"] for run in groups[0]["runs"]] == [3, 4]
     assert [run["experiment"] for run in groups[0]["runs"]] == ["run-3.csv", "run-4.csv"]
     assert [p.name for p in results.detail_paths(groups[0]["group_id"])] == ["duplicate.csv", "run-3.csv", "run-4.csv"]
-
-
-def test_scaling_catalog_summarizes_metadata_and_rejects_corrupt_grid(tmp_path):
-    from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, run_adversarial_scaling_experiment
-    from tests.support import read_csv_rows
-    spec = AdversarialScalingSpec("historical_frequency_v3", "bandit", "auer_exp3", (2, 3), 2, 3, 11)
-    path = run_adversarial_scaling_experiment(spec, tmp_path, workers=1)
-    record = ResultRecord.read(path, "scaling")
-    assert record.summary()["action_counts"] == [2, 3]
-    assert record.summary()["replicates"] == 2
-    rows = read_csv_rows(path)
-    rows[-1]["swap_regret"] = "nan"
-    with path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-    with pytest.raises(ValueError, match="non-finite regret"):
-        ResultRecord.read(path, "scaling")

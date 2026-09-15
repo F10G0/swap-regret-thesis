@@ -79,7 +79,7 @@ def test_valid_runs_preserve_trusted_core_invariants(monkeypatch, mode, name, fa
             game.step((action,)) if environment == "historical" else game.step()
             payoffs = game.feedback()
             feedback = payoffs if mode == "full_information" else float(payoffs[action])
-        regrets.update(learner.strategy(), payoffs)
+        regrets.update(action, payoffs)
         learner.update(feedback)
         assert np.all(np.isfinite(regrets.cumulative_replacement_gains))
     assert learner.t == 100

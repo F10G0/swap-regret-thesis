@@ -59,7 +59,6 @@ def test_all_feedback_modes_record_the_canonical_schema(tmp_path, feedback_mode)
     rows = _read_rows(run_cross_play_experiment("rps", names, feedback_mode=feedback_mode, horizon=4, seed=7, output_dir=tmp_path))
     for row in rows:
         assert {key for key in row if key.endswith("_regret")} == set(REGRET_FIELDNAMES)
-        assert "regret_evaluation" not in row
         assert "implementation_version" not in row
 
 

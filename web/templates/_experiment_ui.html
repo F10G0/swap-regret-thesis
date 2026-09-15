@@ -41,7 +41,11 @@
         <div class="shared-result-filters">
             <div class="field"><label for="filter-scope">{{ "Environment" if experiment_mode == "adversarial" else "Game" }}</label><select id="filter-scope" disabled></select></div>
             <div class="field"><label for="filter-feedback">Feedback</label><select id="filter-feedback" disabled></select></div>
-            <div class="field"><label for="filter-player">Player</label><select id="filter-player" disabled></select></div>
+            {% if experiment_mode == "adversarial" %}
+                <div class="field"><label for="filter-action">Action</label><select id="filter-action" name="action" form="figure-builder" disabled></select></div>
+            {% else %}
+                <div class="field"><label for="filter-player">Player</label><select id="filter-player" disabled></select></div>
+            {% endif %}
             <div class="field"><label for="filter-metric">Regret</label><select id="filter-metric" name="metric" form="figure-builder" disabled></select></div>
             <div class="field"><label for="filter-view">View</label><select id="filter-view" name="view" form="figure-builder" disabled></select></div>
         </div>
@@ -50,6 +54,7 @@
             <div class="segmented-control">
                 <label><input id="filter-compare-regrets" type="radio" name="comparison_mode" value="regrets" form="figure-builder" checked disabled><span>Regret notions</span></label>
                 <label><input id="filter-compare-profiles" type="radio" name="comparison_mode" value="profiles" form="figure-builder" disabled><span>Algorithm profiles</span></label>
+                {% if experiment_mode == "adversarial" %}<label><input id="filter-compare-actions" type="radio" name="comparison_mode" value="actions" form="figure-builder" disabled><span>Action spaces</span></label>{% endif %}
             </div>
         </fieldset>
         <details id="filter-batches" hidden>
@@ -83,13 +88,6 @@
         <p id="builder-export-status" class="hint" role="status"></p>
         <div id="builder-figure" class="figure-grid"></div>
     </section>
-{% endmacro %}
-
-{% macro figure_preview(figure, title, alt) %}
-    <button class="figure-open" type="button">
-        <span>{{ title }}</span>
-        <img src="{{ figure.url }}" alt="{{ alt }}" loading="lazy">
-    </button>
 {% endmacro %}
 
 {% macro regret_headers() %}

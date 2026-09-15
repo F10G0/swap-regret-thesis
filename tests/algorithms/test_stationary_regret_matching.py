@@ -43,9 +43,9 @@ def test_stationary_regret_matching_updates_only_the_sampled_action_row() -> Non
     assert learner.sample_action() == 1
     learner.update(reward_vector)
 
-    expected_regret = np.zeros((3, 3))
-    expected_regret[1] = [-0.6, 0.0, -0.3]
-    assert np.allclose(learner.cumulative_regret, expected_regret)
+    expected_matrix = np.zeros((3, 3))
+    expected_matrix[1] = [-0.6, 0.0, -0.3]
+    assert np.allclose(learner.cumulative_regret, expected_matrix)
 
 
 def test_stationary_regret_matching_satisfies_regret_flow_balance() -> None:

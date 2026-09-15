@@ -2,7 +2,7 @@ import numpy as np
 
 
 class RegretBundle:
-    """Strategy-weighted gains G[i, j] = sum_t p_t[i](r_t[j] - r_t[i])."""
+    """Realized gains G[i, j] = sum_t 1{I_t=i}(r_t[j] - r_t[i])."""
 
     def __init__(self, n_actions: int):
         if n_actions <= 0:
@@ -10,10 +10,10 @@ class RegretBundle:
         self.n_actions = n_actions
         self.cumulative_replacement_gains = np.zeros((n_actions, n_actions), dtype=float)
 
-    def update(self, strategy: np.ndarray, payoff_vector: np.ndarray) -> None:
-        replacement_gains = payoff_vector[None, :] - payoff_vector[:, None]
-        weighted_replacement_gains = strategy[:, None] * replacement_gains
-        self.cumulative_replacement_gains += weighted_replacement_gains
+    def update(self, action: int, payoff_vector: np.ndarray) -> None:
+        if action < 0 or action >= self.n_actions:
+            raise ValueError("action must identify a valid source action")
+        self.cumulative_replacement_gains[action] += payoff_vector - payoff_vector[action]
 
     @property
     def external_regret(self) -> float:

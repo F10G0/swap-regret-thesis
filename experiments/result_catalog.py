@@ -20,25 +20,15 @@ from experiments.algorithm_labels import algorithm_label
 from experiments.result_schema import REGRET_NAMES
 from experiments.results import load_final_result_rows, result_algorithm_profile
 from experiments.scenarios.adversarial import (
-    ENVIRONMENT_LABELS, TARGET_REGRET_BY_ALGORITHM,
-    adversarial_environment_detail, load_final_adversarial_row,
+    ENVIRONMENT_LABELS, adversarial_environment_detail, load_final_adversarial_row,
 )
-from experiments.scenarios.adversarial_scaling import load_adversarial_scaling_rows, adversarial_scaling_environment_detail
 from experiments.scenarios.cross_play import FEEDBACK_MODE_LABELS
 
 
-ResultKind = Literal["fixed", "adversarial", "scaling"]
+ResultKind = Literal["fixed", "adversarial"]
 SUMMARY_REGRET_FIELDS = tuple(f"average_{name}_regret" for name in REGRET_NAMES)
 FIXED_COMPARISON_FIELDS = ("game", "game_payoff_digest", "feedback_mode", "horizon", "seed",
                            "stationary_method", "runtime_fingerprint")
-
-
-def adversarial_plot_key(row: dict[str, str]) -> tuple:
-    # Unlike builder compatibility, this key includes reward_step, retains wire
-    # strings, and determines plot sorting. Do not substitute comparison_key.
-    return (row["environment"], row["reward_step"], row["feedback_mode"], row["runtime_fingerprint"],
-            row["n_actions"], row["algorithm"], row["horizon"],
-            int(row["base_environment_seed"]) if row["environment_seed"] else None, int(row["base_learner_seed"]))
 
 
 class FixedDetails(NamedTuple):
@@ -61,15 +51,6 @@ class AdversarialDetails(NamedTuple):
     n_actions: int
 
 
-class ScalingDetails(NamedTuple):
-    environment: str
-    base_environment_seed: int | None
-    base_learner_seed: int
-    action_counts: tuple[int, ...]
-    replicates: int
-    target_regret: str
-
-
 @dataclass(frozen=True)
 class ResultRecord:
     path: Path
@@ -80,9 +61,8 @@ class ResultRecord:
     runtime_environment: str
     runtime_fingerprint: str
     profile: tuple[str, ...]
-    details: FixedDetails | AdversarialDetails | ScalingDetails
-    # Fixed: player order; adversarial: one final row. Scaling exposes metadata
-    # only; its strict CSV reader still validates the complete final-result grid.
+    details: FixedDetails | AdversarialDetails
+    # Fixed: player order; adversarial: one final row.
     final_values: tuple[dict[str, float], ...]
 
     @classmethod
@@ -91,8 +71,6 @@ class ResultRecord:
             rows = sorted(load_final_result_rows(path), key=lambda row: int(row["player"]))
         elif kind == "adversarial":
             rows = [load_final_adversarial_row(path)]
-        elif kind == "scaling":
-            rows = load_adversarial_scaling_rows(path)
         else:
             raise ValueError(f"unknown result kind: {kind}")
         if not rows:
@@ -111,14 +89,10 @@ class ResultRecord:
         else:
             profile = (row["algorithm"],)
             environment_seed = int(row["base_environment_seed"]) if row["base_environment_seed"] else None
-            if kind == "adversarial":
-                details = AdversarialDetails(row["environment"], row["reward_step"], environment_seed,
-                    int(row["environment_seed"]) if row["environment_seed"] else None,
-                    int(row["base_learner_seed"]), int(row["learner_seed"]), int(row["replicate"]), int(row["n_actions"]))
-            else:
-                details = ScalingDetails(row["environment"], environment_seed, int(row["base_learner_seed"]),
-                    tuple(map(int, row["action_counts"].split(","))), int(row["replicates"]), row["target_regret"])
-        values = () if kind == "scaling" else tuple({field: float(value) for field, value in observation.items()
+            details = AdversarialDetails(row["environment"], row["reward_step"], environment_seed,
+                int(row["environment_seed"]) if row["environment_seed"] else None,
+                int(row["base_learner_seed"]), int(row["learner_seed"]), int(row["replicate"]), int(row["n_actions"]))
+        values = tuple({field: float(value) for field, value in observation.items()
                         if field in SUMMARY_REGRET_FIELDS}
                        for observation in rows)
         if kind == "fixed":
@@ -141,8 +115,6 @@ class ResultRecord:
 
     @property
     def replicate(self) -> int:
-        if isinstance(self.details, ScalingDetails):
-            raise ValueError("a scaling source is an aggregate, not one replicate")
         return self.details.replicate
 
     def metrics(self, player: int = 0) -> list[str]:
@@ -157,7 +129,7 @@ class ResultRecord:
         if isinstance(info, AdversarialDetails):
             return (info.environment, self.feedback_mode, info.n_actions, self.horizon, info.base_learner_seed,
                     info.base_environment_seed, self.runtime_fingerprint)
-        raise ValueError("scaling aggregates do not define trajectory comparison groups")
+        raise TypeError("unknown result details")
 
     @property
     def group_id(self) -> str:
@@ -178,14 +150,9 @@ class ResultRecord:
         common |= {"filename": self.path.name, "algorithm": self.profile[0], "algorithm_label": algorithm_label(self.profile[0]),
                    "feedback_label": FEEDBACK_MODE_LABELS[self.feedback_mode], "environment": info.environment,
                    "environment_label": ENVIRONMENT_LABELS[info.environment], "base_learner_seed": info.base_learner_seed}
-        if isinstance(info, ScalingDetails):
-            return common | {"run_id": self.run_id, "action_counts": list(info.action_counts), "replicates": info.replicates,
-                             "target_regret": info.target_regret, "environment_detail": adversarial_scaling_environment_detail(info._asdict())}
-        target = TARGET_REGRET_BY_ALGORITHM.get(self.profile[0], "external")
         return common | {"n_actions": info.n_actions, "base_environment_seed": info.base_environment_seed,
             "environment_seed": info.environment_seed, "learner_seed": info.learner_seed, "replicate": info.replicate,
-            "runtime_fingerprint": self.runtime_fingerprint, "target_regret": target,
-            "average_regret": self.final_values[0][f"average_{target}_regret"],
+            "runtime_fingerprint": self.runtime_fingerprint,
             "environment_detail": adversarial_environment_detail(info._asdict()), **self.final_values[0]}
 
 
@@ -250,8 +217,6 @@ class ResultSet:
                               if field in record.final_values[player]]
                     if len(values) == len(rows):
                         result[field] = float(np.mean(values))
-                if group.records[0].kind == "adversarial":
-                    result["average_regret"] = result[f"average_{result['target_regret']}_regret"]
                 summaries.append(result | {"group_id": group.records[0].group_id, "replicate": replicates[0],
                     "replicates": replicates, "replicate_count": len(replicates), "replicate_label": label, "runs": rows})
         return summaries

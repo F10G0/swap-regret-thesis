@@ -16,25 +16,25 @@ The **Experiments** page uses one template, controller, result filters, figure g
 - Filter figures and summaries by game or environment and feedback mode.
 - Create reproducible general-sum or symmetric two-player zero-sum games.
 - Switch the **Experiments** page between fixed games and one-player historical-frequency or lazy-random-walk environments.
-- Enter one action count for an ordinary one-player experiment or multiple counts for action-space scaling.
+- Enter one or more action counts to queue ordinary one-player experiments.
 
-The queue has one worker and reserves run IDs on submission. Fixed-game and one-player experiments accept a replicate count. Compatible fixed-game groups share the game/payoff digest, feedback, learner profile, horizon, base seed, stationary solver, and runtime-environment fingerprint. Their strategy-weighted regret and full-space CE/CCE-distance views report replicate means.
+The queue has one worker and reserves run IDs on submission. Fixed-game and one-player experiments accept a replicate count. Compatible fixed-game groups share the game/payoff digest, feedback, learner profile, horizon, base seed, stationary solver, and runtime-environment fingerprint. Their realized regret and full-space CE/CCE-distance views report replicate means.
 
-One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Ordinary and action-space scaling batches derive learner and environment seeds from distinct domains of the shared base seed plus the replicate index, while retaining the base and derived seeds in their CSVs. The same **Actions** field selects the ordinary or scaling workflow; there is no separate scaling form. Generated figure cards open in the same viewer. Figures show means without confidence bands; previews and PDF downloads use the same selection.
+One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Every action count uses the ordinary result schema and catalog. Multi-action batches derive learner and environment seeds from distinct domains of the shared base seed plus the replicate index at every K, while retaining the base and derived seeds in each CSV. Generated figure cards open in the same viewer. Figures show means without confidence bands; previews and PDF downloads use the same selection.
 
-The sidebar configures the next run. The page flows through **Execution / Job status**, **Analysis / Result filters**, **Visualization / Generated figures**, and **Data / Recorded output**; relevant one-player scaling results appear separately under **Scaling / Action-space scaling**. Result filters coordinate Figure Builder and ordinary summaries, while scaling remains separate. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
+The sidebar configures the next run. The page flows through **Execution / Job status**, **Analysis / Result filters**, **Visualization / Generated figures**, and **Data / Recorded output**. Result filters coordinate Figure Builder and ordinary summaries. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
 
 ## Figures and Data
 
-PNG previews have matching vector PDFs. Ordinary experiment jobs save CSVs; regret figures are generated explicitly through Figure Builder. Detail figures are generated lazily and cached. Result details retain mean empirical joint-action heatmaps for supported two-player games and asynchronously computed full-space CE/CCE convergence figures. Action-space scaling keeps its visible generated figures and downloads.
+PNG previews have matching vector PDFs. Experiment jobs save CSVs; regret figures are generated explicitly through Figure Builder. Detail figures are generated lazily and cached. Result details retain mean empirical joint-action heatmaps for supported two-player games and asynchronously computed full-space CE/CCE convergence figures.
 
-**Figure Builder** compares either one or more algorithm profiles for the selected regret filters, or external, internal, and swap regret together for one profile. Exact cached selections may restore automatically; a cache miss requires **Generate figures**. The collected-PDF download combines generated PDFs in their displayed order. Exporting does not rerun experiments or rebuild plots.
+**Figure Builder** compares one or more algorithm profiles for one regret notion, external/internal/swap regret together for one profile, or compatible action spaces for one one-player profile and regret notion. The selected view always plots trajectories over time. Exact cached selections may restore automatically; a cache miss requires **Generate figures**. The collected-PDF download combines generated PDFs in their displayed order. Exporting does not rerun experiments or rebuild plots.
 
 | Location | Contents |
 |---|---|
 | `results/raw/` | Fixed-game CSVs |
 | `results/figures/` | Generated detail figures |
-| `results/adversarial/` | One-player CSVs and action-space scaling figures |
+| `results/adversarial/raw/` | One-player CSVs |
 | `results/cache/` | Figure Builder and equilibrium-distance artifacts |
 | `data/custom_games/` | Saved custom games |
 

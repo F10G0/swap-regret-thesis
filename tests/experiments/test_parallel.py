@@ -11,7 +11,6 @@ from experiments.parallel import run_replicates
 from experiments.recorder import CsvRecorder
 from experiments.runner import ExperimentCancelled
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
-from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, run_adversarial_scaling_experiment
 
 
 @pytest.mark.parametrize("runner,options", [
@@ -32,18 +31,6 @@ def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, run
         assert len(completions) == 3
         results.append([(path.name, path.read_bytes()) for path in paths])
     assert results[0] == results[1]
-
-
-def test_scaling_parallel_output_order_and_identity_are_deterministic(tmp_path):
-    spec = AdversarialScalingSpec(
-        environment=RANDOM_WALK_ENVIRONMENT, feedback_mode="bandit",
-        algorithm_name="auer_exp3", action_counts=(2, 4), replicates=2, horizon=25,
-        seed=7,
-    )
-    serial = run_adversarial_scaling_experiment(spec, tmp_path / "serial", workers=1)
-    parallel = run_adversarial_scaling_experiment(spec, tmp_path / "parallel", workers=2)
-    assert serial.name == parallel.name
-    assert serial.read_bytes() == parallel.read_bytes()
 
 
 def identify_worker(value, horizon=0, should_cancel=None):

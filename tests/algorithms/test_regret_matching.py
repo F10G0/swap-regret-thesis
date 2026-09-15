@@ -24,9 +24,9 @@ def test_regret_matching_updates_only_the_played_action_row() -> None:
 
     _play(learner, 1, np.array([0.2, 0.4, 0.9]))
 
-    expected_regret = np.zeros((3, 3))
-    expected_regret[1] = [-0.2, 0.0, 0.5]
-    assert np.allclose(learner.cumulative_regret, expected_regret)
+    expected_matrix = np.zeros((3, 3))
+    expected_matrix[1] = [-0.2, 0.0, 0.5]
+    assert np.allclose(learner.cumulative_regret, expected_matrix)
     assert np.allclose(learner.strategy(), np.array([0.0, 5.0 / 6.0, 1.0 / 6.0]))
 
 

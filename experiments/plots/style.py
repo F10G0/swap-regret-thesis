@@ -7,8 +7,6 @@ from threading import RLock
 import matplotlib as mpl
 import numpy as np
 
-from experiments.algorithm_labels import algorithm_profile_label
-
 
 FIGURE_WIDTH = 6.3
 PUBLICATION_STYLE_VERSION = 4
@@ -42,20 +40,6 @@ PUBLICATION_RC = {
     "ps.fonttype": 42,
 }
 
-# Color-vision-friendly colors plus redundant marker identities.
-ALGORITHM_STYLES = {
-    "hedge": ("#0072B2", "-", "o"),
-    "auer_exp3": ("#AA4499", "--", "s"),
-    "exp3_ix": ("#332288", "-.", "^"),
-    "bm": ("#D55E00", ":", "D"),
-    "ito": ("#009E73", "--", "v"),
-    "lce_ix": ("#882255", "-.", "P"),
-    "regret_matching": ("#CC79A7", ":", "<"),
-    "stationary_regret_matching": ("#E69F00", "-", "X"),
-    "tsallis_inf": ("#444444", "--", ">"),
-    "exp3": ("#666666", ":", "h"),
-}
-
 PROFILE_COLORS = ("#0072B2", "#D55E00", "#009E73", "#AA4499", "#E69F00", "#56B4E9", "#882255", "#444444")
 PROFILE_MARKERS = ("o", "s", "^", "D", "v", "P", "X", "<", ">", "h")
 REGRET_STYLES = {
@@ -78,11 +62,6 @@ def staggered_markevery(index: int, count: int) -> tuple[float, float]:
     return index / count * MARKER_STEP, MARKER_STEP
 
 
-def algorithm_style(name: str, index: int = 0, count: int = 1) -> dict:
-    color, linestyle, marker = ALGORITHM_STYLES.get(name, ("#444444", "-", "o"))
-    return dict(color=color, linestyle=linestyle, marker=marker, markevery=staggered_markevery(index, count))
-
-
 def profile_series_style(index: int, profile_count: int) -> dict:
     return dict(color=PROFILE_COLORS[index % len(PROFILE_COLORS)], linestyle="-",
                 marker=PROFILE_MARKERS[index % len(PROFILE_MARKERS)], markevery=staggered_markevery(index, profile_count))
@@ -92,29 +71,6 @@ def regret_series_style(name: str, index: int = 0, count: int = 1) -> dict:
     color, linestyle, marker = REGRET_STYLES[name]
     return dict(color=color, linestyle=linestyle, marker=marker, markevery=staggered_markevery(index, count),
                 zorder=3 if name == "swap" else 2)
-
-
-def profile_label(profile) -> str:
-    return algorithm_profile_label(profile)
-
-
-def curve_labels(rows: list[dict]) -> list[str]:
-    """Only distinguish metadata when the same profile appears more than once."""
-    labels = [profile_label(row["algorithm"].split("_vs_")) for row in rows]
-    fields = (
-        ("feedback_mode", ""), ("horizon", "T="), ("seed", "seed "),
-        ("base_learner_seed", "seed "), ("base_environment_seed", "env seed "),
-        ("stationary_method", "solver "), ("replicate_count", "n="),
-        ("runtime_fingerprint", "runtime "),
-    )
-    result = []
-    for row, label in zip(rows, labels):
-        peers = [other for other, other_label in zip(rows, labels) if other_label == label]
-        details = [prefix + str(row.get(key, "")).replace("full_information", "full info")
-                   for key, prefix in fields
-                   if len({str(peer.get(key, "")) for peer in peers}) > 1]
-        result.append(" · ".join([label, *details]))
-    return result
 
 
 def regret_axis_label(kind: str, view: str = "average") -> str:

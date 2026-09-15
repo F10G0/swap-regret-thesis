@@ -211,7 +211,8 @@ function matchesResultFilters(record, state = resultFilters) {
     if (!state) return false;
     return record.dataset.scope === state.scope
         && record.dataset.feedback === state.feedback
-        && record.dataset.player === state.player
+        && (onePlayerMode ? state.action === "all" || record.dataset.action === state.action
+            : record.dataset.player === state.player)
         && state.profiles.includes(record.dataset.profile);
 }
 

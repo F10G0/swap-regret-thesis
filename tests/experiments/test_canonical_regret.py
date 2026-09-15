@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from environments import BanditRepeatedGame, RepeatedGame
-from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.result_schema import REGRET_FIELDNAMES
 from experiments.runner import run_game
 from experiments.scenarios import adversarial
@@ -39,9 +38,9 @@ def capture_evaluator(monkeypatch):
     observations = []
     original = RegretBundle.update
 
-    def update(self, strategy, payoff_vector):
-        observations.append((strategy.copy(), payoff_vector.copy()))
-        return original(self, strategy, payoff_vector)
+    def update(self, action, payoff_vector):
+        observations.append((action, payoff_vector.copy()))
+        return original(self, action, payoff_vector)
 
     monkeypatch.setattr(RegretBundle, "update", update)
     return observations
@@ -58,18 +57,18 @@ def test_fixed_game_feedback_boundary_and_counterfactual_evaluation(monkeypatch,
     run_game("fixture", feedback_mode, game_type(payoffs), "fixture", players,
              SimpleNamespace(record=rows.append), horizon=4)
     assert len(observations) == 8
-    for strategy, vector in observations[::2]:
-        np.testing.assert_array_equal(strategy, [0.25, 0.75])
+    for action, vector in observations[::2]:
+        assert action == 0
         np.testing.assert_array_equal(vector, [0.0, 1.0])
     if feedback_mode == "bandit":
         np.testing.assert_array_equal(players[0].feedbacks, np.zeros(4))
     else:
         np.testing.assert_array_equal(players[0].feedbacks, [[0.0, 1.0]] * 4)
     final = next(row for row in rows if row["t"] == 4 and row["player"] == 0)
-    # The sampled action always loses, but strategy-weighted regret is only 4 * 0.25.
+    # The sampled action always loses, so its realized replacement gain is four.
     for name in ("external", "internal", "swap"):
-        assert final[f"{name}_regret"] == 1.0
-        assert final[f"average_{name}_regret"] == 0.25
+        assert final[f"{name}_regret"] == 4.0
+        assert final[f"average_{name}_regret"] == 1.0
     np.testing.assert_array_equal(players[0].strategy(), [0.25, 0.75])
 
 
@@ -91,9 +90,9 @@ def test_adversarial_feedback_boundary_and_evaluator_information(
     )
     gains = np.zeros((2, 2))
     rows = adversarial.load_adversarial_rows(path)
-    for (strategy, payoffs), feedback, row in zip(observations, learner.feedbacks, rows):
-        np.testing.assert_array_equal(feedback, payoffs[0] if feedback_mode == "bandit" else payoffs)
-        gains += strategy[:, None] * (payoffs[None, :] - payoffs[:, None])
+    for (action, payoffs), feedback, row in zip(observations, learner.feedbacks, rows):
+        np.testing.assert_array_equal(feedback, payoffs[action] if feedback_mode == "bandit" else payoffs)
+        gains[action] += payoffs - payoffs[action]
         assert float(row["external_regret"]) == float(np.max(np.sum(gains, axis=0)))
         assert float(row["internal_regret"]) == float(np.max(gains))
         assert float(row["swap_regret"]) == float(np.sum(np.max(gains, axis=1)))

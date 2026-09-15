@@ -19,11 +19,6 @@ from experiments.game_catalog import (
 from web.services import DashboardService
 
 
-FIGURE_URL_FIELDS = {
-    "filename": "url",
-    "pdf_filename": "pdf_url",
-}
-
 REGRET_COLUMNS = [
     {"key": f"{view}_{metric}", "metric": metric, "view": view,
      "label": f"{metric.title()} · {'R/T' if view == 'average' else 'R/√T'}"}
@@ -40,18 +35,6 @@ def _display_regrets(summary):
     return {column["key"]: summary[f"average_{column['metric']}_regret"] *
             (1 if column["view"] == "average" else sqrt(summary["horizon"]))
             for column in REGRET_COLUMNS}
-
-
-def _figure_data(records: list[dict], endpoint: str) -> list[dict]:
-    figures = []
-    for figure in records:
-        data = dict(figure)
-        for filename_field, url_field in FIGURE_URL_FIELDS.items():
-            if filename_field in figure:
-                filename = figure[filename_field]
-                data[url_field] = url_for(endpoint, filename=filename) if filename else None
-        figures.append(data)
-    return figures
 
 
 def _recent_jobs(service: DashboardService) -> list[dict]:
@@ -157,12 +140,7 @@ def one_player_context(
     inline_error: str | None = None,
 ) -> dict:
     results = service.result_snapshot("adversarial")
-    scaling = service.result_snapshot("scaling")
     summaries = results.summaries(grouped=True)
-    scaling_figures = _figure_data(
-        service.adversarial_scaling_figure_records(scaling),
-        "dashboard.adversarial_scaling_figure",
-    )
     for summary in summaries:
         summary["display_regrets"] = _display_regrets(summary)
     return {
@@ -178,8 +156,7 @@ def one_player_context(
         "adversarial_environments": ENVIRONMENT_LABELS,
         "adversarial_environment_descriptions": ADVERSARIAL_ENVIRONMENT_DESCRIPTIONS,
         "summaries": summaries,
-        "scaling_figures": scaling_figures,
-        "warnings": list(results.warnings + scaling.warnings),
+        "warnings": list(results.warnings),
     }
 
 

@@ -469,58 +469,86 @@ def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> N
         },
     ):
         submit_and_wait(client, service, form)
+    for form in (
+        VALID_FORM | {"actions": "2,4"},
+        VALID_FORM | {"environment": RANDOM_WALK_ENVIRONMENT, "feedback_mode": "bandit",
+                      "algorithm_names": ["exp3_ix"], "actions": "2,4", "horizon": "5", "seed": "9"},
+        VALID_FORM | {"environment": RANDOM_WALK_ENVIRONMENT, "feedback_mode": "bandit",
+                      "algorithm_names": ["exp3_ix"], "actions": "3,4", "horizon": "6", "seed": "9"},
+        VALID_FORM | {"environment": RANDOM_WALK_ENVIRONMENT, "feedback_mode": "bandit",
+                      "algorithm_names": ["exp3_ix"], "actions": "5,6", "horizon": "5", "seed": "10"},
+    ):
+        submit_and_wait(client, service, form)
 
-    script = r'''const fs = require("fs");
-const {JSDOM} = require("jsdom");
-const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+    script = r'''const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
 const dom = new JSDOM(payload.page, {url: "http://localhost/?mode=adversarial", runScripts: "outside-only"});
-const window = dom.window;
-window.fetch = async () => ({ok: true, json: async () => payload.catalog});
-window.HTMLElement.prototype.scrollIntoView = () => {};
-window.eval(payload.script);
-const document = window.document;
-const visible = (selector) => [...document.querySelectorAll(selector)].filter((node) => !node.hidden);
-const filteredTo = (selector, key, value) => {
-    const nodes = visible(selector);
-    return nodes.length > 0 && nodes.length < document.querySelectorAll(selector).length
-        && nodes.every((node) => node.dataset[key] === value);
-};
-const select = (id, value) => {
-    const control = document.getElementById(id);
-    control.value = value;
-    control.dispatchEvent(new window.Event("change", {bubbles: true}));
-};
+const w = dom.window, d = w.document, f = name => d.getElementById("filter-" + name);
+const visible = selector => [...d.querySelectorAll(selector)].filter(node => !node.hidden);
+const select = (name, value) => {f(name).value = value; f(name).dispatchEvent(new w.Event("change", {bubbles: true}));};
+w.fetch = async () => ({ok: true, json: async () => payload.catalog});
+w.HTMLElement.prototype.scrollIntoView = () => {};
+w.eval(payload.script);
 (async () => {
-await new Promise(resolve => setImmediate(resolve));
-const description = document.getElementById("environment-description");
-const before = description.getBoundingClientRect();
-select("adversarial-environment", "lazy_random_walk_v1");
-if (document.getElementById("environment-description") !== description) process.exit(3);
-const after = description.getBoundingClientRect();
-if (before.top !== after.top || before.bottom !== after.bottom) process.exit(5);
-if (!description.textContent.includes("Independent lazy random walks")) process.exit(6);
-if (document.getElementById("environment-panel")) process.exit(4);
-select("filter-scope", "lazy_random_walk_v1");
-const profiles = document.getElementById("filter-profiles");
-profiles.options[0].selected = true;
-profiles.dispatchEvent(new window.Event("change"));
-if (!filteredTo(".summary-row", "scope", "lazy_random_walk_v1")) process.exit(2);
-if (document.getElementById("filter-feedback").value !== "bandit") process.exit(7);
-if (!filteredTo(".summary-row", "profile", "exp3_ix")) process.exit(11);
-const compareProfiles = document.getElementById("filter-compare-profiles");
-compareProfiles.checked = true; compareProfiles.dispatchEvent(new window.Event("change"));
-select("filter-metric", "internal");
-select("filter-view", "sqrt_scaling");
-const row = visible(".summary-row")[0];
-const cells = [...row.querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
-if (cells.length !== 1 || cells[0].dataset.metric !== "sqrt_scaling_internal") process.exit(12);
-profiles.options[0].selected = false;
-profiles.dispatchEvent(new window.Event("change"));
-if (visible(".summary-row").length) process.exit(13);
-for (const id of ["filter-horizon", "filter-seed", "filter-player-algorithm", "filter-secondary"]) {
-    if (document.getElementById(id)) process.exit(14);
-}
-dom.window.close();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(d.querySelector('label[for="filter-action"]').textContent, "Action");
+    assert.equal(f("player"), null);
+    assert.deepEqual([...d.querySelectorAll(".segmented-control span")].map(node => node.textContent),
+        ["Regret notions", "Algorithm profiles", "Action spaces"]);
+
+    const description = d.getElementById("environment-description");
+    const before = description.getBoundingClientRect();
+    const environment = d.getElementById("adversarial-environment");
+    environment.value = "lazy_random_walk_v1";
+    environment.dispatchEvent(new w.Event("change", {bubbles: true}));
+    assert.equal(d.getElementById("environment-description"), description);
+    const after = description.getBoundingClientRect();
+    assert.deepEqual([after.top, after.bottom], [before.top, before.bottom]);
+    assert(description.textContent.includes("Independent lazy random walks"));
+
+    select("scope", "lazy_random_walk_v1");
+    assert.equal(f("feedback").value, "bandit");
+    const target = payload.catalog.contexts.find(context => context.scope === "lazy_random_walk_v1"
+        && context.horizon === 5 && context.base_seed === 9);
+    select("context", target.id);
+    assert.deepEqual([...f("action").options].map(option => option.value), ["2", "3", "4"]);
+    assert(![...f("action").options].some(option => option.value === "all"));
+    assert.deepEqual([...f("metric").options].map(option => option.value), ["all"]);
+    assert.equal(f("metric").disabled, true); assert.equal(f("profiles").multiple, false);
+    select("action", "3");
+    assert(visible(".summary-row").every(row => row.dataset.scope === "lazy_random_walk_v1"
+        && row.dataset.action === "3" && row.dataset.profile === "exp3_ix"));
+
+    f("compare-profiles").checked = true;
+    f("compare-profiles").dispatchEvent(new w.Event("change"));
+    assert.equal(f("action").disabled, false);
+    assert.equal(f("profiles").multiple, true);
+    assert.equal(f("metric").disabled, false);
+    assert(![...f("metric").options].some(option => option.value === "all"));
+    select("metric", "internal");
+    select("view", "sqrt_scaling");
+    const cells = [...visible(".summary-row")[0].querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
+    assert.equal(cells.length, 1); assert.equal(cells[0].dataset.metric, "sqrt_scaling_internal");
+
+    f("compare-actions").checked = true;
+    f("compare-actions").dispatchEvent(new w.Event("change"));
+    assert.deepEqual([...f("action").options].map(option => [option.value, option.textContent]), [["all", "All actions"]]);
+    assert.equal(f("action").disabled, true);
+    assert.equal(f("metric").value, "internal"); assert.equal(f("metric").disabled, false);
+    assert(![...f("metric").options].some(option => option.value === "all"));
+    assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").selectedOptions.length, 1);
+    assert.deepEqual(visible(".summary-row").map(row => row.dataset.action).sort(), ["2", "3", "4"]);
+
+    f("compare-regrets").checked = true;
+    f("compare-regrets").dispatchEvent(new w.Event("change"));
+    assert.equal(f("action").value, "3"); assert.equal(f("action").disabled, false);
+    assert(![...f("action").options].some(option => option.value === "all"));
+    assert.equal(f("metric").value, "all"); assert.equal(f("metric").disabled, true);
+    for (const id of ["filter-horizon", "filter-seed", "filter-player-algorithm", "filter-secondary"]) {
+        assert.equal(d.getElementById(id), null);
+    }
+    dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});'''
     run_ui(app, service, script, "adversarial")
     css = (Path(__file__).parents[2] / "web" / "static" / "dashboard.css").read_text()

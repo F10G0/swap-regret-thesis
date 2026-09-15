@@ -5,16 +5,12 @@ from PIL import Image
 from pypdf import PdfReader
 import pytest
 
+from experiments.algorithm_labels import algorithm_profile_label
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.plots.style import (
-    ALGORITHM_STYLES, FIGURE_WIDTH, MARKER_STEP, PROFILE_MARKERS, algorithm_style,
-    curve_labels, profile_label, profile_series_style, publication_plot, regret_axis_label,
-    regret_series_style, staggered_markevery,
+    FIGURE_WIDTH, MARKER_STEP, PROFILE_MARKERS, profile_series_style,
+    publication_plot, regret_axis_label, regret_series_style, staggered_markevery,
 )
-from experiments.scenarios.adversarial import (
-    ALGORITHMS_BY_FEEDBACK_MODE, RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment,
-)
-from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, run_adversarial_scaling_experiment
 
 
 @pytest.mark.parametrize("profile,label", [
@@ -23,18 +19,7 @@ from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, ru
     (("hedge", "ito"), "Hedge vs Ito"), (("ito",), "Ito"),
 ])
 def test_publication_profile_labels(profile, label):
-    assert profile_label(profile) == label
-
-
-def test_style_mapping_is_global_order_independent_and_redundant():
-    algorithms = set().union(*ALGORITHMS_BY_FEEDBACK_MODE.values())
-    assert algorithms <= ALGORITHM_STYLES.keys()
-    forward = {name: algorithm_style(name) for name in sorted(algorithms)}
-    assert forward == {name: algorithm_style(name) for name in sorted(algorithms, reverse=True)}
-    assert len({(s["linestyle"], s["marker"]) for s in forward.values()}) == len(algorithms)
-    altered = algorithm_style("ito")
-    altered["color"] = "red"
-    assert algorithm_style("ito")["color"] != "red"
+    assert algorithm_profile_label(profile) == label
 
 
 def test_profile_styles_use_solid_deterministic_marker_cycles_and_phases():
@@ -56,13 +41,6 @@ def test_regret_styles_use_fixed_contrasting_encodings_and_staggered_phases():
     assert [style["markevery"] for style in styles] == [staggered_markevery(index, 3) for index in range(3)]
     assert styles[2]["zorder"] > styles[0]["zorder"]
     assert styles == [regret_series_style(name, index, len(names)) for index, name in enumerate(names)]
-
-
-def test_labels_include_only_metadata_needed_to_distinguish_curves():
-    base = dict(algorithm="hedge_vs_hedge", seed=42, stationary_method="solve", horizon=100)
-    assert curve_labels([base, base | {"algorithm": "ito_vs_ito"}]) == ["Hedge vs Hedge", "Ito vs Ito"]
-    assert curve_labels([base, base | {"seed": 7}]) == ["Hedge vs Hedge · seed 42", "Hedge vs Hedge · seed 7"]
-    assert curve_labels([base, base | {"stationary_method": "pinv"}]) == ["Hedge vs Hedge · solver solve", "Hedge vs Hedge · solver pinv"]
 
 
 def test_publication_style_is_scoped_even_when_rendering_fails():
@@ -87,11 +65,11 @@ def fixed_results(directory, bandit=False):
             for name in algorithms for replicate in (0, 1)]
 
 
-@pytest.mark.parametrize("family", ["rps", "bandit", "ilrw", "scaling", "distance", "joint"])
+@pytest.mark.parametrize("family", ["regret", "distance", "joint"])
 def test_publication_figure_families(tmp_path, monkeypatch, family):
     module_name = {
-        "rps": "plot_regret", "bandit": "plot_regret", "ilrw": "plot_adversarial",
-        "scaling": "plot_adversarial_scaling", "distance": "plot_equilibrium_convergence",
+        "regret": "plot_regret",
+        "distance": "plot_equilibrium_convergence",
         "joint": "plot_joint_actions",
     }[family]
     module = importlib.import_module("experiments.plots." + module_name)
@@ -105,25 +83,11 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
     monkeypatch.setattr(module, "save_figure_pair", save)
     raw = tmp_path / "raw"
     output = tmp_path / (family + ".png")
-    if family in {"rps", "bandit"}:
-        rows = [module.load_rows(path) for path in fixed_results(raw, family == "bandit")]
-        groups = [rows[:2], rows[2:]]
-        module.plot_regret("rps", groups, "swap", 0, True, tmp_path)
-    elif family == "ilrw":
-        for name in ("auer_exp3", "bm", "ito", "exp3_ix", "lce_ix"):
-            for replicate in (0, 1):
-                run_adversarial_experiment(name, n_actions=9, horizon=100, seed=42,
-                    feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT,
-                    replicate=replicate, output_dir=raw)
-        runs = [(path, module.load_adversarial_rows(path)) for path in sorted(raw.glob("*.csv"))]
-        module._plot_regret(runs, RANDOM_WALK_ENVIRONMENT,
-                            "bandit", 9, "swap", False, output)
-    elif family == "scaling":
-        spec = AdversarialScalingSpec(environment=RANDOM_WALK_ENVIRONMENT,
-            feedback_mode="bandit", algorithm_name="auer_exp3", action_counts=(3, 6, 9),
-            replicates=2, horizon=100, seed=42)
-        path = run_adversarial_scaling_experiment(spec, raw, workers=1)
-        module._plot_scaling(module.load_adversarial_scaling_rows(path), output)
+    if family == "regret":
+        rows = [module.load_rows(path) for path in fixed_results(raw)[:2]]
+        times, values = module.aggregate_metric_curve(rows, 0, "average_swap_regret")
+        curve = module.RegretCurve(times, values, "Hedge vs Hedge", profile_series_style(0, 1))
+        module.plot_regret_curves([curve], regret_axis_label("swap"), output)
     else:
         paths = fixed_results(raw)[:2]
         if family == "joint":
@@ -146,21 +110,12 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
         assert 0 <= box.x0 < box.x1 <= figure.bbox.width
         assert 0 <= box.y0 < box.y1 < axes.get_window_extent(renderer).y0
         assert all(text.get_fontsize() == 9 for text in legend.get_texts())
-    for line in axes.lines:
-        if line.get_label() in {"AuerExp3", "BM", "Ito", "Hedge", "EXP3-IX", "LCE-IX"}:
-            name = {"AuerExp3": "auer_exp3", "BM": "bm", "Ito": "ito", "Hedge": "hedge",
-                    "EXP3-IX": "exp3_ix", "LCE-IX": "lce_ix"}[line.get_label()]
-            expected = algorithm_style(name)
-            assert (line.get_color(), line.get_linestyle(), line.get_marker()) == (
-                expected["color"], expected["linestyle"], expected["marker"])
     marker_lines = [line for line in axes.lines if line.get_marker() not in {None, "", "None"}]
     assert [line.get_markevery() for line in marker_lines] == [
         staggered_markevery(index, len(marker_lines)) for index in range(len(marker_lines))
     ]
-    if family in {"rps", "bandit", "ilrw", "scaling"}:
-        view = "final" if family == "scaling" else "sqrt_scaling" if family == "ilrw" else "average"
-        kind = "external" if family == "scaling" else "swap"
-        assert axes.get_ylabel() == regret_axis_label(kind, view)
+    if family == "regret":
+        assert axes.get_ylabel() == regret_axis_label("swap")
     pdf = PdfReader(output.with_suffix(".pdf"))
     page = pdf.pages[0]
     assert float(page.mediabox.width) / 72 == pytest.approx(FIGURE_WIDTH)

@@ -51,7 +51,6 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
             histogram_counts.append(joint_action_counts.copy())
 
         for player_id, (player, action) in enumerate(zip(players, actions)):
-            strategy = player.strategy()
             feedback = game.feedback(player_id)
             regret = regrets[player_id]
 
@@ -62,7 +61,7 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
                 payoff = feedback
                 deviation_payoffs = game.deviation_payoffs(player_id)
 
-            regret.update(strategy, deviation_payoffs)
+            regret.update(action, deviation_payoffs)
             player.update(feedback)
             if t not in checkpoints:
                 continue

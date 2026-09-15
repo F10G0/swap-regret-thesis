@@ -14,6 +14,7 @@ class ProfileSelection:
     metric: str
     view: str
     profiles: tuple[str, ...]
+    action: str
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class FigureSelection:
     metric: str
     view: str
     profiles: tuple[str, ...]
+    action: str
 
 
 def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
@@ -36,8 +38,10 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
         raise ValueError("Unknown experiment mode")
     if not re.fullmatch(r"[0-9a-f]{24}", context_id):
         raise ValueError("Choose an available result set")
-    if comparison_mode not in {"profiles", "regrets"}:
+    if comparison_mode not in {"profiles", "regrets", "actions"}:
         raise ValueError("Unknown comparison mode")
+    if comparison_mode == "actions" and mode != "adversarial":
+        raise ValueError("Action-space comparison is available only for one-player results")
     if metric not in {*REGRET_NAMES, "all"} or view not in {"average", "sqrt_scaling", "all"}:
         raise ValueError("Unknown regret metric or view")
     if hasattr(values, "getlist"):
@@ -50,11 +54,16 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
     if len(profiles) > 256 or any(not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9_]+", profile) for profile in profiles):
         raise ValueError("Invalid algorithm profile selection")
     profiles = tuple(sorted(set(profiles)))
-    if comparison_mode == "regrets" and len(profiles) != 1:
-        raise ValueError("Select exactly one algorithm profile when comparing regret notions")
+    if comparison_mode in {"regrets", "actions"} and len(profiles) != 1:
+        raise ValueError("Select exactly one algorithm profile for this comparison")
     if comparison_mode == "regrets" and metric != "all":
         raise ValueError("Regret-notion comparison includes all regret notions")
-    return ProfileSelection(mode, context_id, comparison_mode, metric, view, profiles)
+    if comparison_mode != "regrets" and metric not in REGRET_NAMES:
+        raise ValueError("Select exactly one regret notion for this comparison")
+    action = "all" if comparison_mode == "actions" else values.get("action", "")
+    if mode == "adversarial" and comparison_mode != "actions" and not re.fullmatch(r"[1-9][0-9]*", action):
+        raise ValueError("Choose an available action count")
+    return ProfileSelection(mode, context_id, comparison_mode, metric, view, profiles, action)
 
 
 @dataclass(frozen=True)

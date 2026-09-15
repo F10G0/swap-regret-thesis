@@ -1,6 +1,6 @@
 # Experiments
 
-Experiment construction, execution, CSV recording, and plotting. Configure runs with `make web`; `make plot` rebuilds action-space scaling figures from saved CSVs. Existing run IDs are never overwritten.
+Experiment construction, execution, CSV recording, and plotting. Configure runs with `make web`; existing run IDs are never overwritten.
 
 ## Games and Runs
 
@@ -12,19 +12,19 @@ A fixed-game run is identified by the game and payoff digest, feedback, ordered 
 base_seed + r * p + i
 ```
 
-Full-information, bandit, and one-player batches use the configured replicate indices `0..n-1`. The dashboard exposes one Seed for both experiment modes, defaulting to 42. One-player learner and environment seeds are derived from separate domains of that base seed plus the replicate index, so the random streams remain independent. Action-space scaling batches apply the same derivation at every K, which preserves paired environment randomness across learners. CSVs retain the base seed and effective derived seeds.
+Full-information, bandit, and one-player batches use the configured replicate indices `0..n-1`. The dashboard exposes one Seed for both experiment modes, defaulting to 42. One-player learner and environment seeds are derived from separate domains of that base seed plus the replicate index, so the random streams remain independent. Multi-action batches apply the same derivation at every K, which preserves paired randomness across action spaces. CSVs retain the base seed and effective derived seeds.
 
-Feedback and evaluation remain separate: fixed-game and one-player runs use strategy-weighted regret, while bandit learners receive only their sampled reward. The evaluator uses the full payoff vector offline to update the cumulative replacement-gain matrix.
+Feedback and evaluation remain separate: fixed-game and one-player runs use realized regret from the sampled actions, while bandit learners receive only their sampled reward. The evaluator uses the full payoff vector offline to update only the sampled source-action row of the cumulative replacement-gain matrix.
 
 ## Long horizons and replicate execution
 
-Learners and cumulative regret state update on every round. Each learner has one strategy-weighted regret tracker. Regret summaries and CSV rows are computed only at deterministic recording checkpoints. Horizons up to 200 record every round; longer runs use at most 200 deduplicated geometric timestamps, always including `t=1` and `t=horizon`. Fixed games write one row per player at each checkpoint. The Python runners accept `max_recorded_points` for controlled dense/sparse comparisons. This storage choice does not change seeds or run identities, and existing results are never overwritten.
+Learners and cumulative realized-regret state update on every round. Regret summaries and CSV rows are computed only at deterministic recording checkpoints. Horizons up to 500 record every round; longer runs use at most 500 deduplicated geometric timestamps, always including `t=1` and `t=horizon`. Fixed games write one row per player at each checkpoint. The Python runners accept `max_recorded_points` for controlled dense/sparse comparisons. This storage choice does not change seeds or run identities, and existing results are never overwritten.
 
 Fixed-game execution maintains cumulative realized joint-action counts. Histograms are retained at `1, 10, 100, 1,000, ...` and at the exact final horizon, then stored once in `joint_action_histograms` on the final player-0 row. No exact per-round action history is persisted. Regret loaders accept increasing checkpoint times while checking endpoint coverage, consistent metadata, and one row per player per checkpoint. Plot loaders align dense runs with the default sparse schedule; if custom recording budgets differ, replicate curves use only shared observed timestamps, without interpolation or changing the set of replicates being averaged.
 
 `experiments.parallel.run_replicates` runs independent keyword-argument tasks through a bounded spawn-based process pool. Results are returned in input order, seed assignment is unchanged, and each worker publishes its own CSV atomically. Progress and cancellation callbacks stay in the parent; cancellation or worker failure signals active peers to clean up incomplete outputs. Finished replicate CSVs are retained. Only one task per worker is submitted at a time and nested pools are disabled. Worker count is the minimum of the requested count (or available CPUs), available CPUs, task count, and 12. Each worker has its own learner/environment state: reduce `REPLICATE_WORKERS` for memory-heavy workloads. Numerical-library thread settings are inherited unchanged to preserve reproducibility; for CPU-bound batches, configure the same BLAS/OpenMP thread limits for both serial and parallel launches.
 
-Web replicate batches and action-space scaling use this executor automatically when their combined horizon is at least 20,000 rounds; smaller batches avoid process startup overhead. Set `DashboardService(replicate_workers=1)` or Flask `REPLICATE_WORKERS=1` for serial execution; `None` is automatic and positive integers request a bounded worker count. Scaling writes final rows in action-count/replicate order and records only endpoint summaries in its temporary trajectories. The web horizon limit defaults to 1,000,000.
+Web replicate batches use this executor automatically when their combined horizon is at least 20,000 rounds; smaller batches avoid process startup overhead. Set `DashboardService(replicate_workers=1)` or Flask `REPLICATE_WORKERS=1` for serial execution; `None` is automatic and positive integers request a bounded worker count. Multi-action one-player batches queue one ordinary trajectory per action-count/replicate pair. The web horizon limit defaults to 1,000,000.
 
 `make web`, `make test`, and the other Make targets default `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, and `NUMEXPR_NUM_THREADS` to `1` before Python starts. Existing environment values or explicit Make overrides take precedence. This avoids numerical-library oversubscription across replicate processes. For a direct launch, set the same limits explicitly:
 
@@ -40,16 +40,16 @@ Both fixed-game and adversarial CSV loaders validate constant metadata once per 
 
 ```text
 results/
-├── raw/          fixed-game CSVs
-├── figures/      generated detail figures
-├── adversarial/  one-player and action-space scaling results
-└── cache/        Figure Builder and equilibrium-distance artifacts
+├── raw/              fixed-game CSVs
+├── figures/          generated detail figures
+├── adversarial/raw/  one-player CSVs
+└── cache/            Figure Builder and equilibrium-distance artifacts
 ```
 
-Plots are saved as PNG previews and same-stem vector PDFs. Raw CSVs remain authoritative. Regret curves and full-space CE/CCE L1 distances are computed per replicate, then shown as means without confidence bands. Joint-action plots use each replicate’s final cumulative histogram, without solving an LP. Figure Builder compares either selected algorithm profiles for the chosen regret notion or all three regret notions for one selected profile, using the chosen normalization view or both views. Exact cached selections may be restored; cache misses require an explicit generation request.
+Plots are saved as PNG previews and same-stem vector PDFs. Raw CSVs remain authoritative. Regret curves and full-space CE/CCE L1 distances are computed per replicate, then shown as means without confidence bands. Joint-action plots use each replicate’s final cumulative histogram, without solving an LP. Figure Builder compares selected algorithm profiles for one regret notion, all three regret notions for one profile, or compatible one-player action spaces for one profile and regret notion, using the chosen normalization view or both views. Exact cached selections may be restored; cache misses require an explicit generation request.
 
-Ordinary fixed-game and one-player jobs publish CSVs without automatically rendering regret figures. Action-space scaling jobs publish their separate scaling figures, which are not mixed into Figure Builder filters or comparisons. The CSV loader checks constant seed/runtime metadata once per file, still checks metadata equality and observations on every row, and validates trajectory endpoints.
+Fixed-game and one-player jobs publish ordinary CSVs without automatically rendering regret figures. The CSV loader checks constant seed/runtime metadata once per file, still checks metadata equality and observations on every row, and validates trajectory endpoints.
 
-Figure Builder’s regret-notion comparison uses solid External, dashed Swap, and dash-dot Internal curves, with Swap above External when they overlap. Profile comparisons use solid lines with deterministic color and marker identities; their markers are phase-staggered at 0.24 spacing. The action-space scaling view plots mean final target regret against K. CSVs retain learner actions and punishment or current-best-action data. Random-walk rewards are precomputed from the effective environment seed and can therefore be shared exactly across learners with the same K and replicate. CSVs also record the canonical runtime environment and its fingerprint; the fingerprint participates in run identity so incompatible dependency environments cannot silently share a run ID.
+Figure Builder’s regret-notion comparison uses solid External, dashed Swap, and dash-dot Internal curves, with Swap above External when they overlap. Profile and action-space comparisons use solid lines with deterministic color and marker identities; their markers are phase-staggered at 0.24 spacing. Action-space comparisons hold environment, feedback, horizon, base seed, replicate set, runtime environment, profile, regret notion, and view fixed while plotting one ordinary time trajectory per compatible K. CSVs retain learner actions and punishment or current-best-action data. Random-walk rewards are precomputed from the effective environment seed and can therefore be shared exactly across learners with the same K and replicate. CSVs also record the canonical runtime environment and its fingerprint; the fingerprint participates in run identity so incompatible dependency environments cannot silently share a run ID.
 
 Core files are `games.py`, `game_catalog.py`, `runner.py`, `recorder.py`, `result_schema.py`, and `results.py`. Analysis is documented in [metrics](../metrics/README.md).

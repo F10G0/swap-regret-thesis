@@ -19,9 +19,9 @@ make web
 | Full information | Hedge, Regret Matching, SRM, Blum–Mansour, Ito |
 | Bandit | AuerExp3, Exp3-IX, Blum–Mansour, Ito, LCE-IX |
 
-Built-in games are RPS and RPSLS, defined locally as fixed payoff matrices. Matching Pennies is a local test-only fixture. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary, an action-independent lazy reward walk, and replicated action-space sweeps over configurable K values.
+Built-in games are RPS and RPSLS, defined locally as fixed payoff matrices. Matching Pennies is a local test-only fixture. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary and an action-independent lazy reward walk; multiple K values can be queued as one ordinary-result batch.
 
-Fixed-game and one-player experiments use strategy-weighted external, internal, and swap regret. Bandit learners receive only their sampled reward; the evaluator uses the full payoff vector offline. Figures report replicate means, without confidence bands or interval toggles. Empirical joint-action heatmaps show recorded play, and equilibrium convergence uses full-space L1 distance to CE and CCE.
+Fixed-game and one-player experiments use realized external, internal, and swap regret from the sampled action trajectory. Bandit learners receive only their sampled reward; the evaluator uses the full payoff vector offline. Results record every round through horizon 500 and at most 500 geometric checkpoints for longer runs. Figures report replicate means, without confidence bands or interval toggles. Empirical joint-action heatmaps show the same recorded play, and equilibrium convergence uses full-space L1 distance to CE and CCE.
 
 Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 
@@ -33,10 +33,9 @@ Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 
 | Command | Purpose |
 |---|---|
-| `make all` | Install and refresh scaling plots |
+| `make all` | Install project dependencies |
 | `make install` | Install project and tests |
 | `make web` | Start the dashboard |
-| `make plot` | Rebuild action-space scaling plots from saved CSVs |
 | `make test` | Run the complete test suite |
 | `make clean` | Remove Python caches and temporary staging files |
 | `make reset` | Remove all experiment-derived results, figures, and caches |
@@ -47,10 +46,10 @@ Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 
 ```text
 results/
-├── raw/          fixed-game CSVs
-├── figures/      generated detail figures
-├── adversarial/  one-player CSVs and scaling outputs
-└── cache/        Figure Builder and equilibrium-distance artifacts
+├── raw/              fixed-game CSVs
+├── figures/          generated detail figures
+├── adversarial/raw/  one-player CSVs
+└── cache/            Figure Builder and equilibrium-distance artifacts
 ```
 
 Run IDs include the complete experiment identity and numerical runtime fingerprint. Results on disk are assumed to come from the current implementation; clear them before making an incompatible scientific change. Defaults such as the horizon, seeds, replicate count, tolerances, and stationary solver live in `config.py`.

@@ -19,7 +19,7 @@ ADVERSARIAL_DIR ?= $(RESULTS_DIR)/adversarial
 CUSTOM_GAME_DIR ?= data/custom_games
 
 .PHONY: help all install
-.PHONY: web plot
+.PHONY: web
 .PHONY: test clean reset
 
 ##@ General
@@ -27,7 +27,7 @@ CUSTOM_GAME_DIR ?= data/custom_games
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n"} /^##@ / {printf "\n%s:\n", substr($$0, 5)} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-all: install plot ## Install and refresh scaling plots
+all: install ## Install project dependencies
 
 ##@ Setup
 
@@ -38,11 +38,6 @@ install: ## Install project and tests
 
 web: ## Start the local experiment dashboard
 	$(PYTHON) -m web.app
-
-##@ Generated outputs
-
-plot: ## Regenerate action-space scaling plots from existing results
-	$(PYTHON) -m experiments.plots.plot_adversarial_scaling
 
 ##@ Validation
 

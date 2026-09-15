@@ -3,15 +3,13 @@ from hashlib import sha256
 import json
 import os
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 from experiments.scenarios.cross_play import run_cross_play_experiment, player_seed
 from experiments.game_catalog import GameCatalog, payoff_tensor_digest
-from experiments.plots.plot_regret import aggregate_metric_curve, plot_regret
+from experiments.plots.plot_regret import aggregate_metric_curve
 from experiments.recording import encode_joint_action_histograms, joint_action_histogram_checkpoints
-from experiments.plots.style import curve_labels
 from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD, regret_fieldnames
 from experiments.results import (
     iter_result_rows,
@@ -127,7 +125,6 @@ def test_experiment_spec_preserves_positional_stationary_method_compatibility() 
     spec = ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, 0, "pinv")
 
     assert spec.stationary_method == "pinv"
-    assert "regret_evaluation" not in spec.metadata()
 
 
 def test_long_srm_profile_uses_readable_abbreviated_run_id() -> None:
@@ -239,53 +236,3 @@ def test_fixed_game_loader_rejects_missing_runtime_identity(tmp_path) -> None:
     with pytest.raises(ValueError, match="missing required columns"):
         list(iter_result_rows(result_path))
 
-
-def test_plot_legend_uses_algorithm_abbreviations() -> None:
-    rows = [{"algorithm": "regret_matching_vs_stationary_regret_matching_vs_hedge", "seed": "7"}]
-
-    assert curve_labels(rows) == ["RM vs SRM vs Hedge"]
-
-
-@pytest.mark.parametrize("algorithm,label", [("exp3_ix", "EXP3-IX"), ("exp3", "EXP3")])
-def test_plot_legend_can_distinguish_feedback(algorithm, label) -> None:
-    # Retired algorithms must keep their own labels when reading old results.
-    rows = [{
-        "algorithm": f"{algorithm}_vs_{algorithm}",
-        "seed": "7",
-        "feedback_mode": "bandit",
-    }]
-
-    assert curve_labels(rows) == [f"{label} vs {label}"]
-    assert curve_labels([rows[0], rows[0] | {"feedback_mode": "full_information"}]) == [
-        f"{label} vs {label} · bandit", f"{label} vs {label} · full info",
-    ]
-
-
-def test_plot_legend_stays_below_the_data_axes(tmp_path, monkeypatch) -> None:
-    replicate_groups = []
-    for index in range(25):
-        row = {
-            "player": "0",
-            "t": "1",
-            "average_external_regret": str(index),
-            "feedback_mode": "full_information",
-            "algorithm": f"stationary_regret_matching_{index}_vs_stationary_regret_matching_{index}",
-            "seed": "7",
-            "stationary_method": "solve",
-        }
-        replicate_groups.append([[row]])
-
-    close_figure = plt.close
-    monkeypatch.setattr(plt, "close", lambda figure: None)
-    plot_regret("rps", replicate_groups, "external", player=0, average=True, output_dir=tmp_path)
-    figure = plt.gcf()
-    figure.canvas.draw()
-    renderer = figure.canvas.get_renderer()
-    axes_box = figure.axes[0].get_window_extent(renderer)
-    legend_box = figure.legends[0].get_window_extent(renderer)
-
-    assert legend_box.y1 < axes_box.y0
-    assert 0.0 <= legend_box.x0 < legend_box.x1 <= figure.bbox.width
-    assert figure.get_figheight() > 4.4
-    assert (tmp_path / "rps_average_external_regret_player_0.png").is_file()
-    close_figure(figure)

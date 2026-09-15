@@ -1,6 +1,6 @@
 # Performance cleanup report — 2026-09-08
 
-Historical benchmark evidence: this report describes the implementation measured at that time, not the current API. Current runs use a single strategy-weighted regret tracker and replicate-mean figures. References below to separate evaluation modes and probability floors describe the old benchmark baseline, not supported configuration options today.
+Historical benchmark evidence: this report describes the implementation measured at that time, not the current API. Current runs use a single realized-regret tracker and replicate-mean figures. References below to former evaluation modes and probability floors describe the old benchmark baseline, not supported configuration options today.
 
 ## Scope and working-tree preservation
 
@@ -19,7 +19,7 @@ Implemented against the current local tree, not GitHub main. Git sees this audit
 | `algorithms/stationary.py` | Removed stochastic-input checks. Constructs solve/pseudoinverse systems without temporary identity/ones arrays. Numerical postconditions and solver selection/fallback remain. |
 | `environments/base.py`, `environments/repeated_game.py` | Removed per-step action/player validators. Payoff vectors are views; externally supplied tensors are still validated and copied at construction. |
 | `environments/adversarial.py` | Removed random-walk exhaustion/step-before-feedback guards. Constructor, precomputation, transitions, and RNG sequence are unchanged. |
-| `metrics/regret.py` | Removed strategy/payoff validators and the positive-summary-time guard. Update and summary arithmetic are unchanged. |
+| `metrics/regret.py` | Removed per-update evaluator validators and the positive-summary-time guard present in the measured implementation. |
 | `metrics/empirical_distribution.py` | Removed per-profile integer conversion, player-count checking, and range checking. Shape/checkpoint configuration checks remain. |
 | `experiments/results.py` | Validates constant file metadata once, then compares raw constant fields on every row. Dynamic trajectory checks remain. |
 | `experiments/runtime_environment.py` | Fingerprints already-canonical JSON without parsing it again. Callers validate at construction/file input. |
@@ -61,17 +61,17 @@ No learner update formula, loss/gain estimator, learning-rate formula or indexin
 
 ## Persistence boundaries and existing optimizations
 
-Fixed-game CSV metadata parsing, profile JSON validation, payoff-digest validation, regret-source inference, and runtime canonicalization/hashing now occur once per file. Subsequent rows must have identical raw constant fields. Runtime metadata is required; legacy profile columns remain supported.
+Fixed-game CSV metadata parsing, profile JSON validation, payoff-digest validation, regret-column validation, and runtime canonicalization/hashing now occur once per file. Subsequent rows must have identical raw constant fields. Runtime metadata is required; legacy profile columns remain supported.
 
 The adversarial loader already validated metadata/derived seeds once per file and was left unchanged. Fixed-game files contain base seeds rather than separately recorded derived seeds; their seed schedule and run identity were not changed. Both loaders retain dynamic checkpoint and current-schema validation.
 
 Current related invariants are:
 
-- At most 200 regret checkpoints: every round for short horizons and geometric spacing for longer runs, including the first and final rounds.
+- At most 500 regret checkpoints: every round for short horizons and geometric spacing for longer runs, including the first and final rounds.
 - Per-round learner/regret-state updates with checkpoint-only summaries.
 - Cumulative joint-action histograms at decimal checkpoints and the final horizon.
 - Spawn-based replicate processes, bounded workers/tasks, deterministic output order, cancellation, and no nested pools.
-- Figure Builder artifact caching and separate action-space scaling publication.
+- Figure Builder artifact caching, including ordinary one-player action-space comparisons.
 - Run identity fields, seed derivation, CSV schemas, and sampling schedules.
 - Custom-game tensor/file validation, `allow_pickle=False`, path restrictions, atomic publication, and no-overwrite behavior.
 
@@ -79,14 +79,14 @@ No checked/unchecked API, validation switch, new learner variant, mathematical s
 
 ## Regression results and floating-point caveat
 
-Before editing, the current code produced 40 historical-adversary state/action traces at T=300, K=3/9, seeds 7/17, covering all ten registry entries across the two feedback modes. Snapshots include all sampled actions, per-round strategies, cumulative learner and regret state, and RNG state. Also captured: 40 adversarial and 20 fixed-game CSVs, including sparse action histories and both regret sources.
+Before editing, the current code produced 40 historical-adversary state/action traces at T=300, K=3/9, seeds 7/17, covering all ten registry entries across the two feedback modes. Snapshots include all sampled actions, per-round strategies, cumulative learner and regret state, and RNG state. Also captured: 40 adversarial and 20 fixed-game CSVs containing the persistence variants and regret summaries used by that benchmark.
 
 After comparison:
 
 - All **12,000 captured actions** matched.
 - All **36 non-Tsallis traces** matched exactly, including strategies, cumulative state, regret, and RNG state.
 - All **54 non-Tsallis CSVs** were byte-identical with identical filenames/run identities.
-- The six short bandit-Ito CSVs differed only in expected-regret floating-point values, by at most `3.65e-12`. Their actions, action blocks, payoffs, realized regret, and identities matched exactly.
+- The six short bandit-Ito CSVs differed only in evaluator floating-point values, by at most `3.65e-12`. Their actions, action blocks, payoffs, other recorded metrics, and identities matched exactly.
 - In the four T=300 Ito state traces, maximum strategy difference was `7.42e-14`, cumulative learner-state difference `3.15e-12`, and regret-state/summary difference `7.23e-13`.
 - All non-Ito T=20,000 benchmark CSVs also matched byte-for-byte.
 
@@ -123,10 +123,10 @@ New/expanded tests cover:
 - Old-bisection equivalence, endpoint roots, unchanged learning-rate schedules, and no repeated fixed-parameter sqrt/log calculation.
 - Exactly one BM/LCE transition construction per outer update.
 - Once-per-file metadata work, corruption on subsequent rows, current-schema validation, checkpoint action bounds, grouping, and completeness.
-- Serial/process byte identity for every bandit algorithm, all regret-source modes, fixed cross-play, scaling, out-of-order replicate inputs, and bounded/nonnested execution.
+- Serial/process byte identity for every bandit algorithm and recorded configuration, fixed cross-play, out-of-order replicate inputs, and bounded/nonnested execution.
 - Launch-time numerical thread defaults and explicit overrides.
 
-Full-suite final result: **880 passed in 228.60 seconds**, including both additional runtime-metadata boundary cases. No failures or skips were reported.
+The historical cleanup's full-suite result was **880 passed in 228.60 seconds**, including both additional runtime-metadata boundary cases. No failures or skips were reported.
 
 The full-suite command uses:
 

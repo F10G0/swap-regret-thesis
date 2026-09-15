@@ -138,7 +138,7 @@ def _submit_one_player():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("adversarial", service.default_adversarial_form_state(), error)
 
-    kind = "action-space scaling" if len(form.action_counts) > 1 else "one-player experiment"
+    kind = "one-player batch" if len(form.action_counts) > 1 else "one-player experiment"
     return _queued_experiment_response(job, "adversarial", f"Queued {kind} job {job.id[:8]}.")
 
 
@@ -146,18 +146,6 @@ def _submit_one_player():
 def download_adversarial_experiment(filename: str):
     service = get_service()
     return _send_result(filename, service.validate_adversarial_csv_filename, service.adversarial_raw_dir, True)
-
-
-@dashboard.get("/adversarial/action-scaling/experiments/<filename>")
-def download_adversarial_scaling_experiment(filename: str):
-    service = get_service()
-    return _send_result(filename, service.validate_adversarial_scaling_csv_filename, service.adversarial_scaling_raw_dir, True)
-
-
-@dashboard.get("/adversarial/action-scaling/figures/<filename>")
-def adversarial_scaling_figure(filename: str):
-    service = get_service()
-    return _send_result(filename, service.validate_adversarial_scaling_figure_filename, service.adversarial_scaling_figure_dir)
 
 
 @dashboard.route("/custom-games", methods=["GET", "POST"])

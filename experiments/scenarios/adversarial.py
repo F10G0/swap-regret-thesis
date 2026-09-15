@@ -45,16 +45,6 @@ ENVIRONMENT_LABELS = {
     RANDOM_WALK_ENVIRONMENT: "Independent lazy random walk",
 }
 MAX_ADVERSARIAL_ACTIONS = 100
-TARGET_REGRET_BY_ALGORITHM = {
-    "hedge": "external",
-    "auer_exp3": "external",
-    "exp3_ix": "external",
-    "bm": "swap",
-    "ito": "swap",
-    "lce_ix": "swap",
-    "regret_matching": "internal",
-    "stationary_regret_matching": "internal",
-}
 ADVERSARIAL_IDENTITY_FIELDS = (
     "run_id",
     "environment",
@@ -247,14 +237,13 @@ def run_adversarial_experiment(
             if should_cancel is not None and should_cancel():
                 raise ExperimentCancelled("experiment cancelled")
 
-            strategy = learner.strategy()
             action = learner.sample_action()
             if historical:
                 experiment_environment.step((action,))
             else:
                 experiment_environment.step()
             payoffs = experiment_environment.feedback()
-            regrets.update(strategy, payoffs)
+            regrets.update(action, payoffs)
             feedback = payoffs if spec.feedback_mode == "full_information" else float(payoffs[action])
             learner.update(feedback)
 

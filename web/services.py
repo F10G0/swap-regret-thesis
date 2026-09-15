@@ -2,7 +2,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from collections.abc import Callable
 from hashlib import sha256
 import logging
-import os
 from pathlib import Path
 import re
 import tempfile
@@ -25,12 +24,7 @@ from experiments.game_catalog import (
     payoff_tensor_digest,
 )
 from experiments.games import PAYOFF_FACTORIES
-from experiments.plots import (
-    FIGURE_SUFFIXES,
-    figure_pair_is_current,
-    figure_paths,
-    publish_figure_pair,
-)
+from experiments.plots import figure_pair_is_current, publish_figure_pair
 from experiments.results import iter_result_rows
 from experiments.result_catalog import ResultRepository, ResultSet, ResultKind
 from experiments.parallel import run_replicates
@@ -40,10 +34,6 @@ from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
     HISTORICAL_FREQUENCY_ENVIRONMENT,
     run_adversarial_experiment,
-)
-from experiments.scenarios.adversarial_scaling import (
-    AdversarialScalingSpec,
-    run_adversarial_scaling_experiment,
 )
 from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE, FEEDBACK_MODE_LABELS, run_cross_play_experiment
 from web.jobs import Job, JobContext, JobManager
@@ -58,48 +48,11 @@ from web.validation import (
 logger = logging.getLogger(__name__)
 
 
-def _publish_figure_files(source_paths: list[Path], output_dir: Path) -> None:
-    generated_names = {path.name for path in source_paths}
-    for path in source_paths:
-        os.replace(path, output_dir / path.name)
-    for path in output_dir.iterdir():
-        if path.is_file() and path.suffix.lower() in FIGURE_SUFFIXES and path.name not in generated_names:
-            path.unlink()
-
-
-def _figure_file_record(path: Path) -> dict:
-    pdf_path = path.with_suffix(".pdf")
-    record = {
-        "filename": path.name,
-        "pdf_filename": pdf_path.name if pdf_path.is_file() else None,
-    }
-    return record
-
-
 def _validate_result_file(directory: Path, filename: str, suffix: str) -> str:
     filename = validate_leaf_filename(filename, suffix)
     if not (directory / filename).is_file():
         raise FileNotFoundError(filename)
     return filename
-
-
-def _validate_result_figure(directory: Path, filename: str, records: list[dict]) -> str:
-    suffix = Path(filename).suffix.lower()
-    if suffix not in FIGURE_SUFFIXES:
-        raise ValueError("invalid figure filename")
-    filename = validate_leaf_filename(filename, suffix)
-    preview_name = Path(filename).with_suffix(".png").name
-    known = any(
-        preview_name == record["filename"]
-        for record in records
-    )
-    if not known or not (directory / filename).is_file():
-        raise FileNotFoundError(filename)
-    return filename
-
-
-class PlotUpdateError(RuntimeError):
-    pass
 
 
 class DashboardService:
@@ -117,14 +70,11 @@ class DashboardService:
         self.figure_dir = Path(figure_dir)
         self.adversarial_dir = self.results_dir / "adversarial"
         self.adversarial_raw_dir = self.adversarial_dir / "raw"
-        self.adversarial_scaling_dir = self.adversarial_dir / "scaling"
-        self.adversarial_scaling_raw_dir = self.adversarial_scaling_dir / "raw"
-        self.adversarial_scaling_figure_dir = self.adversarial_scaling_dir / "figures"
         self.game_catalog = GameCatalog(custom_game_dir)
         self.jobs = job_manager or JobManager()
         self.replicate_workers = replicate_workers
         self.results = {kind: ResultRepository(directory, kind) for kind, directory in (
-            ("fixed", self.raw_dir), ("adversarial", self.adversarial_raw_dir), ("scaling", self.adversarial_scaling_raw_dir))}
+            ("fixed", self.raw_dir), ("adversarial", self.adversarial_raw_dir))}
         from web.figure_builder import FigureBuilder
 
         self.figure_builder = FigureBuilder(self)
@@ -349,17 +299,6 @@ class DashboardService:
         self,
         form: AdversarialExperimentForm,
     ) -> Job:
-        if len(form.action_counts) > 1:
-            return self._submit_adversarial_scaling_experiment(AdversarialScalingSpec(
-                environment=form.environment,
-                feedback_mode=form.feedback_mode,
-                algorithm_name=form.algorithm_name,
-                action_counts=form.action_counts,
-                replicates=form.replicates,
-                horizon=form.horizon,
-                seed=form.seed,
-            ))
-        n_actions = form.action_counts[0]
         specs = [
             AdversarialExperimentSpec(
                 environment=form.environment,
@@ -370,6 +309,7 @@ class DashboardService:
                 seed=form.seed,
                 replicate=replicate,
             )
+            for n_actions in form.action_counts
             for replicate in range(form.replicates)
         ]
         def task_kwargs(spec):
@@ -392,116 +332,12 @@ class DashboardService:
                 f"Adversarial: {algorithm_label(form.algorithm_name)} · "
                 f"{ENVIRONMENT_LABELS[form.environment]} · "
                 f"{FEEDBACK_MODE_LABELS[form.feedback_mode]} · "
-                f"{n_actions} actions · "
-                f"{form.replicates} replicates · base seed {form.seed}"
+                f"actions {','.join(map(str, form.action_counts))} · "
+                f"{form.replicates} replicates each · base seed {form.seed}"
             ),
             run_adversarial_experiment,
             task_kwargs,
             "all requested adversarial replicates already exist or are queued",
-        )
-
-    def _submit_adversarial_scaling_experiment(
-        self,
-        spec: AdversarialScalingSpec,
-    ) -> Job:
-        resource_key = f"adversarial-scaling:{spec.run_id}"
-        if resource_key in self.jobs.reserved_resources() or (
-            self.adversarial_scaling_raw_dir / f"{spec.run_id}.csv"
-        ).exists():
-            raise FileExistsError(
-                "the requested action-space scaling experiment already exists or is queued"
-            )
-
-        def operation(job: JobContext) -> str:
-            run_adversarial_scaling_experiment(
-                spec,
-                self.adversarial_scaling_raw_dir,
-                should_cancel=lambda: job.cancelled,
-                completed=job.advance,
-                workers=self.replicate_workers,
-            )
-            job.check_cancelled()
-            try:
-                self._publish_adversarial_scaling_plots()
-            except Exception as error:
-                raise PlotUpdateError(
-                    "action-space scaling results were saved, but their figures "
-                    f"could not be rebuilt: {error}"
-                ) from error
-            return (
-                f"Completed {len(spec.action_counts)} action counts × "
-                f"{spec.replicates} replicates"
-            )
-
-        return self.jobs.submit(
-            f"Action scaling: {algorithm_label(spec.algorithm_name)} · "
-            f"{ENVIRONMENT_LABELS[spec.environment]}",
-            operation,
-            total=len(spec.action_counts) * spec.replicates,
-            resource_keys={resource_key},
-        )
-
-    def _publish_adversarial_scaling_plots(self) -> None:
-        from experiments.plots.plot_adversarial_scaling import (
-            plot_adversarial_scaling_results,
-        )
-
-        self._publish_generated_plots(
-            self.adversarial_scaling_raw_dir,
-            self.adversarial_scaling_figure_dir,
-            ".action-scaling-figures-",
-            plot_adversarial_scaling_results,
-        )
-
-    @staticmethod
-    def _publish_generated_plots(
-        raw_dir: Path,
-        figure_dir: Path,
-        prefix: str,
-        plotter: Callable[..., object],
-    ) -> None:
-        parent_dir = figure_dir.parent
-        parent_dir.mkdir(parents=True, exist_ok=True)
-        figure_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=prefix,
-            dir=parent_dir,
-        ) as temporary_directory:
-            temporary_path = Path(temporary_directory)
-            plotter(raw_dir, temporary_path, skip_invalid=True)
-            generated_paths = [
-                path
-                for path in temporary_path.iterdir()
-                if path.suffix.lower() in FIGURE_SUFFIXES
-            ]
-            _publish_figure_files(generated_paths, figure_dir)
-
-    def adversarial_scaling_figure_records(self, results: ResultSet | None = None) -> list[dict]:
-        if results is None:
-            results = self.result_snapshot("scaling")
-        records = []
-        for result in results.records:
-            path = self.adversarial_scaling_figure_dir / (
-                f"{result.run_id}_regret_by_actions.png"
-            )
-            if not path.is_file():
-                continue
-            records.append(
-                {
-                    **result.summary(),
-                    **_figure_file_record(path),
-                }
-            )
-        return records
-
-    def validate_adversarial_scaling_csv_filename(self, filename: str) -> str:
-        return _validate_result_file(self.adversarial_scaling_raw_dir, filename, ".csv")
-
-    def validate_adversarial_scaling_figure_filename(self, filename: str) -> str:
-        return _validate_result_figure(
-            self.adversarial_scaling_figure_dir,
-            filename,
-            self.adversarial_scaling_figure_records(),
         )
 
     def validate_adversarial_csv_filename(self, filename: str) -> str:

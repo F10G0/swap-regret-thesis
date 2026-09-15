@@ -11,16 +11,20 @@ from pypdf import PdfReader
 import pytest
 from werkzeug.datastructures import MultiDict
 
-from experiments.plots.style import profile_label, regret_series_style
+from experiments.algorithm_labels import algorithm_profile_label
+from experiments.plots.style import regret_series_style
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
 from tests.web.support import create_test_app, csrf_token, record_fixed_runs as result
 from tests.support import read_csv_rows
 from web.validation import parse_profile_selection
 
 
-def form(context, profiles, comparison_mode="profiles", metric="all", view="all"):
-    return {"mode": context["mode"], "context_id": context["id"], "comparison_mode": comparison_mode,
-            "metric": metric, "view": view, "profiles": profiles}
+def form(context, profiles, comparison_mode="profiles", metric="external", view="all", action=None):
+    values = {"mode": context["mode"], "context_id": context["id"], "comparison_mode": comparison_mode,
+              "metric": metric, "view": view, "profiles": profiles}
+    if context["mode"] == "adversarial":
+        values["action"] = str(action or context["actions"][0])
+    return values
 
 
 def context_for(service, mode="fixed", **criteria):
@@ -34,11 +38,11 @@ def digest_files(directory):
 
 
 def test_comparison_selection_is_canonical_and_enforces_mode_contracts():
-    data = MultiDict([("mode", "fixed"), ("context_id", "a" * 24), ("profiles", "ito_vs_ito"),
+    data = MultiDict([("mode", "fixed"), ("context_id", "a" * 24), ("metric", "external"), ("profiles", "ito_vs_ito"),
                       ("profiles", "hedge_vs_hedge"), ("profiles", "ito_vs_ito")])
     selection = parse_profile_selection(data)
     assert selection.profiles == ("hedge_vs_hedge", "ito_vs_ito")
-    assert (selection.comparison_mode, selection.metric, selection.view) == ("profiles", "all", "all")
+    assert (selection.comparison_mode, selection.metric, selection.view) == ("profiles", "external", "all")
     with pytest.raises(ValueError, match="exactly one"):
         parse_profile_selection(data | {"comparison_mode": "regrets"})
     regret_selection = parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
@@ -51,6 +55,12 @@ def test_comparison_selection_is_canonical_and_enforces_mode_contracts():
         parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
                                  "comparison_mode": "regrets", "metric": "external",
                                  "profiles": ["hedge_vs_hedge"]})
+    action_selection = parse_profile_selection({"mode": "adversarial", "context_id": "a" * 24,
+        "comparison_mode": "actions", "metric": "swap", "profiles": ["hedge"], "action": "2"})
+    assert action_selection.action == "all"
+    with pytest.raises(ValueError, match="only for one-player"):
+        parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
+            "comparison_mode": "actions", "metric": "swap", "profiles": ["hedge_vs_hedge"]})
     data.poplist("profiles")
     with pytest.raises(ValueError, match="at least one"):
         parse_profile_selection(data)
@@ -63,7 +73,8 @@ def test_comparison_selection_is_canonical_and_enforces_mode_contracts():
 ])
 def test_selection_rejects_invalid_inputs(changes):
     with pytest.raises(ValueError):
-        parse_profile_selection(dict(mode="fixed", context_id="a" * 24, profiles=["hedge_vs_hedge"]) | changes)
+        parse_profile_selection(dict(mode="fixed", context_id="a" * 24, metric="external",
+                                     profiles=["hedge_vs_hedge"]) | changes)
 
 
 def test_options_use_real_groups_and_separate_incompatible_metadata(tmp_path):
@@ -84,6 +95,7 @@ def test_options_use_real_groups_and_separate_incompatible_metadata(tmp_path):
         "hedge_vs_hedge", "ito_vs_ito", "hedge_vs_ito", "ito_vs_hedge"})
     assert {p["label"] for p in compatible["profiles"]} == {
         "Hedge vs Hedge", "Ito vs Ito", "Hedge vs Ito", "Ito vs Hedge"}
+    assert compatible["horizon"] == 30 and compatible["base_seed"] == 42
     assert {c["player"] for c in contexts} == {0, 1}
     assert all([p["id"] for p in c["profiles"]] == ["auer_exp3_vs_bm"] for c in contexts if c["feedback_mode"] == "bandit")
     assert str(service.raw_dir.resolve()) not in json.dumps(contexts)
@@ -142,12 +154,14 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     import experiments.plots.plot_regret as fixed_plotting
     if mode == "fixed":
         plotting = fixed_plotting
+        loader_module = plotting
         profiles = ["hedge_vs_hedge", "hedge_vs_ito"]
         for profile in profiles + ["bm_vs_bm"]:
             result(service, profile)
         loader_name = "load_rows"
     else:
         import experiments.plots.plot_adversarial as plotting
+        from experiments.scenarios import adversarial as loader_module
         profiles = ["auer_exp3", "ito"]
         for name in profiles + ["bm"]:
             for replicate in (0, 1):
@@ -157,7 +171,7 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
         loader_name = "load_adversarial_rows"
     originals = digest_files(tmp_path)
     source_paths = {}
-    loader = getattr(plotting, loader_name)
+    loader = getattr(loader_module, loader_name)
     reads, curves = Counter(), []
     original_save = fixed_plotting.save_figure_pair
 
@@ -171,7 +185,7 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
         curves.append([line for line in figure.axes[0].lines if not line.get_label().startswith("_")])
         return original_save(figure, path, **kwargs)
 
-    monkeypatch.setattr(plotting, loader_name, load)
+    monkeypatch.setattr(loader_module, loader_name, load)
     monkeypatch.setattr(fixed_plotting, "save_figure_pair", save)
     monkeypatch.setattr(service, "submit_experiment", lambda *a, **k: pytest.fail("reran experiment"))
     context = context_for(service, mode, player=0)
@@ -181,11 +195,11 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     assert response.status_code == 200
     figures = response.json["figures"]
     assert [(figure["metric"], figure["view"]) for figure in figures] == [
-        (metric, view) for metric in ("external", "internal", "swap") for view in ("average", "sqrt_scaling")]
+        ("external", view) for view in ("average", "sqrt_scaling")]
     assert len(reads) == 4 and set(reads.values()) == {1}
     styles = {}
     for figure, lines in zip(figures, curves):
-        assert [line.get_label() for line in lines] == [profile_label(p.split("_vs_")) for p in profiles]
+        assert [line.get_label() for line in lines] == [algorithm_profile_label(p.split("_vs_")) for p in profiles]
         column = ("average_" if figure["view"] == "average" else "") + figure["metric"] + "_regret"
         scaled = figure["view"] == "sqrt_scaling"
         for profile, line in zip(profiles, lines):
@@ -209,7 +223,7 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     timestamps = {p: p.stat().st_mtime_ns for p in service.figure_builder.output_dir.iterdir()}
     cached = client.post("/figure-builder/cache", data=data | {"profiles": profiles})
     assert cached.json == response.json
-    assert set(reads.values()) == {1} and len(curves) == 6
+    assert set(reads.values()) == {1} and len(curves) == 2
     assert {style[1] for style in styles.values()} == {"-"}
     assert len({(style[0], style[2]) for style in styles.values()}) == len(profiles)
     assert [styles[profile][2] for profile in profiles] == ["o", "s"]
@@ -221,7 +235,7 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     })
     assert download.status_code == 200 and download.mimetype == "application/pdf"
     pages = PdfReader(BytesIO(download.data)).pages
-    assert len(pages) == 6
+    assert len(pages) == 2
     for page, figure in zip(pages, figures):
         original = PdfReader(service.figure_builder.artifact_path(figure["pdf_filename"])).pages[0]
         assert page.extract_text() == original.extract_text()
@@ -234,6 +248,42 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
         "mode": "figure_builder", "_csrf_token": data["_csrf_token"], "filenames": ["../private.pdf"],
     }).status_code == 404
     assert digest_files(tmp_path) == originals and not service.jobs.recent()
+
+
+def test_action_space_comparison_uses_compatible_ordinary_trajectories(tmp_path, monkeypatch):
+    import experiments.plots.plot_adversarial as plotting
+    import experiments.plots.plot_regret as renderer
+    from experiments.scenarios.adversarial import load_adversarial_rows
+
+    app, service = create_test_app(tmp_path)
+    paths = {}
+    for n_actions in (2, 4):
+        paths[n_actions] = [run_adversarial_experiment("hedge", n_actions=n_actions, horizon=30, seed=42,
+            replicate=replicate, output_dir=service.adversarial_raw_dir) for replicate in (0, 1)]
+    run_adversarial_experiment("hedge", n_actions=6, horizon=30, seed=9, output_dir=service.adversarial_raw_dir)
+    context = context_for(service, "adversarial", base_seed=42)
+    assert context["actions"] == [2, 4]
+    assert context["profiles"] == [{"id": "hedge", "label": "Hedge",
+                                     "metrics": ["external", "internal", "swap"], "actions": [2, 4]}]
+
+    captured = []
+    original_save = renderer.save_figure_pair
+    def save(figure, path, **kwargs):
+        captured.extend(line for line in figure.axes[0].lines if not line.get_label().startswith("_"))
+        return original_save(figure, path, **kwargs)
+    monkeypatch.setattr(renderer, "save_figure_pair", save)
+    client = app.test_client()
+    response = client.post("/figure-builder/collection", data=form(
+        context, ["hedge"], "actions", "swap", "average", "all") | {"_csrf_token": csrf_token(client)})
+    assert response.status_code == 200
+    assert [line.get_label() for line in captured] == ["K=2", "K=4"]
+    for line, n_actions in zip(captured, (2, 4)):
+        expected = plotting.aggregate_adversarial_regret(
+            [load_adversarial_rows(path) for path in paths[n_actions]], "average_swap_regret")
+        np.testing.assert_array_equal(line.get_xdata(), expected[0])
+        np.testing.assert_array_equal(line.get_ydata(), expected[1])
+    figure = response.json["figures"][0]
+    assert figure["comparison_mode"] == "actions" and "Action spaces" in figure["title"]
 
 
 def test_regret_comparison_combines_three_fixed_series_for_selected_views_and_export(tmp_path, monkeypatch):
