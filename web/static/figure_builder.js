@@ -1,34 +1,52 @@
-/* One shared result selection; the backend owns compatible replicate groups. */
+/* One shared result selection; cache probes never render figures. */
 (() => {
     const form = document.getElementById("figure-builder");
     const filters = document.getElementById("result-filters");
     if (!form || !filters) return;
-    const filter = (name) => document.getElementById(`filter-${name}`);
-    const builder = (name) => document.getElementById(`builder-${name}`);
+    const filter = name => document.getElementById(`filter-${name}`);
+    const builder = name => document.getElementById(`builder-${name}`);
     const storageKey = `swap-regret-shared-filters-${form.elements.mode.value}`;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(storageKey)) || {}; } catch (_) {}
     const selections = new Map(Object.entries(saved.selections || {}));
     const feedbackLabels = {full_information: "Full information", bandit: "Bandit"};
-    let catalog = {contexts: [], scaling: []};
+    let catalog = {contexts: [], metrics: [], views: []};
     let currentContext = null, selectionKey = "";
-    let generationRevision = 0, displayRevision = 0;
-    let busy = false, exporting = false;
-    let figures = [];
+    let selectionRevision = 0, displayRevision = 0;
+    let probingRevision = null, generatingRevision = null;
+    let exporting = false, figures = [];
+    let profileMetric = saved.profileMetric || saved.metric || "all";
+    let selectedView = saved.view || "all";
+
+    if (["profiles", "regrets"].includes(saved.comparisonMode)) {
+        filter(`compare-${saved.comparisonMode}`).checked = true;
+        filter(`compare-${saved.comparisonMode === "profiles" ? "regrets" : "profiles"}`).checked = false;
+    }
+
+    const comparisonMode = () => filter("compare-regrets").checked ? "regrets" : "profiles";
     const profiles = () => [...filter("profiles").selectedOptions].map(option => option.value);
+    const selectionValid = () => currentContext && profiles().length > 0
+        && (comparisonMode() === "profiles" || profiles().length === 1);
     const selected = () => ({
         scope: filter("scope").value, feedback: filter("feedback").value, player: filter("player").value,
         metric: filter("metric").value, view: filter("view").value, profiles: profiles(),
-        resultKeys: currentContext ? currentContext.result_keys : [],
+        comparisonMode: comparisonMode(), resultKeys: currentContext ? currentContext.result_keys : [],
     });
-    const visibleFigures = () => figures.filter(figure =>
-        (filter("metric").value === "all" || figure.metric === filter("metric").value)
-        && (filter("view").value === "all" || figure.view === filter("view").value));
-    const canGenerate = () => currentContext && profiles().length > 0;
 
-    function options(select, entries, preferred = select.value) {
+    function setOptions(select, entries, preferred = "", enabled = true) {
+        select.disabled = true;
         select.replaceChildren(...entries.map(([value, label]) => new Option(label, String(value))));
-        if (entries.some(([value]) => String(value) === preferred)) select.value = preferred;
+        if (entries.length) {
+            select.value = entries.some(([value]) => String(value) === preferred) ? preferred : String(entries[0][0]);
+        }
+        select.disabled = !enabled || !entries.length;
+    }
+
+    function clearOptions(...selects) {
+        selects.forEach(select => {
+            select.disabled = true;
+            select.replaceChildren();
+        });
     }
 
     function remember() {
@@ -40,63 +58,129 @@
         document.dispatchEvent(new CustomEvent("results-filter-change", {detail: state}));
         try {
             localStorage.setItem(storageKey, JSON.stringify({...state, context: filter("context").value,
-                selections: Object.fromEntries(selections)}));
+                profileMetric, selections: Object.fromEntries(selections)}));
         } catch (_) {}
     }
 
-    function updateDisplay() {
-        displayRevision += 1;
-        builder("export-status").textContent = "";
-        const visible = visibleFigures();
-        const visibleNames = new Set(visible.map(figure => figure.filename));
-        [...builder("figure").children].forEach(card => card.hidden = !visibleNames.has(card.dataset.filename));
-        builder("download").disabled = exporting || !visible.length;
-        builder("generate").disabled = busy || !canGenerate();
+    function updateButtons() {
+        const pending = probingRevision === selectionRevision || generatingRevision !== null;
+        builder("generate").disabled = pending || !selectionValid() || figures.length > 0;
+        builder("download").disabled = exporting || figures.length === 0;
         const count = profiles().length;
         filter("selection-status").textContent = `${count} profile${count === 1 ? "" : "s"} selected.`;
-        builder("status").textContent = figures.length
-            ? `${figures.length} figures generated · ${visible.length} visible. The merged PDF follows the displayed order.`
-            : !count ? "Select at least one algorithm profile. Empty selections show no results."
-            : !currentContext ? "These are action-space scaling results; no round-by-round figure collection is available."
-            : busy ? "Rendering all three regrets and both views…"
-            : "Generate all six figures for the shared selection.";
         announceSelection();
     }
 
-    function invalidate() {
-        generationRevision += 1;
+    function clearFigures() {
         figures = [];
         builder("figure").replaceChildren();
-        updateDisplay();
+        builder("export-status").textContent = "";
+        displayRevision += 1;
+    }
+
+    function showFigures(items) {
+        figures = items;
+        builder("figure").replaceChildren(...figures.map(figureCard));
+        displayRevision += 1;
+    }
+
+    function updateComparisonControls(saveMetric = false) {
+        const single = comparisonMode() === "regrets";
+        const profileSelect = filter("profiles");
+        const chosen = profiles()[0] || (profileSelect.options.length ? profileSelect.options[0].value : "");
+        if (single && saveMetric && !filter("metric").disabled) profileMetric = filter("metric").value;
+        profileSelect.multiple = !single;
+        profileSelect.size = single ? 1 : Math.min(Math.max(profileSelect.options.length, 2), 8);
+        filter("profiles-label").textContent = single ? "Algorithm profile" : "Algorithm profiles";
+        if (single) [...profileSelect.options].forEach(option => option.selected = option.value === chosen);
+        const comparisonEnabled = profileSelect.options.length > 0;
+        filter("compare-profiles").disabled = !comparisonEnabled;
+        filter("compare-regrets").disabled = !comparisonEnabled;
+        filter("metric").disabled = !filter("metric").options.length || single;
+        if (single && filter("metric").options.length) {
+            filter("metric").value = "all";
+        } else if ([...filter("metric").options].some(option => option.value === profileMetric)) {
+            filter("metric").value = profileMetric;
+        }
+    }
+
+    async function selectionChanged() {
+        const revision = ++selectionRevision;
+        clearFigures();
+        if (!selectionValid()) {
+            builder("status").textContent = "No figures to display.";
+            updateButtons();
+            return;
+        }
+        probingRevision = revision;
+        builder("status").textContent = "Checking generated figures…";
+        updateButtons();
+        try {
+            const response = await fetch(form.dataset.cacheUrl, {
+                method: "POST", body: new URLSearchParams(new FormData(form)),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (revision !== selectionRevision) return;
+            if (!response.ok) throw new Error(result.error || "Could not check generated figures.");
+            probingRevision = null;
+            if (result.cached) {
+                showFigures(result.figures);
+                builder("status").textContent = "Cached figures loaded.";
+            } else {
+                builder("status").textContent = "No generated figures for this selection.";
+            }
+            updateButtons();
+        } catch (error) {
+            if (revision !== selectionRevision) return;
+            probingRevision = null;
+            builder("status").textContent = error.message;
+            updateButtons();
+        }
     }
 
     function updateProfiles() {
         currentContext = catalog.contexts.find(context => context.id === filter("context").value) || null;
-        const scaling = (catalog.scaling || []).filter(context => context.scope === filter("scope").value
-            && context.feedback_mode === filter("feedback").value);
-        const entries = currentContext ? currentContext.profiles : scaling.flatMap(context => context.profiles);
+        const entries = currentContext ? currentContext.profiles : [];
         const unique = new Map(entries.map(profile => [profile.id, profile.label]));
-        selectionKey = currentContext ? currentContext.id : `${filter("scope").value}/${filter("feedback").value}/scaling`;
+        selectionKey = currentContext ? currentContext.id : "";
         const remembered = Array.isArray(selections.get(selectionKey)) ? selections.get(selectionKey) : [];
-        options(filter("profiles"), [...unique].sort(([left], [right]) => left.localeCompare(right)));
+        filter("profiles").disabled = true;
+        filter("profiles").replaceChildren(...[...unique].sort(([left], [right]) => left.localeCompare(right))
+            .map(([value, label]) => new Option(label, value)));
         [...filter("profiles").options].forEach(option => option.selected = remembered.includes(option.value));
-        invalidate();
-        if (!entries.length) builder("status").textContent = "No compatible saved results are available.";
+        filter("profiles").disabled = filter("profiles").options.length === 0;
+
+        const hasFilterContext = Boolean(currentContext);
+        setOptions(filter("metric"), [["all", "All regrets"], ...catalog.metrics.map(metric => [metric.id, metric.label])],
+            comparisonMode() === "regrets" ? "all" : profileMetric, hasFilterContext);
+        setOptions(filter("view"), [["all", "Both views"], ...catalog.views.map(view => [view.id, view.label])],
+            selectedView, hasFilterContext);
+        updateComparisonControls();
+        remember();
+        selectionChanged();
     }
 
     function updateContexts(preferred = {}) {
-        let available = [...catalog.contexts, ...(catalog.scaling || [])].filter(context => context.scope === filter("scope").value);
+        const wantedFeedback = preferred.feedback || filter("feedback").value || "full_information";
+        const wantedPlayer = preferred.player || filter("player").value;
+        const wantedContext = preferred.context || filter("context").value;
+        currentContext = null;
+        clearOptions(filter("feedback"), filter("player"), filter("context"), filter("profiles"),
+            filter("metric"), filter("view"));
+        filter("profiles").size = 1;
+        filter("compare-profiles").disabled = true;
+        filter("compare-regrets").disabled = true;
+
+        let available = catalog.contexts.filter(context => context.scope === filter("scope").value);
         const feedbacks = [...new Set(available.map(context => context.feedback_mode))];
-        options(filter("feedback"), feedbacks.map(value => [value, feedbackLabels[value] || value]),
-            preferred.feedback || filter("feedback").value || "full_information");
+        setOptions(filter("feedback"), feedbacks.map(value => [value, feedbackLabels[value] || value]), wantedFeedback);
         available = available.filter(context => context.feedback_mode === filter("feedback").value);
         const players = [...new Set(available.map(context => context.player))].sort((a, b) => a - b);
-        options(filter("player"), players.map(value => [String(value), `Player ${value}`]), preferred.player || filter("player").value);
+        setOptions(filter("player"), players.map(value => [String(value), `Player ${value}`]), wantedPlayer);
         const contexts = catalog.contexts.filter(context => context.scope === filter("scope").value
             && context.feedback_mode === filter("feedback").value && String(context.player) === filter("player").value);
         const entries = contexts.map(context => [context.id, context.batch_label]);
-        if (available.some(context => !context.id)) entries.push(["scaling", "Action-space scaling results"]);
-        options(filter("context"), entries, preferred.context || filter("context").value);
+        setOptions(filter("context"), entries, wantedContext);
         filter("batches").hidden = entries.length <= 1;
         updateProfiles();
     }
@@ -130,36 +214,36 @@
 
     form.addEventListener("submit", async event => {
         event.preventDefault();
-        if (busy || !canGenerate()) return;
-        busy = true;
-        const revision = generationRevision;
-        builder("generate").disabled = true;
-        builder("status").textContent = "Rendering all three regrets and both views…";
+        if (!selectionValid() || probingRevision === selectionRevision || generatingRevision !== null || figures.length) return;
+        const revision = selectionRevision;
+        generatingRevision = revision;
+        builder("status").textContent = "Generating figures…";
+        updateButtons();
         try {
             const response = await fetch(form.action, {method: "POST", body: new URLSearchParams(new FormData(form))});
             const result = await response.json().catch(() => ({}));
+            if (revision !== selectionRevision) return;
             if (!response.ok) throw new Error(result.error || "Figure generation failed.");
-            if (revision !== generationRevision) return;
-            figures = result.figures;
-            builder("figure").replaceChildren(...figures.map(figureCard));
-            updateDisplay();
+            showFigures(result.figures);
+            builder("status").textContent = `${figures.length} figure${figures.length === 1 ? "" : "s"} generated.`;
         } catch (error) {
-            if (revision === generationRevision) builder("status").textContent = error.message;
+            if (revision === selectionRevision) builder("status").textContent = error.message;
         } finally {
-            busy = false;
-            builder("generate").disabled = !canGenerate();
+            if (generatingRevision === revision) {
+                generatingRevision = null;
+                updateButtons();
+            }
         }
     });
 
     builder("download").addEventListener("click", async () => {
-        const visible = visibleFigures();
-        if (exporting || !visible.length) return;
+        if (exporting || !figures.length) return;
         exporting = true;
         const revision = displayRevision;
         builder("download").disabled = true;
-        builder("export-status").textContent = `Combining ${visible.length} PDFs…`;
+        builder("export-status").textContent = `Combining ${figures.length} PDFs…`;
         const body = new URLSearchParams({_csrf_token: form.elements._csrf_token.value, mode: "figure_builder"});
-        visible.forEach(figure => body.append("filenames", figure.pdf_filename));
+        figures.forEach(figure => body.append("filenames", figure.pdf_filename));
         try {
             const response = await fetch(form.dataset.exportUrl, {method: "POST", body});
             if (!response.ok) {
@@ -181,32 +265,47 @@
             if (revision === displayRevision) builder("export-status").textContent = error.message;
         } finally {
             exporting = false;
-            builder("download").disabled = !visibleFigures().length;
+            builder("download").disabled = !figures.length;
         }
     });
 
-    for (const name of ["scope", "feedback", "player"]) {
-        filter(name).addEventListener("change", () => { remember(); updateContexts(); });
-    }
+    filter("scope").addEventListener("change", () => { remember(); updateContexts(); });
+    filter("feedback").addEventListener("change", () => { remember(); updateContexts(); });
+    filter("player").addEventListener("change", () => { remember(); updateContexts(); });
     filter("context").addEventListener("change", () => { remember(); updateProfiles(); });
-    for (const name of ["metric", "view"]) filter(name).addEventListener("change", updateDisplay);
-    filter("profiles").addEventListener("change", () => { remember(); invalidate(); });
-    for (const [name, selected] of [["select-all", true], ["clear-all", false]]) {
-        filter(name).addEventListener("click", () => {
-            [...filter("profiles").options].forEach(option => option.selected = selected);
+    filter("metric").addEventListener("change", () => {
+        profileMetric = filter("metric").value;
+        selectionChanged();
+    });
+    filter("view").addEventListener("change", () => {
+        selectedView = filter("view").value;
+        selectionChanged();
+    });
+    for (const mode of ["profiles", "regrets"]) {
+        filter(`compare-${mode}`).addEventListener("change", () => {
+            if (!filter(`compare-${mode}`).checked) return;
+            filter(`compare-${mode === "profiles" ? "regrets" : "profiles"}`).checked = false;
+            updateComparisonControls(true);
             remember();
-            invalidate();
+            selectionChanged();
         });
     }
+    filter("profiles").addEventListener("change", () => { remember(); selectionChanged(); });
 
     fetch(filters.dataset.optionsUrl).then(async response => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || "Could not load available profiles.");
         catalog = result;
-        options(filter("metric"), [["all", "All regrets"], ...catalog.metrics.map(metric => [metric.id, metric.label])], saved.metric || "all");
-        options(filter("view"), [["all", "Both views"], ...catalog.views.map(view => [view.id, view.label])], saved.view || "all");
-        const scopes = new Map([...catalog.contexts, ...(catalog.scaling || [])].map(context => [context.scope, context.scope_label]));
-        options(filter("scope"), [...scopes], saved.scope || "");
-        updateContexts(saved);
-    }).catch(error => { builder("status").textContent = error.message; });
+        const scopes = new Map(catalog.contexts.map(context => [context.scope, context.scope_label]));
+        setOptions(filter("scope"), [...scopes], saved.scope || "");
+        if (filter("scope").disabled) {
+            builder("status").textContent = "No figures to display.";
+            updateButtons();
+        } else {
+            updateContexts(saved);
+        }
+    }).catch(error => {
+        builder("status").textContent = error.message;
+        updateButtons();
+    });
 })();

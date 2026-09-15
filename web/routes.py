@@ -21,11 +21,10 @@ from experiments.scenarios.adversarial import (
 )
 from web.jobs import ServiceBusyError
 from web.pdf_export import merged_figure_pdf
-from web.services import DashboardService, PlotUpdateError
+from web.services import DashboardService
 from web.validation import (
     ExperimentForm,
     parse_adversarial_experiment_form,
-    parse_adversarial_scaling_form,
     parse_experiment_form,
     parse_profile_selection,
     parse_non_negative_integer,
@@ -111,17 +110,6 @@ def _send_result(filename: str, validator, directory, as_attachment: bool = Fals
     return send_from_directory(directory.resolve(), filename, as_attachment=as_attachment)
 
 
-def _delete_one_player_result(delete_result, message: str):
-    try:
-        filename = request.form["filename"]
-        delete_result(filename)
-    except (KeyError, FileNotFoundError, PlotUpdateError, ServiceBusyError, ValueError) as error:
-        flash(str(error), "error")
-    else:
-        flash(message.format(filename=filename), "success")
-    return redirect(url_for("dashboard.index", mode="adversarial"))
-
-
 @dashboard.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "GET":
@@ -150,19 +138,8 @@ def _submit_one_player():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("adversarial", service.default_adversarial_form_state(), error)
 
-    return _queued_experiment_response(job, "adversarial", f"Queued adversarial job {job.id[:8]}.")
-
-
-@dashboard.post("/adversarial/action-scaling")
-def adversarial_action_scaling():
-    service = get_service()
-    try:
-        form = _parse_one_player_form(parse_adversarial_scaling_form, service)
-        job = service.submit_adversarial_scaling_experiment(form)
-    except (FileExistsError, ServiceBusyError, ValueError) as error:
-        return _form_error("adversarial", service.default_adversarial_form_state(), error)
-
-    return _queued_experiment_response(job, "adversarial", f"Queued action-space scaling job {job.id[:8]}.")
+    kind = "action-space scaling" if len(form.action_counts) > 1 else "one-player experiment"
+    return _queued_experiment_response(job, "adversarial", f"Queued {kind} job {job.id[:8]}.")
 
 
 @dashboard.get("/adversarial/experiments/<filename>")
@@ -183,44 +160,13 @@ def adversarial_scaling_figure(filename: str):
     return _send_result(filename, service.validate_adversarial_scaling_figure_filename, service.adversarial_scaling_figure_dir)
 
 
-@dashboard.post("/adversarial/delete-experiment")
-def delete_adversarial_experiment():
-    return _delete_one_player_result(
-        get_service().delete_adversarial_experiment,
-        "Deleted {filename}.",
-    )
-
-
-@dashboard.post("/adversarial/action-scaling/delete-experiment")
-def delete_adversarial_scaling_experiment():
-    return _delete_one_player_result(
-        get_service().delete_adversarial_scaling_experiment,
-        "Deleted {filename} and rebuilt action-space scaling figures.",
-    )
-
-
-@dashboard.post("/adversarial/results/clear")
-def clear_adversarial_results():
-    try:
-        csv_count, figure_count = get_service().clear_adversarial_results()
-    except ServiceBusyError as error:
-        flash(str(error), "error")
-    else:
-        flash(
-            f"Deleted {csv_count} adversarial result(s) and "
-            f"{figure_count} figure(s).",
-            "success",
-        )
-    return redirect(url_for("dashboard.index", mode="adversarial"))
-
-
 @dashboard.route("/custom-games", methods=["GET", "POST"])
 def custom_games():
     service = get_service()
     if request.method == "POST":
         try:
             n_players = parse_positive_integer(request.form["n_players"], "number of players", MAX_CUSTOM_PLAYERS)
-            payoff_structure = request.form.get("payoff_structure", "general_sum")
+            payoff_structure = request.form.get("payoff_structure", "zero_sum")
             action_counts = [
                 parse_positive_integer(value, f"player {player} actions", MAX_CUSTOM_ACTIONS_PER_PLAYER)
                 for player, value in enumerate(request.form.getlist("action_counts"))
@@ -333,6 +279,19 @@ def build_figure_collection():
         result = get_service().figure_builder.build_collection(parse_profile_selection(request.form))
     except (ValueError, FileNotFoundError) as error:
         return jsonify(error=str(error)), 400
+    return _figure_collection_response(result)
+
+
+@dashboard.post("/figure-builder/cache")
+def cached_figure_collection():
+    try:
+        result = get_service().figure_builder.cached_collection(parse_profile_selection(request.form))
+    except (ValueError, FileNotFoundError) as error:
+        return jsonify(error=str(error)), 400
+    return _figure_collection_response(result)
+
+
+def _figure_collection_response(result):
     for figure in result["figures"]:
         figure["url"] = url_for("dashboard.selected_figure", filename=figure["filename"])
         figure["pdf_url"] = url_for("dashboard.selected_figure", filename=figure["pdf_filename"])
@@ -459,28 +418,13 @@ def group_equilibrium_distance(group_id: str, figure_format: str):
     )
 
 
-@dashboard.post("/delete-experiment")
-def delete_experiment():
-    try:
-        filename = request.form["filename"]
-        get_service().delete_experiment(filename)
-    except (
-        KeyError,
-        FileNotFoundError,
-        ServiceBusyError,
-        ValueError,
-    ) as error:
-        flash(str(error), "error")
-    else:
-        flash(f"Deleted {filename}.", "success")
-    return redirect(url_for("dashboard.index"))
-
-
 @dashboard.post("/reset")
 def reset_results():
+    return_to = request.form.get("return_to")
+    redirect_arguments = {"mode": "adversarial"} if return_to == "adversarial" else {}
     if request.form.get("confirmation") != "reset-results":
         flash("Reset confirmation was missing.", "error")
-        return redirect(url_for("dashboard.index"))
+        return redirect(url_for("dashboard.index", **redirect_arguments))
 
     try:
         get_service().clear_results()
@@ -488,4 +432,4 @@ def reset_results():
         flash(str(error), "error")
     else:
         flash("Deleted all experiment-derived results, figures, and caches.", "success")
-    return redirect(url_for("dashboard.index"))
+    return redirect(url_for("dashboard.index", **redirect_arguments))

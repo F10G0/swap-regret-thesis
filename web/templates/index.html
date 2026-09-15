@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_experiment_ui.html" import figure_dialog, jobs_panel, warning_panel, file_list, learning_configuration, regret_figure_panel, result_controls, regret_headers, regret_cells with context %}
+{% from "_experiment_ui.html" import feedback_control, figure_dialog, jobs_panel, warning_panel, learning_configuration, queue_experiment_button, result_controls, regret_headers, regret_cells with context %}
 {% from "_one_player_experiment.html" import one_player_main, one_player_sidebar with context %}
 
 {% set sidebar_label = "Experiment configuration" %}
@@ -19,10 +19,16 @@
 {% block content %}
     <div class="app-shell">
         <aside class="sidebar" aria-label="{{ sidebar_label }}">
-            <div class="brand">
-                <p class="eyebrow">Bachelor thesis laboratory</p>
-                <h1>Experiments</h1>
-                <p>Run reproducible fixed-game or one-player experiments and inspect their regret.</p>
+            <div class="brand section-heading sidebar-heading">
+                <div>
+                    <p class="eyebrow">Bachelor thesis laboratory</p>
+                    <h1>Experiments</h1>
+                    <p>Run reproducible fixed-game or one-player experiments and inspect their regret.</p>
+                </div>
+                <div class="field compact-seed">
+                    <label for="experiment-seed">Seed</label>
+                    <input id="experiment-seed" name="seed" form="experiment-form" type="number" value="{{ form_state.seed }}" min="0" title="Base seed for reproducibility." required>
+                </div>
             </div>
             <form class="experiment-mode-switch" method="get" action="{{ url_for('dashboard.index') }}">
                 <label for="experiment-mode">Experiment type</label>
@@ -59,34 +65,19 @@
                         <span id="game-description" class="hint">{{ selected_presentation.description }}</span>
                     </div>
 
-                    {{ learning_configuration(form_state, feedback_modes, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates, "Base seed used to derive reproducible random streams for every player and replicate.") }}
+                    {{ feedback_control(form_state, feedback_modes) }}
 
-                    <div class="button-stack">
-                        <button id="queue-experiment" class="button-primary" type="submit">
-                            Queue experiment
-                        </button>
-                    </div>
+                    {{ learning_configuration(form_state, current_algorithms, algorithm_labels, selected_algorithm_names, selected_definition.n_players, max_horizon, max_replicates) }}
+
+                    {{ queue_experiment_button() }}
                 </form>
-
-                <details class="data-management">
-                    <summary>Data management</summary>
-                    <div class="maintenance-actions">
-                        <form
-                            method="post"
-                            action="{{ url_for('dashboard.reset_results') }}"
-                            data-confirm="Delete all experiment-derived data, figures, and caches?"
-                        >
-                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="confirmation" value="reset-results">
-                            <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>
-                                Reset generated results
-                            </button>
-                        </form>
-                    </div>
-
-                    {{ file_list(experiments, "experiments-heading", "Raw experiment files", "dashboard.delete_experiment", "", busy, "No experiments recorded.") }}
-                </details>
             {% endif %}
+            <form class="maintenance-actions" method="post" action="{{ url_for('dashboard.reset_results') }}" data-confirm="Delete all fixed-game and one-player experiment results, generated figures, and caches? This cannot be undone.">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="confirmation" value="reset-results">
+                <input type="hidden" name="return_to" value="{{ experiment_mode }}">
+                <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>Reset all experiment results</button>
+            </form>
         </aside>
 
         <main id="main-content" class="content">
@@ -101,15 +92,13 @@
                 {{ one_player_main() }}
             {% else %}
                 {{ result_controls() }}
-
-                {{ regret_figure_panel() }}
                 {% if summaries %}
 
-                <section class="panel summary-panel" aria-labelledby="summary-heading">
-                    <div class="section-heading">
+                <section class="panel result-panel summary-panel" aria-labelledby="summary-heading">
+                    <div class="section-heading panel-heading">
                         <div>
-                            <p class="eyebrow">Recorded outcomes</p>
-                            <h2 id="summary-heading">Final regret summary</h2>
+                            <p class="eyebrow">Data</p>
+                            <h2 id="summary-heading">Recorded output</h2>
                         </div>
                         <span>{{ summaries | length }} replicate-group player records</span>
                     </div>
@@ -158,7 +147,6 @@
                         <section id="experiment-detail" class="experiment-detail" hidden>
                             <div class="section-heading">
                                 <div>
-                                    <p class="eyebrow">Selected replicate group</p>
                                     <h2 id="detail-title"></h2>
                                 </div>
                                 <button id="reuse-experiment" type="button">Reuse parameters</button>
@@ -166,41 +154,41 @@
                             <dl id="detail-metadata" class="detail-metadata"></dl>
                             <div id="detail-regrets" class="detail-regrets"></div>
                             <div id="detail-downloads" class="detail-actions"></div>
-                            <section id="detail-joint-actions">
-                                <div class="detail-subheading">
+                            <div class="detail-figure-grid">
+                                <section id="detail-joint-actions" class="detail-figure-card">
                                     <h3>Mean empirical joint-action heatmap</h3>
-                                    <a id="detail-heatmap-download" href="" download>Download PDF</a>
-                                </div>
-                                <div class="heatmap-frame detail-heatmap-frame">
-                                    <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
-                                    <span class="heatmap-loading" role="status">Loading heatmap…</span>
-                                </div>
-                            </section>
-                            <section id="detail-convergence" class="detail-convergence" aria-labelledby="detail-convergence-heading">
-                                <div class="detail-subheading">
-                                    <div>
-                                        <h3 id="detail-convergence-heading">Equilibrium Convergence</h3>
-                                        <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace below.</p>
+                                    <div class="heatmap-frame">
+                                        <img id="detail-heatmap" class="detail-heatmap" src="" alt="Empirical joint-action distribution" loading="lazy">
+                                        <span class="heatmap-loading" role="status">Loading heatmap…</span>
                                     </div>
-                                </div>
-                                <div class="detail-figure-grid">
-                                    <article id="detail-equilibrium-distance-card" class="detail-figure-card">
-                                        <h4>Mean equilibrium distance</h4>
+                                    <a id="detail-heatmap-download" href="" download>Download PDF</a>
+                                </section>
+                                <section id="detail-convergence" class="detail-convergence detail-figure-card" aria-labelledby="detail-convergence-heading">
+                                    <div id="detail-equilibrium-distance-card" class="detail-figure-content">
+                                        <h3 id="detail-convergence-heading">Mean equilibrium distance</h3>
+                                        <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace below.</p>
                                         <div class="heatmap-frame">
                                             <img id="detail-equilibrium-distance" alt="CE and CCE L1 distance by horizon" loading="lazy">
                                             <span class="heatmap-loading" role="status">Loading convergence figure…</span>
                                         </div>
                                         <a id="detail-equilibrium-distance-download" href="" download>Download PDF</a>
-                                    </article>
-                                </div>
-                            </section>
+                                    </div>
+                                </section>
+                            </div>
                         </section>
                 </section>
                 {% else %}
-                    <section class="panel empty-results" aria-labelledby="empty-results-heading">
-                        <p class="eyebrow">Recorded output</p>
-                        <h2 id="empty-results-heading">No results yet</h2>
-                        <p class="empty">Configure and queue an experiment to create regret figures and summaries.</p>
+                    <section class="panel result-panel summary-panel" aria-labelledby="empty-results-heading">
+                        <div class="section-heading panel-heading">
+                            <div>
+                                <p class="eyebrow">Data</p>
+                                <h2 id="empty-results-heading">Recorded output</h2>
+                            </div>
+                        </div>
+                        <div class="empty-state">
+                            <strong>No results yet.</strong>
+                            <p>Configure and queue an experiment to create regret figures and summaries.</p>
+                        </div>
                     </section>
                 {% endif %}
             {% endif %}
@@ -226,7 +214,7 @@
                 "summaries": summaries,
                 "algorithms": algorithms_by_feedback_mode,
                 "algorithmLabels": algorithm_labels,
-                "randomWalkEnvironment": random_walk_environment,
+                "environmentDescriptions": adversarial_environment_descriptions,
             } | tojson }}
         {% endif %}
     </script>

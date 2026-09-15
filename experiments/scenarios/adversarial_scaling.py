@@ -12,8 +12,6 @@ from experiments.recorder import CsvRecorder, require_csv_columns
 from experiments.parallel import run_replicates
 from experiments.result_schema import (
     REGRET_FIELDNAMES,
-    RESULT_IMPLEMENTATION_VERSION,
-    result_implementation_version,
 )
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
@@ -39,7 +37,6 @@ from experiments.scenarios.adversarial import (
 
 ACTION_SCALING_IDENTITY_FIELDS = (
     "run_id",
-    "implementation_version",
     "runtime_environment",
     "runtime_fingerprint",
     "environment",
@@ -70,9 +67,7 @@ class AdversarialScalingSpec:
     action_counts: tuple[int, ...]
     replicates: int
     horizon: int
-    environment_seed: int
-    learner_seed: int
-    implementation_version: int = RESULT_IMPLEMENTATION_VERSION
+    seed: int
     runtime_environment: str = field(default_factory=runtime_environment_json)
 
     def __post_init__(self) -> None:
@@ -83,24 +78,17 @@ class AdversarialScalingSpec:
             raise ValueError("action counts must be unique")
         if self.replicates <= 0:
             raise ValueError("replicates must be positive")
-        if self.implementation_version < 0:
-            raise ValueError("implementation_version must be non-negative")
-        canonical_runtime = validate_runtime_environment(
-            self.runtime_environment,
-            allow_empty=self.implementation_version == 0,
-        )
+        canonical_runtime = validate_runtime_environment(self.runtime_environment)
         object.__setattr__(self, "runtime_environment", canonical_runtime)
         object.__setattr__(self, "action_counts", action_counts)
         for n_actions in action_counts:
             AdversarialExperimentSpec(
                 environment=self.environment,
-                environment_seed=self.environment_seed,
                 feedback_mode=self.feedback_mode,
                 algorithm_name=self.algorithm_name,
                 n_actions=n_actions,
                 horizon=self.horizon,
-                seed=self.learner_seed,
-                implementation_version=self.implementation_version,
+                seed=self.seed,
                 runtime_environment=self.runtime_environment,
             )
 
@@ -111,38 +99,33 @@ class AdversarialScalingSpec:
             "feedback_mode": self.feedback_mode,
             "algorithm": self.algorithm_name,
             "horizon": self.horizon,
-            "base_environment_seed": self.environment_seed if random_walk else "",
-            "base_learner_seed": self.learner_seed,
+            "base_environment_seed": self.seed if random_walk else "",
+            "base_learner_seed": self.seed,
             "action_counts": ",".join(map(str, self.action_counts)),
             "replicates": self.replicates,
         }
-        if self.runtime_environment:
-            configuration["runtime_environment"] = self.runtime_environment
-            configuration["runtime_fingerprint"] = self.runtime_fingerprint
-        if self.implementation_version:
-            configuration["implementation_version"] = self.implementation_version
+        configuration["runtime_environment"] = self.runtime_environment
+        configuration["runtime_fingerprint"] = self.runtime_fingerprint
         return configuration
 
     @property
     def runtime_fingerprint(self) -> str:
-        if not self.runtime_environment:
-            return ""
         return runtime_environment_fingerprint(self.runtime_environment)
 
     @property
     def run_id(self) -> str:
-        identity = self.configuration()
-        payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-        return f"action_scaling_{self.algorithm_name}_{sha256(payload.encode()).hexdigest()[:10]}"
+        return _scaling_run_id(self.algorithm_name, self.configuration())
+
+
+def _scaling_run_id(algorithm_name: str, configuration: dict) -> str:
+    payload = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
+    return f"action_scaling_{algorithm_name}_{sha256(payload.encode()).hexdigest()[:10]}"
 
 
 def adversarial_scaling_environment_detail(row: dict[str, str]) -> str:
     if row["environment"] == HISTORICAL_FREQUENCY_ENVIRONMENT:
         return adversarial_environment_detail(row)
-    return (
-        "Centered at 0.5 · "
-        f"base environment seed {row['base_environment_seed']}"
-    )
+    return "Centered at 0.5"
 
 
 def run_adversarial_scaling_experiment(
@@ -167,14 +150,12 @@ def run_adversarial_scaling_experiment(
         tasks = [
             dict(
                 environment=spec.environment,
-                environment_seed=spec.environment_seed,
                 feedback_mode=spec.feedback_mode,
                 algorithm_name=spec.algorithm_name,
                 n_actions=n_actions,
                 horizon=spec.horizon,
-                seed=spec.learner_seed,
+                seed=spec.seed,
                 replicate=replicate,
-                implementation_version=spec.implementation_version,
                 runtime_environment=spec.runtime_environment,
                 output_dir=temporary_directory,
                 max_recorded_points=2,  # Scaling consumes only the final summaries.
@@ -211,7 +192,6 @@ def load_adversarial_scaling_rows(input_path: str | Path) -> list[dict[str, str]
         rows = list(reader)
     if not rows:
         raise ValueError(f"{input_path} is empty")
-    result_implementation_version(rows[0])
     require_csv_columns(input_path, fieldnames, set(ACTION_SCALING_FIELDNAMES))
 
     identity = tuple(rows[0][field] for field in ACTION_SCALING_IDENTITY_FIELDS)
@@ -230,14 +210,18 @@ def load_adversarial_scaling_rows(input_path: str | Path) -> list[dict[str, str]
         action_counts=action_counts,
         replicates=replicates,
         horizon=int(first["horizon"]),
-        environment_seed=int(first["base_environment_seed"] or 0),
-        learner_seed=int(first["base_learner_seed"]),
-        implementation_version=int(first["implementation_version"]),
+        seed=int(first["base_learner_seed"]),
         runtime_environment=first["runtime_environment"],
     )
+    if spec.action_counts != action_counts:
+        raise ValueError(f"{input_path} contains invalid action counts")
     if spec.runtime_fingerprint != first["runtime_fingerprint"]:
         raise ValueError(f"{input_path} contains an invalid runtime fingerprint")
-    if first["run_id"] != spec.run_id:
+    configuration = spec.configuration() | {
+        "base_environment_seed": int(first["base_environment_seed"]) if first["base_environment_seed"] else "",
+        "base_learner_seed": int(first["base_learner_seed"]),
+    }
+    if first["run_id"] != _scaling_run_id(spec.algorithm_name, configuration):
         raise ValueError(f"{input_path} contains an invalid run identity")
     expected = [
         (n_actions, replicate)

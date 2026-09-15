@@ -5,14 +5,12 @@ import logging
 import os
 from pathlib import Path
 import re
-import shutil
 import tempfile
 from threading import Lock
 
 import numpy as np
 
 from config import (
-    ACTION_SCALING_ACTION_COUNTS,
     ADVERSARIAL_ACTIONS,
     CUSTOM_GAME_DIR,
     HORIZON,
@@ -144,12 +142,6 @@ class DashboardService:
             roots,
             preserve=(self.game_catalog.custom_game_dir,),
         )
-
-    def _clear_experiment_caches(self) -> None:
-        self._clear_generated_artifacts((
-            self.results_dir / "cache",
-            self.adversarial_dir / "cache",
-        ))
 
     @property
     def games(self) -> list[str]:
@@ -312,13 +304,10 @@ class DashboardService:
             "environment": HISTORICAL_FREQUENCY_ENVIRONMENT,
             "feedback_mode": feedback_mode,
             "algorithm_names": [first_algorithm],
-            "n_actions": ADVERSARIAL_ACTIONS,
+            "actions": str(ADVERSARIAL_ACTIONS),
             "horizon": HORIZON,
-            "environment_seed": SEED,
             "seed": SEED,
             "replicates": REPLICATES,
-            "scaling_action_counts": ", ".join(map(str, ACTION_SCALING_ACTION_COUNTS)),
-            "scaling_replicates": REPLICATES,
         }
 
     def _submit_replicates(
@@ -360,15 +349,25 @@ class DashboardService:
         self,
         form: AdversarialExperimentForm,
     ) -> Job:
+        if len(form.action_counts) > 1:
+            return self._submit_adversarial_scaling_experiment(AdversarialScalingSpec(
+                environment=form.environment,
+                feedback_mode=form.feedback_mode,
+                algorithm_name=form.algorithm_name,
+                action_counts=form.action_counts,
+                replicates=form.replicates,
+                horizon=form.horizon,
+                seed=form.seed,
+            ))
+        n_actions = form.action_counts[0]
         specs = [
             AdversarialExperimentSpec(
                 environment=form.environment,
-                environment_seed=form.environment_seed,
                 feedback_mode=form.feedback_mode,
                 algorithm_name=form.algorithm_name,
-                n_actions=form.n_actions,
+                n_actions=n_actions,
                 horizon=form.horizon,
-                seed=form.learner_seed,
+                seed=form.seed,
                 replicate=replicate,
             )
             for replicate in range(form.replicates)
@@ -376,7 +375,6 @@ class DashboardService:
         def task_kwargs(spec):
             return dict(
                 environment=spec.environment,
-                environment_seed=spec.environment_seed,
                 feedback_mode=spec.feedback_mode,
                 algorithm_name=spec.algorithm_name,
                 n_actions=spec.n_actions,
@@ -394,15 +392,15 @@ class DashboardService:
                 f"Adversarial: {algorithm_label(form.algorithm_name)} · "
                 f"{ENVIRONMENT_LABELS[form.environment]} · "
                 f"{FEEDBACK_MODE_LABELS[form.feedback_mode]} · "
-                f"{form.n_actions} actions · "
-                f"{form.replicates} replicates · base learner seed {form.learner_seed}"
+                f"{n_actions} actions · "
+                f"{form.replicates} replicates · base seed {form.seed}"
             ),
             run_adversarial_experiment,
             task_kwargs,
             "all requested adversarial replicates already exist or are queued",
         )
 
-    def submit_adversarial_scaling_experiment(
+    def _submit_adversarial_scaling_experiment(
         self,
         spec: AdversarialScalingSpec,
     ) -> Job:
@@ -478,65 +476,6 @@ class DashboardService:
             ]
             _publish_figure_files(generated_paths, figure_dir)
 
-    def _delete_result(
-        self,
-        directory: Path,
-        figure_directory: Path,
-        filename: str,
-        rebuild: Callable[[], None],
-    ) -> None:
-        filename = validate_leaf_filename(filename, ".csv")
-
-        def operation() -> None:
-            path = directory / filename
-            if not path.is_file():
-                raise FileNotFoundError(filename)
-
-            directory.parent.mkdir(parents=True, exist_ok=True)
-            backup_directory = Path(
-                tempfile.mkdtemp(prefix=".delete-result-", dir=directory.parent)
-            )
-            backup_csv = backup_directory / path.name
-            backup_figures = backup_directory / "figures"
-            csv_moved = False
-            figures_moved = False
-            rebuild_started = False
-            try:
-                os.replace(path, backup_csv)
-                csv_moved = True
-                if figure_directory.exists():
-                    os.replace(figure_directory, backup_figures)
-                    figures_moved = True
-                rebuild_started = True
-                rebuild()
-                self._clear_experiment_caches()
-            except Exception as error:
-                try:
-                    if rebuild_started:
-                        if figure_directory.is_dir():
-                            shutil.rmtree(figure_directory)
-                        elif figure_directory.exists():
-                            figure_directory.unlink()
-                    if figures_moved and backup_figures.exists():
-                        os.replace(backup_figures, figure_directory)
-                    if csv_moved and backup_csv.exists():
-                        os.replace(backup_csv, path)
-                except Exception as restore_error:
-                    raise PlotUpdateError(
-                        f"could not delete {filename}; rollback also failed and "
-                        f"recoverable files remain in {backup_directory}: "
-                        f"{restore_error}"
-                    ) from error
-                shutil.rmtree(backup_directory, ignore_errors=True)
-                raise PlotUpdateError(
-                    f"could not delete {filename}; the CSV and previous figures "
-                    f"were restored: {error}"
-                ) from error
-            else:
-                shutil.rmtree(backup_directory, ignore_errors=True)
-
-        self.jobs.run_maintenance(operation)
-
     def adversarial_scaling_figure_records(self, results: ResultSet | None = None) -> list[dict]:
         if results is None:
             results = self.result_snapshot("scaling")
@@ -565,36 +504,8 @@ class DashboardService:
             self.adversarial_scaling_figure_records(),
         )
 
-    def delete_adversarial_scaling_experiment(self, filename: str) -> None:
-        self._delete_result(
-            self.adversarial_scaling_raw_dir,
-            self.adversarial_scaling_figure_dir,
-            filename,
-            self._publish_adversarial_scaling_plots,
-        )
-
     def validate_adversarial_csv_filename(self, filename: str) -> str:
         return _validate_result_file(self.adversarial_raw_dir, filename, ".csv")
-
-    def delete_adversarial_experiment(self, filename: str) -> None:
-        self._delete_ordinary_result(self.adversarial_raw_dir, filename)
-
-    def clear_adversarial_results(self) -> tuple[int, int]:
-        def operation() -> tuple[int, int]:
-            generated = (
-                [path for path in self.adversarial_dir.rglob("*") if path.is_file()]
-                if self.adversarial_dir.exists()
-                else []
-            )
-            csv_count = sum(path.suffix.lower() == ".csv" for path in generated)
-            figure_count = sum(path.suffix.lower() == ".png" for path in generated)
-            self._clear_generated_artifacts((
-                self.adversarial_dir,
-                self.results_dir / "cache",
-            ))
-            return csv_count, figure_count
-
-        return self.jobs.run_maintenance(operation)
 
     def _spec(self, form: ExperimentForm, replicate: int) -> ExperimentSpec:
         return ExperimentSpec(
@@ -838,24 +749,6 @@ class DashboardService:
         with self._detail_figure_lock:
             self._detail_figure_generation += 1
             self._clear_generated_artifacts((self.detail_figure_dir,))
-
-    def delete_experiment(self, filename: str) -> None:
-        self._delete_ordinary_result(self.raw_dir, filename)
-
-    def _delete_ordinary_result(self, directory: Path, filename: str) -> None:
-        filename = validate_leaf_filename(filename, ".csv")
-
-        def operation() -> None:
-            csv_path = directory / filename
-            if not csv_path.is_file():
-                raise FileNotFoundError(f"experiment {filename} does not exist")
-
-            if directory == self.raw_dir:
-                self._invalidate_detail_figures()
-            self._clear_experiment_caches()
-            csv_path.unlink()
-
-        self.jobs.run_maintenance(operation)
 
     def clear_results(self) -> None:
         def operation() -> None:

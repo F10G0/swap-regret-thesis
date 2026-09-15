@@ -8,6 +8,7 @@ from experiments.runner import ExperimentCancelled
 
 
 MIN_PARALLEL_ROUNDS = 20_000
+MAX_PARALLEL_WORKERS = 12
 _worker_cancel = None
 
 
@@ -23,7 +24,7 @@ def _available_cpu_count() -> int:
 
 def _replicate_worker_count(tasks: list[dict], workers: int | None) -> int:
     available = _available_cpu_count()
-    count = min(workers or available, available, len(tasks))
+    count = min(workers or available, available, len(tasks), MAX_PARALLEL_WORKERS)
     if _worker_cancel is not None or multiprocessing.current_process().name != "MainProcess":
         return 1  # Never nest pools inside a replicate worker.
     if workers is None and sum(task.get("horizon", 0) for task in tasks) < MIN_PARALLEL_ROUNDS:
@@ -49,8 +50,8 @@ def run_replicates(function, tasks: list[dict], *, workers: int | None = None,
     Only top-level callables and serializable task arguments enter workers. UI
     callbacks stay in the parent. Small batches run serially by default; an
     explicit workers=1/2/... selects the execution mode for reproducibility tests.
-    Automatic mode uses all available CPUs, limited by the number of tasks.
-    Explicit worker requests are also capped by available CPUs and task count.
+    Automatic and explicit worker counts are capped by available CPUs, task
+    count, and MAX_PARALLEL_WORKERS.
     Numerical-library settings are inherited unchanged in both modes.
     """
     if workers is not None and (not isinstance(workers, int) or isinstance(workers, bool) or workers <= 0):

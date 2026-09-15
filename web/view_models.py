@@ -2,10 +2,11 @@ from flask import current_app, url_for
 from math import sqrt
 
 from config import SEED
+from experiments.algorithm_labels import algorithm_profile_label
 from experiments.result_schema import REGRET_NAMES
 from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
-    MAX_ADVERSARIAL_ACTIONS,
+    HISTORICAL_FREQUENCY_ENVIRONMENT,
     RANDOM_WALK_ENVIRONMENT,
 )
 from experiments.scenarios.cross_play import FEEDBACK_MODE_LABELS
@@ -28,6 +29,10 @@ REGRET_COLUMNS = [
      "label": f"{metric.title()} · {'R/T' if view == 'average' else 'R/√T'}"}
     for metric in REGRET_NAMES for view in ("average", "sqrt_scaling")
 ]
+ADVERSARIAL_ENVIRONMENT_DESCRIPTIONS = {
+    HISTORICAL_FREQUENCY_ENVIRONMENT: "The most frequent half of actions (rounded up) receive payoff 0; the rest receive 1.",
+    RANDOM_WALK_ENVIRONMENT: "Independent lazy random walks derived reproducibly from the experiment seed.",
+}
 
 
 def _display_regrets(summary):
@@ -91,12 +96,11 @@ def dashboard_context(
     results = service.result_snapshot()
     summaries = []
     for summary in results.summaries(grouped=True):
-        profile_label = " vs ".join(service.algorithm_labels.get(name, name) for name in summary["algorithm_profile"])
         matrix_figures_available = service.supports_matrix_figures(summary["game"])
         equilibrium_distance_available = service.supports_equilibrium_distance(summary["game"])
         summaries.append({
             **summary,
-            "profile_label": profile_label,
+            "profile_label": algorithm_profile_label(summary["algorithm_profile"]),
             "display_regrets": _display_regrets(summary),
             "runs": [
                 {
@@ -142,13 +146,6 @@ def dashboard_context(
         "built_in_games": [game_id for game_id, definition in game_definitions.items() if definition.source == "builtin"],
         "custom_games": [game_id for game_id, definition in game_definitions.items() if definition.source == "custom"],
         "game_presentations": game_presentations,
-        "experiments": [
-            {
-                "filename": filename,
-                "download_url": url_for("dashboard.download_experiment", filename=filename),
-            }
-            for filename in results.filenames
-        ],
         "summaries": summaries,
         "warnings": list(results.warnings),
     }
@@ -161,16 +158,13 @@ def one_player_context(
 ) -> dict:
     results = service.result_snapshot("adversarial")
     scaling = service.result_snapshot("scaling")
-    summaries, scaling_summaries = results.summaries(), scaling.summaries()
+    summaries = results.summaries(grouped=True)
     scaling_figures = _figure_data(
         service.adversarial_scaling_figure_records(scaling),
         "dashboard.adversarial_scaling_figure",
     )
     for summary in summaries:
-        summary["download_url"] = url_for("dashboard.download_adversarial_experiment", filename=summary["filename"])
         summary["display_regrets"] = _display_regrets(summary)
-    for summary in scaling_summaries:
-        summary["download_url"] = url_for("dashboard.download_adversarial_scaling_experiment", filename=summary["filename"])
     return {
         **_experiment_page_context(
             service,
@@ -182,12 +176,10 @@ def one_player_context(
         ),
         "experiment_mode": "adversarial",
         "adversarial_environments": ENVIRONMENT_LABELS,
-        "random_walk_environment": RANDOM_WALK_ENVIRONMENT,
+        "adversarial_environment_descriptions": ADVERSARIAL_ENVIRONMENT_DESCRIPTIONS,
         "summaries": summaries,
-        "scaling_summaries": scaling_summaries,
         "scaling_figures": scaling_figures,
         "warnings": list(results.warnings + scaling.warnings),
-        "max_actions": MAX_ADVERSARIAL_ACTIONS,
     }
 
 
@@ -204,9 +196,9 @@ def custom_games_context(
         "inline_error": inline_error,
         "form_state": form_state or {
             "name": "",
-            "n_players": 3,
+            "n_players": 2,
             "seed": SEED,
-            "payoff_structure": "general_sum",
+            "payoff_structure": "zero_sum",
         },
         "inspection": inspection,
         "payoff_structures": CUSTOM_PAYOFF_STRUCTURES,

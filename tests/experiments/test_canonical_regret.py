@@ -1,6 +1,5 @@
 """Contracts shared by every empirical feedback setting and result family."""
 
-import csv
 from types import SimpleNamespace
 
 import numpy as np
@@ -8,13 +7,10 @@ import pytest
 
 from environments import BanditRepeatedGame, RepeatedGame
 from experiments.scenarios.cross_play import run_cross_play_experiment
-from experiments.result_schema import REGRET_FIELDNAMES, RESULT_IMPLEMENTATION_VERSION
-from experiments.results import iter_result_rows, load_final_result_rows
+from experiments.result_schema import REGRET_FIELDNAMES
 from experiments.runner import run_game
-from experiments.scenarios import adversarial, adversarial_scaling
+from experiments.scenarios import adversarial
 from metrics.regret import RegretBundle
-from tests.support import read_csv_rows
-from experiments.result_catalog import ResultRepository
 
 
 class ObservedLearner:
@@ -103,45 +99,3 @@ def test_adversarial_feedback_boundary_and_evaluator_information(
         assert float(row["swap_regret"]) == float(np.sum(np.max(gains, axis=1)))
         assert {key for key in row if key.endswith("_regret")} == set(REGRET_FIELDNAMES)
     assert len(learner.feedbacks) == len(observations) == 7
-
-
-@pytest.mark.parametrize("kind", ["fixed", "adversarial", "scaling"])
-@pytest.mark.parametrize("version", [2, 3, None])
-def test_stale_csv_is_rejected_without_rewriting(tmp_path, kind, version):
-    if kind == "fixed":
-        path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=3, output_dir=tmp_path, feedback_mode="bandit")
-        loaders = [lambda p: list(iter_result_rows(p)), load_final_result_rows]
-    elif kind == "adversarial":
-        path = adversarial.run_adversarial_experiment("hedge", horizon=3, output_dir=tmp_path)
-        loaders = [adversarial.load_adversarial_rows, adversarial.load_final_adversarial_row]
-    else:
-        spec = adversarial_scaling.AdversarialScalingSpec(
-            adversarial.RANDOM_WALK_ENVIRONMENT, "bandit", "auer_exp3",
-            (2, 3), 1, 3, 7, 11,
-        )
-        path = adversarial_scaling.run_adversarial_scaling_experiment(spec, tmp_path)
-        loaders = [adversarial_scaling.load_adversarial_scaling_rows]
-    rows = read_csv_rows(path)
-    assert {row["implementation_version"] for row in rows} == {str(RESULT_IMPLEMENTATION_VERSION)}
-    for row in rows:
-        for name in REGRET_FIELDNAMES:
-            old_name = name.replace("average_", "average_expected_") if name.startswith("average_") else "expected_" + name
-            row[old_name] = row.pop(name)
-        row["regret_evaluation"] = "expected"
-        if version is None:
-            row.pop("implementation_version")
-        else:
-            row["implementation_version"] = str(version)
-    with path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-    before = path.read_bytes()
-    for loader in loaders:
-        with pytest.raises(ValueError, match="incompatible result implementation_version"):
-            loader(path)
-    if kind == "fixed":
-        snapshot = ResultRepository(tmp_path).snapshot()
-        assert snapshot.summaries() == []
-        assert "incompatible result implementation_version" in snapshot.warnings[0]
-    assert path.read_bytes() == before

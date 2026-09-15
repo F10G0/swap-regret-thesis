@@ -24,10 +24,14 @@
 
         <div class="builder-grid">
             <section class="panel">
-                <div class="section-heading">
+                <div class="section-heading panel-heading">
                     <div>
                         <p class="eyebrow">Generator</p>
                         <h2>Create a payoff tensor</h2>
+                    </div>
+                    <div class="field compact-seed">
+                        <label for="custom-game-seed">Seed</label>
+                        <input id="custom-game-seed" name="seed" form="custom-game-form" type="number" value="{{ form_state.seed }}" min="0" title="Generator seed for reproducibility." required>
                     </div>
                 </div>
                 <form id="custom-game-form" method="post" action="{{ url_for('dashboard.custom_games') }}">
@@ -41,23 +45,17 @@
                         <label for="custom-payoff-structure">Payoff structure</label>
                         <select id="custom-payoff-structure" name="payoff_structure" aria-describedby="custom-payoff-structure-hint">
                             {% for value, label in payoff_structures.items() %}
-                                <option value="{{ value }}" {% if value == form_state.get("payoff_structure", "general_sum") %}selected{% endif %}>{{ label }}</option>
+                                <option value="{{ value }}" {% if value == form_state.get("payoff_structure", "zero_sum") %}selected{% endif %}>{{ label }}</option>
                             {% endfor %}
                         </select>
-                        <span id="custom-payoff-structure-hint" class="hint">General-sum payoffs are sampled independently for every player.</span>
+                        <span id="custom-payoff-structure-hint" class="hint">{% if form_state.get("payoff_structure", "zero_sum") == "zero_sum" %}Two players share one action count.{% else %}Payoffs are sampled independently for each player.{% endif %}</span>
                     </div>
-                    <div class="field-grid field-grid-two">
-                        <div class="field">
-                            <label for="custom-player-count">Players</label>
-                            <input id="custom-player-count" name="n_players" type="number" value="{{ form_state.n_players }}" min="2" max="{{ max_players }}" required>
-                        </div>
-                        <div class="field">
-                            <label for="custom-game-seed">Random seed</label>
-                            <input id="custom-game-seed" name="seed" type="number" value="{{ form_state.seed }}" min="0" required>
-                        </div>
+                    <div class="field">
+                        <label for="custom-player-count">Players</label>
+                        <input id="custom-player-count" name="n_players" type="number" value="{{ form_state.n_players }}" min="2" max="{{ max_players }}" required>
                     </div>
                     <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson }}"></div>
-                    <p class="hint">The complete tensor is limited to {{ "{:,}".format(max_payoff_values) }} payoff values. Symmetric zero-sum games use two equal action sets and are stored as equivalent constant-sum payoffs <code>u</code> and <code>1 − u</code>.</p>
+                    <p class="hint">At most {{ "{:,}".format(max_payoff_values) }} payoff values.</p>
                     <button class="button-primary" type="submit">Generate and save game</button>
                 </form>
             </section>

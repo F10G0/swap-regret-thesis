@@ -70,7 +70,7 @@ def _plot_regret(
     )
     selected = sorted(selected, key=lambda group: tuple(group[0][0][field] for field in sort_fields))
     labels = curve_labels([group[0][0] | {"replicate_count": len(group)} for group in selected])
-    for trajectories, label in zip(selected, labels):
+    for index, (trajectories, label) in enumerate(zip(selected, labels)):
         first = trajectories[0][0]
         algorithm = first["algorithm"]
         if average:
@@ -85,7 +85,7 @@ def _plot_regret(
         axes.plot(
             times,
             values,
-            **algorithm_style(algorithm),
+            **algorithm_style(algorithm, index, len(selected)),
             label=label,
         )
 
@@ -96,4 +96,3 @@ def _plot_regret(
     finish_line_figure(figure, axes)
     save_figure_pair(figure, output_path)
     plt.close(figure)
-

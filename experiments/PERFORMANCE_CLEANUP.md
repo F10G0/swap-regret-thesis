@@ -6,8 +6,6 @@ Historical benchmark evidence: this report describes the implementation measured
 
 Implemented against the current local tree, not GitHub main. Git sees this audit directory as untracked inside `/home/florian`; therefore a normal Git diff cannot isolate these changes. Review used a source archive captured before editing, without restoring it into the working tree.
 
-Temporary evidence is in `/tmp/thesis-performance-SkKIuOB8/`: the source archive, `measure.py`, before/after snapshots and CSVs, paired timings, `compare.py`, and Ito divergence diagnostics. Initial profiles are in `after/`; fresh final profiles for BM/LCE/Ito at both action counts are in `final-profile/`. These are temporary local artifacts, not required runtime dependencies.
-
 ## Changes by file
 
 | Files | Changes |
@@ -25,7 +23,7 @@ Temporary evidence is in `/tmp/thesis-performance-SkKIuOB8/`: the source archive
 | `metrics/empirical_distribution.py` | Removed per-profile integer conversion, player-count checking, and range checking. Shape/checkpoint configuration checks remain. |
 | `experiments/results.py` | Validates constant file metadata once, then compares raw constant fields on every row. Dynamic trajectory checks remain. |
 | `experiments/runtime_environment.py` | Fingerprints already-canonical JSON without parsing it again. Callers validate at construction/file input. |
-| `experiments/result_trajectories.py` | Removed duplicate player/group/completeness checks guaranteed by the loader. Retained action-shape compatibility, action bounds, compressed-payload checks, and dense-history continuity. |
+| `experiments/result_trajectories.py` | Loads validated cumulative joint-action histogram checkpoints for equilibrium analysis. |
 | `Makefile` | Defaults numerical-library thread counts to one before launching Python, honoring explicit environment/Make overrides. |
 | `algorithms/README.md`, `environments/README.md`, `metrics/README.md`, `experiments/README.md` | Documented the trusted core, borrowed-array contract, solver, metadata validation, and launch settings. |
 | `tests/algorithms/test_numerical_safety.py`, `tests/algorithms/test_stationary.py`, `tests/environments/test_environments.py`, `tests/experiments/test_parallel.py` | Updated tests for the trust model and expanded solver/parallel coverage. |
@@ -63,18 +61,18 @@ No learner update formula, loss/gain estimator, learning-rate formula or indexin
 
 ## Persistence boundaries and existing optimizations
 
-Fixed-game CSV metadata parsing, profile JSON validation, payoff-digest validation, regret-source inference, and runtime canonicalization/hashing now occur once per file. Subsequent rows must have identical raw constant fields. Missing runtime JSON cannot be legitimized by supplying a fingerprint; this boundary has an explicit regression test. Legacy missing-runtime/profile formats remain supported.
+Fixed-game CSV metadata parsing, profile JSON validation, payoff-digest validation, regret-source inference, and runtime canonicalization/hashing now occur once per file. Subsequent rows must have identical raw constant fields. Runtime metadata is required; legacy profile columns remain supported.
 
-The adversarial loader already validated metadata/derived seeds once per file and was left unchanged. Fixed-game files contain base seeds rather than separately recorded derived seeds; their seed schedule and run identity were not changed. Both loaders retain dynamic checkpoint validation and persistence compatibility checks.
+The adversarial loader already validated metadata/derived seeds once per file and was left unchanged. Fixed-game files contain base seeds rather than separately recorded derived seeds; their seed schedule and run identity were not changed. Both loaders retain dynamic checkpoint and current-schema validation.
 
-The following existing implementations were preserved, with byte comparisons against the pre-edit archive where available and integration tests:
+Current related invariants are:
 
-- Sparse checkpoints, including first/final rounds and the existing 2,000-point budget.
-- Per-round learner/regret-state updates, checkpoint-only summaries, and selective expected/realized tracking.
-- Lossless compressed action histories and exact downstream reconstruction.
+- At most 200 regret checkpoints: every round for short horizons and geometric spacing for longer runs, including the first and final rounds.
+- Per-round learner/regret-state updates with checkpoint-only summaries.
+- Cumulative joint-action histograms at decimal checkpoints and the final horizon.
 - Spawn-based replicate processes, bounded workers/tasks, deterministic output order, cancellation, and no nested pools.
-- Fixed-game/adversarial plot caches, cache invalidation, and scoped adversarial plot rebuilding.
-- Run identity/version fields, seed derivation, CSV schemas, and sampling schedules.
+- Figure Builder artifact caching and separate action-space scaling publication.
+- Run identity fields, seed derivation, CSV schemas, and sampling schedules.
 - Custom-game tensor/file validation, `allow_pickle=False`, path restrictions, atomic publication, and no-overwrite behavior.
 
 No checked/unchecked API, validation switch, new learner variant, mathematical stationary method, inner-learner parallelism, or new architecture was introduced.
@@ -98,7 +96,7 @@ Consequently, final realized swap regret in those particular old/new Ito benchma
 
 ## Timings and final profiles
 
-Same machine and process configuration on both sides: Python 3.10.12, NumPy 2.2.6, CPU affinity 0–15, and OMP/OpenBLAS/MKL/NumExpr thread counts all one. Each cell is the mean of two serial single-replicate passes, T=20,000, historical-frequency adversary, bandit feedback, realized regret, base seed 23, and unchanged default sparse recording. Timings include simulation and CSV output, not plot rebuilding or a process pool.
+Same machine and process configuration on both sides: Python 3.10.12, NumPy 2.2.6, CPU affinity 0–15, and OMP/OpenBLAS/MKL/NumExpr thread counts all one. Each cell is the mean of two serial single-replicate passes, T=20,000, historical-frequency adversary, bandit feedback, realized regret, base seed 23, and the benchmark's sparse recording policy. Timings include simulation and CSV output, not plotting or a process pool.
 
 | Learner | K | Before (s) | After (s) | Speedup |
 |---|---:|---:|---:|---:|
@@ -124,7 +122,7 @@ New/expanded tests cover:
 - Finite/nonnegative/normalized outer and inner strategies, stationary residuals, generated feedback range, finite regret state, borrowed-array immutability, and local update counts across fixed, historical-frequency, and random-walk runs.
 - Old-bisection equivalence, endpoint roots, unchanged learning-rate schedules, and no repeated fixed-parameter sqrt/log calculation.
 - Exactly one BM/LCE transition construction per outer update.
-- Once-per-file metadata work, corruption on subsequent rows, legacy compatibility, sparse/dense action bounds, grouping, and completeness.
+- Once-per-file metadata work, corruption on subsequent rows, current-schema validation, checkpoint action bounds, grouping, and completeness.
 - Serial/process byte identity for every bandit algorithm, all regret-source modes, fixed cross-play, scaling, out-of-order replicate inputs, and bounded/nonnested execution.
 - Launch-time numerical thread defaults and explicit overrides.
 

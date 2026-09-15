@@ -4,7 +4,6 @@ import json
 import re
 
 from config import STATIONARY_METHOD
-from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
     runtime_environment_json,
@@ -31,7 +30,6 @@ class ExperimentSpec:
     replicate: int = 0
     stationary_method: str = STATIONARY_METHOD
     game_payoff_digest: str = ""
-    implementation_version: int = RESULT_IMPLEMENTATION_VERSION
     runtime_environment: str = field(default_factory=runtime_environment_json)
 
     def __post_init__(self) -> None:
@@ -47,8 +45,6 @@ class ExperimentSpec:
             raise ValueError("seed must be non-negative")
         if self.replicate < 0:
             raise ValueError("replicate must be non-negative")
-        if self.implementation_version <= 0:
-            raise ValueError("implementation_version must be positive")
         canonical_runtime = validate_runtime_environment(self.runtime_environment)
         object.__setattr__(self, "runtime_environment", canonical_runtime)
         if not self.stationary_method:
@@ -89,7 +85,6 @@ class ExperimentSpec:
             "replicate": self.replicate,
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
-            "implementation_version": self.implementation_version,
             "runtime_fingerprint": self.runtime_fingerprint,
         }
 
@@ -105,7 +100,6 @@ class ExperimentSpec:
             "replicate": self.replicate,
             "stationary_method": self.stationary_method,
             "game_payoff_digest": self.game_payoff_digest,
-            "implementation_version": self.implementation_version,
             "runtime_environment": self.runtime_environment,
             "runtime_fingerprint": self.runtime_fingerprint,
             "algorithm_profile": json.dumps(self.algorithm_names, separators=(",", ":")),

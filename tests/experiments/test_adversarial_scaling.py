@@ -1,4 +1,3 @@
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -30,8 +29,7 @@ def scaling_spec(**overrides) -> AdversarialScalingSpec:
         "action_counts": (2, 4),
         "replicates": 3,
         "horizon": 4,
-        "environment_seed": 11,
-        "learner_seed": 23,
+        "seed": 23,
     }
     return AdversarialScalingSpec(**(values | overrides))
 
@@ -56,7 +54,7 @@ def test_scaling_experiment_uses_common_seed_schedule_at_every_action_count(
             str(domain_separated_seed(23, replicate, LEARNER_SEED_DOMAIN))
         }
         assert {row["environment_seed"] for row in matched} == {
-            str(domain_separated_seed(11, replicate, ENVIRONMENT_SEED_DOMAIN))
+            str(domain_separated_seed(23, replicate, ENVIRONMENT_SEED_DOMAIN))
         }
     assert {row["target_regret"] for row in rows} == {"external"}
     assert all(np.isfinite(float(row[field])) for row in rows for field in REGRET_FIELDNAMES)
@@ -107,22 +105,3 @@ def test_scaling_plot_writes_canonical_figure_pairs(
     assert len(list(figure_dir.glob("*.png"))) == len(generated)
     assert len(list(figure_dir.glob("*.pdf"))) == len(generated)
 
-
-@pytest.mark.parametrize("version", [None, 2, 3, 4])
-def test_scaling_loader_rejects_stale_results_without_modifying_them(tmp_path, version):
-    generated = run_adversarial_scaling_experiment(scaling_spec(replicates=2), tmp_path)
-    with generated.open(newline="") as file:
-        rows = list(csv.DictReader(file))
-    for row in rows:
-        if version is None:
-            row.pop("implementation_version")
-        else:
-            row["implementation_version"] = str(version)
-    with generated.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-    before = generated.read_bytes()
-    with pytest.raises(ValueError, match="incompatible result implementation_version"):
-        load_adversarial_scaling_rows(generated)
-    assert generated.read_bytes() == before

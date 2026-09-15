@@ -8,7 +8,7 @@ import experiments.plots.plot_equilibrium_convergence as plotting
 import metrics.equilibrium_distance as metric
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.game_catalog import load_game_payoffs
-from experiments.result_trajectories import load_result_action_profiles
+from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 
 
 def create_result(directory, replicate=0):
@@ -51,23 +51,11 @@ def test_style_redraw_reuses_cached_distance_values(tmp_path, monkeypatch):
     calls = count_solves(monkeypatch)
     kwargs = dict(cache_dir=tmp_path / "cache")
     plotting.plot_result_equilibrium_distance(path, tmp_path / "first.png", **kwargs)
-    assert calls == Counter(ce=3, cce=3)
-    monkeypatch.setattr(plotting, "load_result_action_profiles", lambda *args: pytest.fail("redraw decoded history"))
+    assert calls == Counter(ce=4, cce=4)
+    monkeypatch.setattr(plotting, "load_result_empirical_distribution_trajectory", lambda *args: pytest.fail("redraw loaded histograms"))
     monkeypatch.setattr(plotting, "EQUILIBRIUM_DISTANCE_FIGURE_VERSION", plotting.EQUILIBRIUM_DISTANCE_FIGURE_VERSION + 1)
     plotting.plot_result_equilibrium_distance(path, tmp_path / "redrawn.png", **kwargs)
-    assert calls == Counter(ce=3, cce=3)
-
-
-@pytest.mark.parametrize("count", [1, 3, 159, 160, 161, 2000, 100_000])
-def test_distance_points_are_bounded_existing_unique_and_include_endpoints(count):
-    horizons = np.arange(1, count + 1) * 3
-    indices = plotting.equilibrium_distance_point_indices(horizons)
-    selected = horizons[indices]
-    assert len(selected) <= 160
-    assert selected[0] == horizons[0] and selected[-1] == horizons[-1]
-    assert np.all(np.diff(selected) > 0)
-    if count <= 160:
-        np.testing.assert_array_equal(selected, horizons)
+    assert calls == Counter(ce=4, cce=4)
 
 
 def count_solves(monkeypatch):
@@ -82,30 +70,29 @@ def count_solves(monkeypatch):
     return calls
 
 
-def test_first_request_caches_and_unchanged_request_skips_lp_and_history(tmp_path, monkeypatch):
+def test_first_request_caches_and_unchanged_request_skips_lp_and_histograms(tmp_path, monkeypatch):
     path = create_result(tmp_path / "raw")
     calls = count_solves(monkeypatch)
     cache = tmp_path / "cache"
-    first = plotting._load_result_distances(path, load_game_payoffs("rps"), None, cache)
-    assert calls == Counter(ce=3, cce=3)
+    first = plotting._load_result_distances(path, load_game_payoffs("rps"), cache)
+    assert calls == Counter(ce=4, cce=4)
     assert len(list(cache.glob("*.json"))) == 1
-    monkeypatch.setattr(plotting, "load_result_action_profiles", lambda *args: pytest.fail("cache hit decoded history"))
-    second = plotting._load_result_distances(path, load_game_payoffs("rps"), None, cache)
-    assert calls == Counter(ce=3, cce=3)
+    monkeypatch.setattr(plotting, "load_result_empirical_distribution_trajectory", lambda *args: pytest.fail("cache hit loaded histograms"))
+    second = plotting._load_result_distances(path, load_game_payoffs("rps"), cache)
+    assert calls == Counter(ce=4, cce=4)
     np.testing.assert_array_equal(first.ce, second.ce)
     np.testing.assert_array_equal(first.cce, second.cce)
     np.testing.assert_array_equal(first.horizons, second.horizons)
 
 
-@pytest.mark.parametrize("change", ["mtime", "size", "payoff", "metric", "format", "policy", "budget", "checkpoints", "corrupt"])
+@pytest.mark.parametrize("change", ["mtime", "size", "payoff", "metric", "format", "corrupt"])
 def test_distance_cache_invalidates_only_when_its_inputs_change(tmp_path, monkeypatch, change):
     path = create_result(tmp_path / "raw")
     payoffs = load_game_payoffs("rps")
     cache = tmp_path / "cache"
     calls = count_solves(monkeypatch)
-    plotting._load_result_distances(path, payoffs, None, cache)
+    plotting._load_result_distances(path, payoffs, cache)
     initial = sum(calls.values())
-    checkpoints = None
     if change == "mtime":
         stat = path.stat()
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
@@ -114,15 +101,12 @@ def test_distance_cache_invalidates_only_when_its_inputs_change(tmp_path, monkey
     elif change == "payoff":
         payoffs = payoffs.copy()
         payoffs[0, 0, 0] += .1
-    elif change in {"metric", "format", "policy", "budget"}:
-        key = {"metric": "EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION", "format": "DISTANCE_CACHE_VERSION",
-               "policy": "DISTANCE_CHECKPOINT_POLICY", "budget": "MAX_EQUILIBRIUM_DISTANCE_POINTS"}[change]
-        monkeypatch.setattr(plotting, key, "new-policy" if change == "policy" else 2)
-    elif change == "checkpoints":
-        checkpoints = np.array([1, 30, 300])
+    elif change in {"metric", "format"}:
+        key = {"metric": "EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION", "format": "DISTANCE_CACHE_VERSION"}[change]
+        monkeypatch.setattr(plotting, key, 3)
     else:
         next(cache.glob("*.json")).write_text("broken json")
-    plotting._load_result_distances(path, payoffs, checkpoints, cache)
+    plotting._load_result_distances(path, payoffs, cache)
     assert sum(calls.values()) > initial
 
 
@@ -134,21 +118,21 @@ def test_new_replicate_reuses_old_curve_before_aggregating(tmp_path, monkeypatch
     monkeypatch.setattr(plotting, "_plot_equilibrium_distance", lambda distances, *args: aggregates.append(distances))
     kwargs = dict(output_path=tmp_path / "figure.png", cache_dir=tmp_path / "cache")
     plotting.plot_result_equilibrium_distance(first, **kwargs)
-    assert calls == Counter(ce=3, cce=3)
+    assert calls == Counter(ce=4, cce=4)
     plotting.plot_result_equilibrium_distance([first, second], **kwargs)
-    assert calls == Counter(ce=6, cce=6)
+    assert calls == Counter(ce=8, cce=8)
     plotting.plot_result_equilibrium_distance([second, first], **kwargs)
-    assert calls == Counter(ce=6, cce=6)
+    assert calls == Counter(ce=8, cce=8)
     assert aggregates[-1].n_replicates == 2
-    a = plotting._load_result_distances(first, load_game_payoffs("rps"), None, tmp_path / "cache")
-    b = plotting._load_result_distances(second, load_game_payoffs("rps"), None, tmp_path / "cache")
+    a = plotting._load_result_distances(first, load_game_payoffs("rps"), tmp_path / "cache")
+    b = plotting._load_result_distances(second, load_game_payoffs("rps"), tmp_path / "cache")
     np.testing.assert_allclose(aggregates[-1].ce_mean, (a.ce + b.ce) / 2)
     np.testing.assert_array_equal(aggregates[-1].ce_mean, aggregates[-2].ce_mean)
 
 
-def test_selected_horizons_use_exact_compressed_action_history(tmp_path, monkeypatch):
+def test_distances_use_every_stored_histogram_checkpoint(tmp_path, monkeypatch):
     path = create_result(tmp_path / "raw")
-    profiles = load_result_action_profiles(path, (3, 3))
+    stored = load_result_empirical_distribution_trajectory(path, (3, 3))
     captured = []
     original = plotting.equilibrium_distance_trajectory
 
@@ -157,11 +141,8 @@ def test_selected_horizons_use_exact_compressed_action_history(tmp_path, monkeyp
         return original(payoffs, empirical)
 
     monkeypatch.setattr(plotting, "equilibrium_distance_trajectory", capture)
-    plotting._load_result_distances(path, load_game_payoffs("rps"), np.arange(1, 301), tmp_path / "cache")
+    plotting._load_result_distances(path, load_game_payoffs("rps"), tmp_path / "cache")
     empirical = captured[0]
-    assert len(empirical.horizons) <= 160
-    for horizon, vector in zip(empirical.horizons, empirical.vectors):
-        counts = np.zeros((3, 3))
-        np.add.at(counts, tuple(profiles[:horizon].T), 1)
-        np.testing.assert_array_equal(vector, counts.ravel() / horizon)
-
+    np.testing.assert_array_equal(empirical.horizons, [1, 10, 100, 300])
+    np.testing.assert_array_equal(empirical.horizons, stored.horizons)
+    np.testing.assert_array_equal(empirical.vectors, stored.vectors)

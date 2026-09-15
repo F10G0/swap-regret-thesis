@@ -7,8 +7,8 @@ import pytest
 import experiments.results as results
 import experiments.runtime_environment as runtime
 from experiments.scenarios.cross_play import run_cross_play_experiment
-from experiments.recording import encode_action_block
-from experiments.result_trajectories import load_result_action_profiles
+from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD
+from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from tests.support import read_csv_rows
 
 
@@ -32,7 +32,7 @@ def test_fixed_metadata_is_parsed_and_hashed_once_per_file(tmp_path, monkeypatch
     path = create_run(tmp_path)
     calls = Counter()
     names = ["result_algorithm_profile", "result_game_payoff_digest",
-             "result_implementation_version", "validate_runtime_environment", "runtime_environment_fingerprint"]
+             "validate_runtime_environment", "runtime_environment_fingerprint"]
     for name in names:
         original = getattr(results, name)
 
@@ -65,7 +65,7 @@ def test_fixed_loader_rejects_constant_changes_on_every_row(tmp_path, field):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("feedback_mode", "invalid"), ("implementation_version", "-1"),
+    ("feedback_mode", "invalid"),
     ("runtime_environment", "[]"), ("runtime_fingerprint", "f" * 64),
     ("game_payoff_digest", "not-a-digest"),
     ("algorithm_profile", '["hedge"]'), ("algorithm_profile", "not JSON"),
@@ -123,29 +123,27 @@ def test_runtime_fingerprint_does_not_reparse_canonical_input(monkeypatch):
 
 
 @pytest.mark.parametrize("empty_runtime", ["", "0"])
-def test_fingerprint_without_runtime_is_not_treated_as_valid_legacy_metadata(tmp_path, empty_runtime):
+def test_runtime_environment_must_be_valid_json(tmp_path, empty_runtime):
     path = create_run(tmp_path)
     rows = read_csv_rows(path)
     for row in rows:
         row["runtime_environment"] = empty_runtime
         row["runtime_fingerprint"] = runtime.runtime_environment_fingerprint("")
     rewrite_rows(path, rows)
-    with pytest.raises(ValueError, match="requires runtime_environment"):
+    with pytest.raises(ValueError, match="runtime_environment"):
         list(results.iter_result_rows(path))
 
 
-@pytest.mark.parametrize("budget", [6, 100])
 @pytest.mark.parametrize("shape", [(3,), (3, 3, 3)])
-def test_action_shape_must_match_file_player_count(tmp_path, budget, shape):
-    path = create_run(tmp_path, max_recorded_points=budget)
+def test_action_shape_must_match_file_player_count(tmp_path, shape):
+    path = create_run(tmp_path)
     with pytest.raises(ValueError, match="action shape"):
-        load_result_action_profiles(path, shape)
+        load_result_empirical_distribution_trajectory(path, shape)
 
 
-@pytest.mark.parametrize("budget", [6, 100])
 @pytest.mark.parametrize("corruption", ["duplicate_player", "missing_player", "missing_final", "action_bounds"])
-def test_action_reconstruction_keeps_file_boundary_checks(tmp_path, budget, corruption):
-    path = create_run(tmp_path, max_recorded_points=budget)
+def test_histogram_loader_keeps_file_boundary_checks(tmp_path, corruption):
+    path = create_run(tmp_path)
     rows = read_csv_rows(path)
     if corruption == "duplicate_player":
         rows[1]["player"] = rows[0]["player"]
@@ -155,8 +153,18 @@ def test_action_reconstruction_keeps_file_boundary_checks(tmp_path, budget, corr
         rows = rows[:-2]
     else:
         rows[0]["action"] = "3"
-        if budget == 6:
-            rows[0]["action_history"] = encode_action_block([3])
     rewrite_rows(path, rows)
     with pytest.raises(ValueError):
-        load_result_action_profiles(path, (3, 3))
+        load_result_empirical_distribution_trajectory(path, (3, 3))
+
+
+def test_histogram_loader_rejects_malformed_counts(tmp_path):
+    path = create_run(tmp_path)
+    rows = read_csv_rows(path)
+    row = next(row for row in rows if row[JOINT_ACTION_HISTOGRAM_FIELD])
+    payload = json.loads(row[JOINT_ACTION_HISTOGRAM_FIELD])
+    payload["counts"][-1][0] += 1
+    row[JOINT_ACTION_HISTOGRAM_FIELD] = json.dumps(payload)
+    rewrite_rows(path, rows)
+    with pytest.raises(ValueError, match="sum to their horizon"):
+        load_result_empirical_distribution_trajectory(path, (3, 3))

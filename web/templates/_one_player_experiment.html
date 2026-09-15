@@ -1,90 +1,74 @@
-{% from "_experiment_ui.html" import figure_preview, file_list, learning_configuration, number_input, regret_figure_panel, result_controls, select_input, regret_headers, regret_cells with context %}
+{% from "_experiment_ui.html" import feedback_control, figure_preview, learning_configuration, queue_experiment_button, result_controls, select_input, regret_headers, regret_cells with context %}
 
 {% macro one_player_sidebar(current_algorithms, selected_algorithm_names) %}
-            {% set random_walk = form_state.environment == random_walk_environment %}
             <form id="experiment-form" method="post" action="{{ url_for('dashboard.index') }}">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="experiment_type" value="adversarial">
 
                 <div class="control-card control-card-environment">
-                    <div class="field">
-                        {{ select_input("adversarial-environment", "environment", "Environment", adversarial_environments, form_state.environment) }}
-                    </div>
-                    <div class="field">
-                        {{ number_input("adversarial-actions", "n_actions", "Actions", form_state.n_actions, 2, max_actions) }}
-                    </div>
-                    <div id="adversarial-environment-seed-field" class="field" {% if not random_walk %}hidden{% endif %}>
-                        {{ number_input("adversarial-environment-seed", "environment_seed", "Environment seed", form_state.environment_seed, 0) }}
-                    </div>
+                    {{ select_input("adversarial-environment", "environment", "Environment", adversarial_environments, form_state.environment, adversarial_environment_descriptions[form_state.environment], "environment-description") }}
                 </div>
 
-                {{ learning_configuration(form_state, feedback_modes, current_algorithms, algorithm_labels, selected_algorithm_names, 1, max_horizon, max_replicates, "Base learner seed; environment randomness uses the separate environment seed above.") }}
+                {{ feedback_control(form_state, feedback_modes) }}
 
-                <div class="button-stack">
-                    <button class="button-primary" type="submit">Queue stress test</button>
+                <div class="field">
+                    <label for="actions">Actions</label>
+                    <input id="actions" name="actions" type="text" value="{{ form_state.actions }}" required>
+                    <span class="hint">One value runs a standard experiment; multiple values run action-space scaling.</span>
                 </div>
 
-                <details class="data-management">
-                    <summary>Action-space scaling</summary>
-                    <div class="field">
-                        <label for="scaling-action-counts">Action counts (K)</label>
-                        <input id="scaling-action-counts" name="scaling_action_counts" type="text" value="{{ form_state.scaling_action_counts }}">
-                        <span class="hint">Comma- or space-separated values, for example 2, 3, 5, 10.</span>
-                    </div>
-                    <div class="field">
-                        <label for="scaling-replicates">Replicates per K</label>
-                        <input id="scaling-replicates" name="scaling_replicates" type="number" value="{{ form_state.scaling_replicates }}" min="1" max="{{ max_replicates }}">
-                        <span class="hint">Uses the common settings above and plots replicate mean final regret against K.</span>
-                    </div>
-                    <div class="button-stack">
-                        <button type="submit" formaction="{{ url_for('dashboard.adversarial_action_scaling') }}">Queue scaling experiment</button>
-                    </div>
-                </details>
+                {{ learning_configuration(form_state, current_algorithms, algorithm_labels, selected_algorithm_names, 1, max_horizon, max_replicates) }}
+
+                {{ queue_experiment_button() }}
             </form>
-
-            <details class="data-management">
-                <summary>Data management</summary>
-                <div class="maintenance-actions">
-                    <form method="post" action="{{ url_for('dashboard.clear_adversarial_results') }}" data-confirm="Delete all adversarial experiment data, figures, and caches?">
-                        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                        <button class="button-danger" type="submit" {% if busy or not (summaries or scaling_summaries or scaling_figures or warnings) %}disabled{% endif %}>Clear results</button>
-                    </form>
-                </div>
-                {{ file_list(summaries, "adversarial-files-heading", "Adversarial CSV files", "dashboard.delete_adversarial_experiment", "", busy) }}
-                {{ file_list(scaling_summaries, "scaling-files-heading", "Action-scaling CSV files", "dashboard.delete_adversarial_scaling_experiment", "and rebuild scaling figures", busy) }}
-            </details>
 {% endmacro %}
 
 {% macro one_player_main() %}
             {{ result_controls() }}
 
-            <details id="environment-panel" class="panel disclosure-panel" hidden>
-                <summary>
-                    <span><span class="eyebrow">Environment analysis</span><span class="disclosure-title">Environment rule</span></span>
-                    <span>Current configuration</span>
-                </summary>
-                <div class="disclosure-body">
-                    <section id="historical-frequency-rule" class="environment-rule" aria-labelledby="historical-frequency-rule-heading" hidden>
-                        <h2 id="historical-frequency-rule-heading">Punish the historical leaders</h2>
-                        <p>Before round <em>t</em>, the most frequent half of the actions over the complete history receive payoff 0; half is rounded up. Every other action receives payoff 1. Ties rotate deterministically.</p>
-                        <p class="hint">The current sampled action never determines its own payoff vector. Bandit learners observe only the sampled payoff.</p>
-                    </section>
-                    <section id="random-walk-rule" class="environment-rule" aria-labelledby="random-walk-rule-heading" hidden>
-                        <h2 id="random-walk-rule-heading">Independent lazy reward walks</h2>
-                        <p>Each action follows a precomputed random walk on the grid 0, 0.1, …, 1. Interior rewards move down, stay, or move up equally; boundaries stay or move inward equally.</p>
-                        <p class="hint">The reward sequence depends only on the environment seed. The learner seed controls only action sampling.</p>
-                    </section>
+            <section class="panel result-panel summary-panel" aria-labelledby="summary-heading">
+                <div class="section-heading panel-heading">
+                    <div>
+                        <p class="eyebrow">Data</p>
+                        <h2 id="summary-heading">Recorded output</h2>
+                    </div>
+                    <span>{{ summaries | length }} replicate group{% if summaries | length != 1 %}s{% endif %}</span>
                 </div>
-            </details>
-
-            {{ regret_figure_panel() }}
+                {% if summaries %}
+                    <div class="table-scroll">
+                        <table id="summary-table">
+                            <thead><tr><th>Environment</th><th>Feedback</th><th>Algorithm</th><th>Actions</th><th>Configuration</th><th>Seed / replicates</th><th>Horizon</th><th>Target</th>{{ regret_headers() }}</tr></thead>
+                            <tbody>
+                                {% for row in summaries %}
+                                    <tr class="summary-row" data-scope="{{ row.environment }}" data-feedback="{{ row.feedback_mode }}" data-player="0" data-profile="{{ row.algorithm }}" data-result-key="{{ row.runs[0].filename }}" data-horizon="{{ row.horizon }}" data-seed="{{ row.base_learner_seed }}" data-target="{{ row.target_regret }}" data-configuration="{{ row.environment_detail }}">
+                                        <td>{{ row.environment_label }}</td><td>{{ row.feedback_label }}</td><td>{{ row.algorithm_label }}</td><td>{{ row.n_actions }}</td><td>{{ row.environment_detail }}</td><td>{{ row.base_learner_seed }} / {{ row.replicate_label }}{% if row.replicate_count > 1 %} (n={{ row.replicate_count }}){% endif %}</td><td>{{ row.horizon }}</td><td>{{ row.target_regret }}</td>
+                                        {{ regret_cells(row) }}
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="empty-state">
+                        <strong>No results yet.</strong>
+                        <p>Configure and queue an experiment to create regret figures and summaries.</p>
+                    </div>
+                {% endif %}
+            </section>
 
             {% if scaling_figures %}
-                <details class="panel disclosure-panel" data-result-section>
-                    <summary><span><span class="eyebrow">Optional</span><span class="disclosure-title">Regret by action-space size</span></span><span>{{ scaling_figures | length }} figures</span></summary>
-                    <div class="disclosure-body figure-grid">
+                <section id="scaling-results" class="panel result-panel" aria-labelledby="scaling-results-heading">
+                    <div class="section-heading panel-heading">
+                        <div>
+                            <p class="eyebrow">Scaling</p>
+                            <h2 id="scaling-results-heading">Action-space scaling</h2>
+                            <p class="panel-description">Final regret across action-space sizes.</p>
+                        </div>
+                        <span>{{ scaling_figures | length }} figure{% if scaling_figures | length != 1 %}s{% endif %}</span>
+                    </div>
+                    <div class="figure-grid">
                         {% for figure in scaling_figures %}
-                            <article class="figure-card" data-result-card data-scope="{{ figure.environment }}" data-feedback="{{ figure.feedback_mode }}" data-player="0" data-profile="{{ figure.algorithm }}" data-metric="{{ figure.target_regret }}">
+                            <article class="figure-card">
                                 {% set title = figure.target_regret | title ~ " regret · " ~ figure.environment_label %}
                                 {{ figure_preview(figure, title, "Final regret by action count for " ~ figure.algorithm_label) }}
                                 <p>{{ figure.algorithm_label }} · {{ figure.feedback_label }} · K={{ figure.action_counts | join(", ") }} · {{ figure.replicates }} replicates · T={{ figure.horizon }}</p>
@@ -94,28 +78,6 @@
                             </article>
                         {% endfor %}
                     </div>
-                </details>
+                </section>
             {% endif %}
-
-            <section class="panel summary-panel" aria-labelledby="summary-heading">
-                <div class="section-heading"><div><p class="eyebrow">Recorded outcomes</p><h2 id="summary-heading">Final regret summary</h2></div><span>{{ summaries | length }} runs</span></div>
-                {% if summaries %}
-                    <div class="table-scroll">
-                        <table id="summary-table">
-                            <thead><tr><th>Environment</th><th>Feedback</th><th>Algorithm</th><th>Actions</th><th>Configuration</th><th>Horizon</th><th>Base learner seed</th><th>Replicate</th><th>Target</th>{{ regret_headers() }}<th>CSV</th></tr></thead>
-                            <tbody>
-                                {% for row in summaries %}
-                                    <tr class="summary-row" data-scope="{{ row.environment }}" data-feedback="{{ row.feedback_mode }}" data-player="0" data-profile="{{ row.algorithm }}" data-result-key="{{ row.filename }}" data-horizon="{{ row.horizon }}" data-seed="{{ row.base_learner_seed }}" data-target="{{ row.target_regret }}" data-configuration="{{ row.environment_detail }}">
-                                        <td>{{ row.environment_label }}</td><td>{{ row.feedback_label }}</td><td>{{ row.algorithm_label }}</td><td>{{ row.n_actions }}</td><td>{{ row.environment_detail }}</td><td>{{ row.horizon }}</td><td>{{ row.base_learner_seed }}</td><td>{{ row.replicate + 1 }}</td><td>{{ row.target_regret }}</td>
-                                        {{ regret_cells(row) }}
-                                        <td><a href="{{ row.download_url }}">Download</a></td>
-                                    </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <p class="empty">Configure and queue an experiment to create regret figures and summaries.</p>
-                {% endif %}
-            </section>
 {% endmacro %}

@@ -22,8 +22,6 @@ from experiments.recording import MAX_RECORDED_POINTS, recording_checkpoints
 from experiments.sampling import CheckpointRows
 from experiments.result_schema import (
     REGRET_FIELDNAMES,
-    RESULT_IMPLEMENTATION_VERSION,
-    result_implementation_version,
 )
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
@@ -59,7 +57,6 @@ TARGET_REGRET_BY_ALGORITHM = {
 }
 ADVERSARIAL_IDENTITY_FIELDS = (
     "run_id",
-    "implementation_version",
     "environment",
     "reward_step",
     "base_environment_seed",
@@ -103,9 +100,7 @@ class AdversarialExperimentSpec:
     seed: int
     feedback_mode: str = "full_information"
     environment: str = HISTORICAL_FREQUENCY_ENVIRONMENT
-    environment_seed: int = SEED
     replicate: int = 0
-    implementation_version: int = RESULT_IMPLEMENTATION_VERSION
     runtime_environment: str = field(default_factory=runtime_environment_json)
 
     def __post_init__(self) -> None:
@@ -124,25 +119,16 @@ class AdversarialExperimentSpec:
             raise ValueError("seed must be non-negative")
         if self.replicate < 0:
             raise ValueError("replicate must be non-negative")
-        if self.implementation_version < 0:
-            raise ValueError("implementation_version must be non-negative")
-        canonical_runtime = validate_runtime_environment(
-            self.runtime_environment,
-            allow_empty=self.implementation_version == 0,
-        )
+        canonical_runtime = validate_runtime_environment(self.runtime_environment)
         object.__setattr__(self, "runtime_environment", canonical_runtime)
         if self.environment not in ENVIRONMENT_LABELS:
             raise ValueError(f"unknown adversarial environment: {self.environment}")
-        if self.environment == RANDOM_WALK_ENVIRONMENT:
-            if self.environment_seed < 0:
-                raise ValueError("environment seed must be non-negative")
-
     def configuration(self) -> dict:
         random_walk = self.environment == RANDOM_WALK_ENVIRONMENT
         configuration = {
             "environment": self.environment,
             "reward_step": RANDOM_WALK_STEP if random_walk else "",
-            "base_environment_seed": self.environment_seed if random_walk else "",
+            "base_environment_seed": self.seed if random_walk else "",
             "environment_seed": self.replicate_environment_seed if random_walk else "",
             "base_learner_seed": self.seed,
             "learner_seed": self.learner_seed,
@@ -152,11 +138,8 @@ class AdversarialExperimentSpec:
             "algorithm": self.algorithm_name,
             "horizon": self.horizon,
         }
-        if self.runtime_environment:
-            configuration["runtime_environment"] = self.runtime_environment
-            configuration["runtime_fingerprint"] = self.runtime_fingerprint
-        if self.implementation_version:
-            configuration["implementation_version"] = self.implementation_version
+        configuration["runtime_environment"] = self.runtime_environment
+        configuration["runtime_fingerprint"] = self.runtime_fingerprint
         return configuration
 
     @property
@@ -170,15 +153,13 @@ class AdversarialExperimentSpec:
     @property
     def replicate_environment_seed(self) -> int:
         return domain_separated_seed(
-            self.environment_seed,
+            self.seed,
             self.replicate,
             ENVIRONMENT_SEED_DOMAIN,
         )
 
     @property
     def runtime_fingerprint(self) -> str:
-        if not self.runtime_environment:
-            return ""
         return runtime_environment_fingerprint(self.runtime_environment)
 
     @property
@@ -191,9 +172,7 @@ class AdversarialExperimentSpec:
                 "horizon": self.horizon,
                 "seed": self.seed,
             }
-            if self.implementation_version:
-                identity["implementation_version"] = self.implementation_version
-                identity["runtime_fingerprint"] = self.runtime_fingerprint
+            identity["runtime_fingerprint"] = self.runtime_fingerprint
             if self.replicate:
                 identity["replicate"] = self.replicate
             if self.feedback_mode != "full_information":
@@ -218,9 +197,7 @@ def run_adversarial_experiment(
     should_cancel: Callable[[], bool] | None = None,
     feedback_mode: str = "full_information",
     environment: str = HISTORICAL_FREQUENCY_ENVIRONMENT,
-    environment_seed: int = SEED,
     replicate: int = 0,
-    implementation_version: int = RESULT_IMPLEMENTATION_VERSION,
     runtime_environment: str | None = None,
     max_recorded_points: int = MAX_RECORDED_POINTS,
 ) -> Path:
@@ -231,9 +208,7 @@ def run_adversarial_experiment(
         seed=seed,
         feedback_mode=feedback_mode,
         environment=environment,
-        environment_seed=environment_seed,
         replicate=replicate,
-        implementation_version=implementation_version,
         runtime_environment=(
             runtime_environment_json()
             if runtime_environment is None
@@ -386,7 +361,6 @@ def load_adversarial_rows(
             # from plots. Seed derivation and runtime JSON/hashing need run only once.
             identity = tuple(row.get(field) for field in ADVERSARIAL_IDENTITY_FIELDS)
             if expected_identity is None:
-                result_implementation_version(row)
                 require_csv_columns(input_path, fieldnames, set(adversarial_result_fieldnames()))
                 horizon = _validate_adversarial_metadata(row, input_path)
                 n_actions = int(row["n_actions"])
@@ -423,7 +397,6 @@ def load_final_adversarial_row(input_path: str | Path) -> dict[str, str]:
     if not rows:
         raise ValueError(f"{input_path} is empty")
     row = rows[0]
-    result_implementation_version(row)
     require_csv_columns(input_path, fieldnames, set(adversarial_result_fieldnames()))
     horizon = _validate_adversarial_row(row, input_path)
     if int(row["t"]) != horizon:

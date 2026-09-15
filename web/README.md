@@ -7,38 +7,38 @@ make install
 make web
 ```
 
-The **Experiments** page uses one template, controller, result filters, figure grid and dialog, and sortable summary framework for fixed games and one-player environments. Both modes also share feedback, horizon, seed, algorithm, and replicate controls.
+The **Experiments** page uses one template, controller, result filters, figure grid and dialog, and sortable summary framework for fixed games and one-player environments. Both modes share one general Seed, defaulting to 42, while their other form choices remain mode-specific.
 
 ## Features
 
 - Configure built-in or custom games and one learner per player.
-- Queue, monitor, cancel, download, and delete fixed-game runs.
+- Queue, monitor, and cancel jobs, and download recorded results.
 - Filter figures and summaries by game or environment and feedback mode.
 - Create reproducible general-sum or symmetric two-player zero-sum games.
 - Switch the **Experiments** page between fixed games and one-player historical-frequency or lazy-random-walk environments.
-- Sweep a configurable list of action counts and plot final regret against K.
+- Enter one action count for an ordinary one-player experiment or multiple counts for action-space scaling.
 
 The queue has one worker and reserves run IDs on submission. Fixed-game and one-player experiments accept a replicate count. Compatible fixed-game groups share the game/payoff digest, feedback, learner profile, horizon, base seed, stationary solver, and runtime-environment fingerprint. Their strategy-weighted regret and full-space CE/CCE-distance views report replicate means.
 
-One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Ordinary and action-scaling batches derive learner and environment seeds from distinct domains and the replicate index, while retaining the configured base seeds in their CSVs. Every experiment figure opens in the same viewer. Figures show means without confidence bands; previews and PDF downloads use the same selection.
+One-player regret diagnostics are grouped by environment and feedback mode, with algorithm-only plot legends. Ordinary and action-space scaling batches derive learner and environment seeds from distinct domains of the shared base seed plus the replicate index, while retaining the base and derived seeds in their CSVs. The same **Actions** field selects the ordinary or scaling workflow; there is no separate scaling form. Generated figure cards open in the same viewer. Figures show means without confidence bands; previews and PDF downloads use the same selection.
 
-The sidebar configures the next run. The global result filters control saved figures, summaries, and analysis: game, feedback, player, regret, view, and algorithm-profile selections apply across Figure Builder and final summaries. In one-player mode, choosing one environment shows its rule and choosing **All** hides that rule panel. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
+The sidebar configures the next run. The page flows through **Execution / Job status**, **Analysis / Result filters**, **Visualization / Generated figures**, and **Data / Recorded output**; relevant one-player scaling results appear separately under **Scaling / Action-space scaling**. Result filters coordinate Figure Builder and ordinary summaries, while scaling remains separate. Queue buttons submit in the background and update job status without navigating away. When a job finishes, **Refresh results** loads the latest results on demand without interrupting your current analysis.
 
 ## Figures and Data
 
-PNG previews have matching vector PDFs. Regret plots update after a run; a manual rebuild uses the same background queue and refreshes the page when finished. Detail figures are generated lazily and cached. Result details retain mean empirical joint-action heatmaps for supported two-player games and asynchronously computed full-space CE/CCE convergence figures.
+PNG previews have matching vector PDFs. Ordinary experiment jobs save CSVs; regret figures are generated explicitly through Figure Builder. Detail figures are generated lazily and cached. Result details retain mean empirical joint-action heatmaps for supported two-player games and asynchronously computed full-space CE/CCE convergence figures. Action-space scaling keeps its visible generated figures and downloads.
 
-**Figure Builder** generates all three regrets and both views together, sharing loaded replicate data. The collected-PDF download combines the currently filtered figures in their displayed order. Existing PDF pages are preserved; older PNG-only figures are converted to PDF pages. Exporting does not rerun experiments or rebuild plots.
+**Figure Builder** compares either one or more algorithm profiles for the selected regret filters, or external, internal, and swap regret together for one profile. Exact cached selections may restore automatically; a cache miss requires **Generate figures**. The collected-PDF download combines generated PDFs in their displayed order. Exporting does not rerun experiments or rebuild plots.
 
 | Location | Contents |
 |---|---|
 | `results/raw/` | Fixed-game CSVs |
-| `results/figures/` | Regret and detail figures |
-| `results/adversarial/` | Stress-test CSVs and figures |
-| `results/cache/` | Regenerable plot and equilibrium-distance caches |
+| `results/figures/` | Generated detail figures |
+| `results/adversarial/` | One-player CSVs and action-space scaling figures |
+| `results/cache/` | Figure Builder and equilibrium-distance artifacts |
 | `data/custom_games/` | Saved custom games |
 
-`make reset` and **Clear results** remove all experiment-derived data, generated figures (including detail and Figure Builder outputs), and experiment-dependent caches. Source and configuration inputs such as custom games, plus `.gitkeep` placeholders, are preserved. Deletion stages the affected CSVs and figures, rebuilds the remaining views, and restores the staged files if rebuilding fails.
+`make reset` and **Reset all experiment results** remove all experiment-derived data, generated figures, and experiment-dependent caches. Source and configuration inputs such as custom games, plus `.gitkeep` placeholders, are preserved.
 
 POST parameters, CSRF tokens, and filenames are validated. For a stable session secret across restarts:
 

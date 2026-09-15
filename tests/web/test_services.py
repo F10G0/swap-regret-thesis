@@ -6,7 +6,6 @@ import time
 import pytest
 
 from web.jobs import Job, JobManager, ServiceBusyError
-from web.services import PlotUpdateError
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from tests.web.support import block_job_queue, create_service, create_test_app, wait_for_async_result, wait_for_job
 from web.validation import ExperimentForm
@@ -211,30 +210,6 @@ def test_custom_game_payoff_slice_rejects_invalid_selection(
         service.custom_game_payoff_slice(definition.id, payoff_player, row_player, column_player, fixed_actions)
 
 
-@pytest.mark.parametrize("kind", ["fixed", "adversarial"])
-def test_ordinary_deletion_preserves_results_until_invalidation_succeeds(tmp_path, monkeypatch, kind):
-    service = create_service(tmp_path)
-    raw_dir = service.raw_dir if kind == "fixed" else service.adversarial_raw_dir
-    delete = service.delete_experiment if kind == "fixed" else service.delete_adversarial_experiment
-    raw_dir.mkdir(parents=True)
-    source = raw_dir / "result.csv"
-    source.write_bytes(b"recorded-result")
-    retained = raw_dir / "retained.csv"
-    retained.write_bytes(b"retained-result")
-    artifact = service.figure_builder.output_dir / "derived.png"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b"generated")
-    with monkeypatch.context() as patch:
-        patch.setattr(service, "_clear_experiment_caches", lambda: (_ for _ in ()).throw(OSError("cleanup failed")))
-        with pytest.raises(OSError, match="cleanup failed"):
-            delete(source.name)
-        assert source.read_bytes() == b"recorded-result"
-    delete(source.name)
-    assert not source.exists()
-    assert not artifact.exists()
-    assert retained.read_bytes() == b"retained-result"
-
-
 def test_summary_loader_skips_malformed_result_file(tmp_path: Path) -> None:
     service = create_service(tmp_path)
     service.raw_dir.mkdir(parents=True)
@@ -333,34 +308,6 @@ def test_experiment_submissions_queue_and_reserve_run_ids(tmp_path: Path) -> Non
     assert wait_for_job(service, first.id) == "succeeded"
     assert wait_for_job(service, second.id) == "succeeded"
     assert len(list(service.raw_dir.glob("*.csv"))) == 2
-
-
-def test_scaling_delete_rolls_back_csv_and_figures_when_rebuild_fails(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    service = create_service(tmp_path)
-    raw_dir = service.adversarial_scaling_raw_dir
-    figure_dir = service.adversarial_scaling_figure_dir
-
-    raw_dir.mkdir(parents=True)
-    figure_dir.mkdir(parents=True)
-    csv_path = raw_dir / "result.csv"
-    figure_path = figure_dir / "existing.png"
-    csv_path.write_bytes(b"recorded-result")
-    figure_path.write_bytes(b"existing-figure")
-    monkeypatch.setattr(
-        service,
-        "_publish_adversarial_scaling_plots",
-        lambda: (_ for _ in ()).throw(RuntimeError("plot failed")),
-    )
-
-    with pytest.raises(PlotUpdateError, match="were restored"):
-        service.delete_adversarial_scaling_experiment(csv_path.name)
-
-    assert csv_path.read_bytes() == b"recorded-result"
-    assert figure_path.read_bytes() == b"existing-figure"
-    assert not list(raw_dir.parent.glob(".delete-result-*"))
 
 
 @pytest.mark.parametrize("grouped", [False, True])

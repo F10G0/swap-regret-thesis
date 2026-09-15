@@ -3,13 +3,16 @@ from pathlib import Path
 import re
 from typing import Mapping
 
-from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec
+from experiments.result_schema import REGRET_NAMES
 
 
 @dataclass(frozen=True)
 class ProfileSelection:
     mode: str
     context_id: str
+    comparison_mode: str
+    metric: str
+    view: str
     profiles: tuple[str, ...]
 
 
@@ -17,6 +20,7 @@ class ProfileSelection:
 class FigureSelection:
     mode: str
     context_id: str
+    comparison_mode: str
     metric: str
     view: str
     profiles: tuple[str, ...]
@@ -25,10 +29,17 @@ class FigureSelection:
 def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
     mode = values.get("mode", "")
     context_id = values.get("context_id", "")
+    comparison_mode = values.get("comparison_mode", "profiles")
+    metric = values.get("metric", "all")
+    view = values.get("view", "all")
     if mode not in {"fixed", "adversarial"}:
         raise ValueError("Unknown experiment mode")
     if not re.fullmatch(r"[0-9a-f]{24}", context_id):
         raise ValueError("Choose an available result set")
+    if comparison_mode not in {"profiles", "regrets"}:
+        raise ValueError("Unknown comparison mode")
+    if metric not in {*REGRET_NAMES, "all"} or view not in {"average", "sqrt_scaling", "all"}:
+        raise ValueError("Unknown regret metric or view")
     if hasattr(values, "getlist"):
         profiles = values.getlist("profiles")
     else:
@@ -38,7 +49,12 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
         raise ValueError("Select at least one algorithm profile")
     if len(profiles) > 256 or any(not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9_]+", profile) for profile in profiles):
         raise ValueError("Invalid algorithm profile selection")
-    return ProfileSelection(mode, context_id, tuple(sorted(set(profiles))))
+    profiles = tuple(sorted(set(profiles)))
+    if comparison_mode == "regrets" and len(profiles) != 1:
+        raise ValueError("Select exactly one algorithm profile when comparing regret notions")
+    if comparison_mode == "regrets" and metric != "all":
+        raise ValueError("Regret-notion comparison includes all regret notions")
+    return ProfileSelection(mode, context_id, comparison_mode, metric, view, profiles)
 
 
 @dataclass(frozen=True)
@@ -56,10 +72,9 @@ class AdversarialExperimentForm:
     environment: str
     feedback_mode: str
     algorithm_name: str
-    n_actions: int
+    action_counts: tuple[int, ...]
     horizon: int
-    environment_seed: int
-    learner_seed: int
+    seed: int
     replicates: int
 
 
@@ -92,8 +107,8 @@ def parse_action_counts(
     max_values: int = 20,
 ) -> tuple[int, ...]:
     tokens = [token for token in re.split(r"[\s,]+", value.strip()) if token]
-    if len(tokens) < 2:
-        raise ValueError("provide at least two action counts")
+    if not tokens:
+        raise ValueError("provide at least one action count")
     if len(tokens) > max_values:
         raise ValueError(f"provide at most {max_values} action counts")
     action_counts = tuple(
@@ -104,7 +119,7 @@ def parse_action_counts(
         raise ValueError("action counts must be at least 2")
     if len(set(action_counts)) != len(action_counts):
         raise ValueError("action counts must be unique")
-    return tuple(sorted(action_counts))
+    return action_counts
 
 
 def validate_leaf_filename(filename: str, suffix: str) -> str:
@@ -199,9 +214,9 @@ def parse_adversarial_experiment_form(
 ) -> AdversarialExperimentForm:
     try:
         environment = values["environment"]
-        n_actions = values["n_actions"]
+        actions = values["actions"]
         horizon = values["horizon"]
-        learner_seed = values["seed"]
+        seed = values["seed"]
     except KeyError as error:
         raise ValueError(f"missing form field: {error.args[0]}") from error
 
@@ -213,69 +228,19 @@ def parse_adversarial_experiment_form(
         raise ValueError("one-player environments require one algorithm")
     algorithm_name = algorithm_names[0]
 
-    environment_seed = values.get("environment_seed", "0")
     if environment not in environments:
         raise ValueError(f"unknown adversarial environment: {environment}")
-    action_count = parse_positive_integer(
-        n_actions,
-        "number of actions",
-        max_actions,
-    )
-    if action_count < 2:
-        raise ValueError("number of actions must be at least 2")
+    action_counts = parse_action_counts(actions, max_actions)
     return AdversarialExperimentForm(
         environment=environment,
         feedback_mode=feedback_mode,
         algorithm_name=algorithm_name,
-        n_actions=action_count,
+        action_counts=action_counts,
         horizon=parse_positive_integer(horizon, "horizon", max_horizon),
-        environment_seed=parse_non_negative_integer(
-            environment_seed,
-            "environment seed",
-        ),
-        learner_seed=parse_non_negative_integer(learner_seed, "learner seed"),
+        seed=parse_non_negative_integer(seed, "seed"),
         replicates=parse_positive_integer(
             values.get("replicates", ""),
             "replicates",
             max_replicates,
         ),
-    )
-
-
-def parse_adversarial_scaling_form(
-    values: Mapping[str, str],
-    algorithms_by_feedback_mode: Mapping[str, list[str]],
-    environments: set[str],
-    max_actions: int,
-    max_horizon: int,
-    max_replicates: int,
-) -> AdversarialScalingSpec:
-    action_counts = parse_action_counts(
-        values.get("scaling_action_counts", ""),
-        max_actions,
-    )
-    common_values = dict(values)
-    common_values["n_actions"] = str(action_counts[0])
-    common_values["replicates"] = "1"
-    common = parse_adversarial_experiment_form(
-        common_values,
-        algorithms_by_feedback_mode,
-        environments,
-        max_actions,
-        max_horizon,
-        max_replicates,
-    )
-    return AdversarialScalingSpec(
-        environment=common.environment,
-        feedback_mode=common.feedback_mode,
-        algorithm_name=common.algorithm_name,
-        action_counts=action_counts,
-        replicates=parse_positive_integer(
-            values.get("scaling_replicates", ""),
-            "scaling replicates",
-            max_replicates,
-        ),
-        horizon=common.horizon,
-        environment_seed=common.environment_seed,
-        learner_seed=common.learner_seed,
     )

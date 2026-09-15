@@ -1,9 +1,17 @@
 from collections.abc import Callable
 
+import numpy as np
+
 from algorithms.base import Algorithm
 from environments.base import FixedGameEnvironment
 from experiments.recorder import CsvRecorder
-from experiments.recording import MAX_RECORDED_POINTS, encode_action_block, recording_checkpoints
+from experiments.recording import (
+    MAX_RECORDED_POINTS,
+    encode_joint_action_histograms,
+    joint_action_histogram_checkpoints,
+    recording_checkpoints,
+)
+from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD
 from metrics.regret import RegretBundle
 
 
@@ -27,14 +35,20 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
     metadata = metadata or {}
     regrets = [RegretBundle(n_actions) for n_actions in game.n_actions]
     checkpoints = set(recording_checkpoints(horizon, max_recorded_points))
-    sparse = len(checkpoints) < horizon
-    action_blocks = [[] for _ in players] if sparse else None
+    histogram_checkpoints = set(joint_action_histogram_checkpoints(horizon))
+    joint_action_counts = np.zeros(game.n_actions, dtype=np.int64)
+    histogram_horizons = []
+    histogram_counts = []
 
     for t in range(1, horizon + 1):
         if should_cancel is not None and should_cancel():
             raise ExperimentCancelled("experiment cancelled")
         actions = tuple(player.sample_action() for player in players)
         game.step(actions)
+        joint_action_counts[actions] += 1
+        if t in histogram_checkpoints:
+            histogram_horizons.append(t)
+            histogram_counts.append(joint_action_counts.copy())
 
         for player_id, (player, action) in enumerate(zip(players, actions)):
             strategy = player.strategy()
@@ -50,16 +64,14 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
 
             regret.update(strategy, deviation_payoffs)
             player.update(feedback)
-            if sparse:
-                action_blocks[player_id].append(action)
             if t not in checkpoints:
                 continue
             regret_summary = regret.summary(t)
-
-            action_history = {}
-            if sparse:
-                action_history["action_history"] = encode_action_block(action_blocks[player_id])
-                action_blocks[player_id].clear()
+            histograms = {}
+            if player_id == 0 and t == horizon:
+                histograms[JOINT_ACTION_HISTOGRAM_FIELD] = encode_joint_action_histograms(
+                    histogram_horizons, histogram_counts
+                )
 
             recorder.record({
                 "game": game_name,
@@ -69,6 +81,6 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
                 "player": player_id,
                 "action": action,
                 "payoff": payoff,
-                **action_history,
+                **histograms,
                 **regret_summary,
             })

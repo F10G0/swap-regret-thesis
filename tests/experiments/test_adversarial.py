@@ -105,7 +105,6 @@ def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
         "exp3_ix",
         feedback_mode="bandit",
         environment=RANDOM_WALK_ENVIRONMENT,
-        environment_seed=11,
         n_actions=3,
         horizon=5,
         seed=7,
@@ -116,10 +115,10 @@ def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
     assert {row["environment"] for row in rows} == {RANDOM_WALK_ENVIRONMENT}
     assert all("initialization_mode" not in row for row in rows)
     assert {row["reward_step"] for row in rows} == {"0.1"}
-    assert {row["base_environment_seed"] for row in rows} == {"11"}
+    assert {row["base_environment_seed"] for row in rows} == {"7"}
     assert {row["base_learner_seed"] for row in rows} == {"7"}
     assert {row["environment_seed"] for row in rows} == {
-        str(domain_separated_seed(11, 0, ENVIRONMENT_SEED_DOMAIN))
+        str(domain_separated_seed(7, 0, ENVIRONMENT_SEED_DOMAIN))
     }
     assert {row["learner_seed"] for row in rows} == {
         str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))
@@ -135,13 +134,12 @@ def test_algorithms_share_random_walk_environment_trajectory(tmp_path) -> None:
         run_adversarial_experiment(
             algorithm,
             environment=RANDOM_WALK_ENVIRONMENT,
-            environment_seed=11,
             n_actions=3,
             horizon=30,
-            seed=learner_seed,
+            seed=11,
             output_dir=tmp_path,
         )
-        for algorithm, learner_seed in (("hedge", 7), ("regret_matching", 19))
+        for algorithm in ("hedge", "regret_matching")
     ]
     trajectories = [
         [
@@ -154,17 +152,31 @@ def test_algorithms_share_random_walk_environment_trajectory(tmp_path) -> None:
     assert trajectories[0] == trajectories[1]
 
 
-def test_equal_base_seeds_still_create_distinct_random_streams() -> None:
+def test_one_base_seed_deterministically_separates_roles_and_replicates() -> None:
     spec = AdversarialExperimentSpec(
         algorithm_name="hedge",
         environment=RANDOM_WALK_ENVIRONMENT,
-        environment_seed=42,
         n_actions=3,
         horizon=10,
         seed=42,
     )
+    same = AdversarialExperimentSpec(
+        algorithm_name="hedge", environment=RANDOM_WALK_ENVIRONMENT,
+        n_actions=3, horizon=10, seed=42)
+    next_replicate = AdversarialExperimentSpec(
+        algorithm_name="hedge", environment=RANDOM_WALK_ENVIRONMENT,
+        n_actions=3, horizon=10, seed=42, replicate=1)
+    changed = AdversarialExperimentSpec(
+        algorithm_name="hedge", environment=RANDOM_WALK_ENVIRONMENT,
+        n_actions=3, horizon=10, seed=43)
 
     assert spec.learner_seed != spec.replicate_environment_seed
+    assert (spec.learner_seed, spec.replicate_environment_seed) == (
+        same.learner_seed, same.replicate_environment_seed)
+    assert spec.learner_seed != next_replicate.learner_seed
+    assert spec.replicate_environment_seed != next_replicate.replicate_environment_seed
+    assert spec.learner_seed != changed.learner_seed
+    assert spec.replicate_environment_seed != changed.replicate_environment_seed
     assert spec.configuration()["base_learner_seed"] == 42
     assert spec.configuration()["base_environment_seed"] == 42
 
@@ -199,7 +211,6 @@ def test_adversarial_replicate_offsets_both_random_seeds(tmp_path) -> None:
         "exp3_ix",
         feedback_mode="bandit",
         environment=RANDOM_WALK_ENVIRONMENT,
-        environment_seed=11,
         n_actions=3,
         horizon=5,
         seed=7,
@@ -210,10 +221,10 @@ def test_adversarial_replicate_offsets_both_random_seeds(tmp_path) -> None:
     rows = _rows(output_path)
 
     assert {row["replicate"] for row in rows} == {"2"}
-    assert {row["base_environment_seed"] for row in rows} == {"11"}
+    assert {row["base_environment_seed"] for row in rows} == {"7"}
     assert {row["base_learner_seed"] for row in rows} == {"7"}
     assert {row["environment_seed"] for row in rows} == {
-        str(domain_separated_seed(11, 2, ENVIRONMENT_SEED_DOMAIN))
+        str(domain_separated_seed(7, 2, ENVIRONMENT_SEED_DOMAIN))
     }
     assert {row["learner_seed"] for row in rows} == {
         str(domain_separated_seed(7, 2, LEARNER_SEED_DOMAIN))
@@ -231,64 +242,6 @@ def test_adversarial_replicate_is_part_of_run_identity() -> None:
     assert AdversarialExperimentSpec(**common).run_id != (
         AdversarialExperimentSpec(**common, replicate=1).run_id
     )
-
-
-def test_adversarial_loader_rejects_unversioned_csv(tmp_path) -> None:
-    generated = run_adversarial_experiment(
-        "hedge",
-        horizon=3,
-        output_dir=tmp_path,
-    )
-    rows = _rows(generated)
-    legacy_path = tmp_path / "legacy.csv"
-    legacy_fields = {
-        "base_environment_seed",
-        "base_learner_seed",
-        "replicate",
-        "implementation_version",
-        "runtime_environment",
-        "runtime_fingerprint",
-    }
-    fieldnames = [field for field in rows[0] if field not in legacy_fields]
-    with legacy_path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(
-            {field: value for field, value in row.items() if field not in legacy_fields}
-            for row in rows
-        )
-
-    for loader in (load_adversarial_rows, load_final_adversarial_row):
-        with pytest.raises(ValueError, match="incompatible result implementation_version 0"):
-            loader(legacy_path)
-
-
-def test_adversarial_implementation_version_changes_run_identity() -> None:
-    common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 10, "seed": 7}
-
-    assert AdversarialExperimentSpec(**common).implementation_version == 6
-    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(**common, implementation_version=2).run_id
-
-
-@pytest.mark.parametrize("version", [3, 4, 5])
-def test_adversarial_loader_rejects_stale_results_without_modifying_them(tmp_path, version) -> None:
-    common = {"algorithm_name": "hedge", "n_actions": 3, "horizon": 3, "seed": 7}
-    current_path = run_adversarial_experiment(**common, output_dir=tmp_path)
-    legacy = AdversarialExperimentSpec(**common, implementation_version=version)
-    legacy_path = tmp_path / f"{legacy.run_id}.csv"
-    # A schema fixture, not a reproduction of a legacy learner implementation.
-    rows = _rows(current_path)
-    with legacy_path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(row | {"implementation_version": str(version), "run_id": legacy.run_id} for row in rows)
-    legacy_bytes = legacy_path.read_bytes()
-
-    assert {row["implementation_version"] for row in load_adversarial_rows(current_path)} == {"6"}
-    for loader in (load_adversarial_rows, load_final_adversarial_row):
-        with pytest.raises(ValueError, match=f"incompatible result implementation_version {version}"):
-            loader(legacy_path)
-    assert legacy_path.read_bytes() == legacy_bytes
 
 
 def test_adversarial_regret_aggregation_uses_replicate_means() -> None:
@@ -331,7 +284,6 @@ def test_adversarial_experiment_is_atomic_on_cancellation(tmp_path) -> None:
         ({"horizon": 0}, "positive"),
         ({"seed": -1}, "non-negative"),
         ({"replicate": -1}, "replicate"),
-        ({"environment": RANDOM_WALK_ENVIRONMENT, "environment_seed": -1}, "environment seed"),
         ({"environment": "unknown"}, "unknown adversarial environment"),
     ],
 )
@@ -363,7 +315,7 @@ def test_adversarial_feedback_mode_is_part_of_run_identity() -> None:
     ).run_id
 
 
-def test_random_walk_seeds_are_part_of_identity() -> None:
+def test_random_walk_base_seed_is_part_of_identity() -> None:
     common = {
         "algorithm_name": "hedge",
         "n_actions": 3,
@@ -372,13 +324,8 @@ def test_random_walk_seeds_are_part_of_identity() -> None:
         "environment": RANDOM_WALK_ENVIRONMENT,
     }
 
-    baseline = AdversarialExperimentSpec(**common)
-    assert baseline.run_id != AdversarialExperimentSpec(
-        **(common | {"environment_seed": 8})
-    ).run_id
-    assert baseline.run_id != AdversarialExperimentSpec(
-        **(common | {"seed": 8})
-    ).run_id
+    assert AdversarialExperimentSpec(**common).run_id != AdversarialExperimentSpec(
+        **(common | {"seed": 8})).run_id
 
 
 def test_adversarial_algorithm_must_match_feedback_mode() -> None:

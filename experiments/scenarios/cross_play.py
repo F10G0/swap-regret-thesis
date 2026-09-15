@@ -10,7 +10,7 @@ from config import CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
 from environments import BanditRepeatedGame, RepeatedGame
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.recorder import CsvRecorder
-from experiments.recording import MAX_RECORDED_POINTS, recording_checkpoints
+from experiments.recording import MAX_RECORDED_POINTS
 from experiments.runner import run_game
 from experiments.result_schema import regret_fieldnames
 from experiments.spec import ExperimentSpec
@@ -105,10 +105,7 @@ def run_cross_play_experiment(game_name: str, algorithm_names: list[str], horizo
     if output_path.exists():
         raise FileExistsError(f"experiment {spec.run_id} already exists at {output_path}")
 
-    checkpoints = recording_checkpoints(horizon, max_recorded_points)
     fieldnames = regret_fieldnames()
-    if len(checkpoints) < horizon:
-        fieldnames = fieldnames + ["action_history"]
     with CsvRecorder(fieldnames, output_path) as recorder:
         run_game(
             game_name=spec.game_name, feedback_mode=spec.feedback_mode, algorithm_name=spec.algorithm_profile_name, game=game, players=players, recorder=recorder, horizon=spec.horizon,

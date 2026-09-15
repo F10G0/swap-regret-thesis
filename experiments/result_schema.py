@@ -1,8 +1,7 @@
-RESULT_IMPLEMENTATION_VERSION = 6
+JOINT_ACTION_HISTOGRAM_FIELD = "joint_action_histograms"
 
 BASE_FIELDNAMES = [
     "run_id",
-    "implementation_version",
     "runtime_environment",
     "runtime_fingerprint",
     "feedback_mode",
@@ -28,15 +27,4 @@ REGRET_FIELDNAMES = [
 
 
 def regret_fieldnames() -> list[str]:
-    return BASE_FIELDNAMES + REGRET_FIELDNAMES
-
-
-def result_implementation_version(row: dict[str, str]) -> int:
-    version = int(row.get("implementation_version") or 0)
-    if version != RESULT_IMPLEMENTATION_VERSION:
-        raise ValueError(
-            f"incompatible result implementation_version {version}; "
-            f"expected {RESULT_IMPLEMENTATION_VERSION}. Re-run the experiment; "
-            "existing results are not migrated."
-        )
-    return version
+    return BASE_FIELDNAMES + REGRET_FIELDNAMES + [JOINT_ACTION_HISTOGRAM_FIELD]

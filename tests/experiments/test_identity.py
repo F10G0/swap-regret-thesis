@@ -1,5 +1,4 @@
 import csv
-from dataclasses import replace
 from hashlib import sha256
 import json
 import os
@@ -11,11 +10,11 @@ import pytest
 from experiments.scenarios.cross_play import run_cross_play_experiment, player_seed
 from experiments.game_catalog import GameCatalog, payoff_tensor_digest
 from experiments.plots.plot_regret import aggregate_metric_curve, plot_regret
+from experiments.recording import encode_joint_action_histograms, joint_action_histogram_checkpoints
 from experiments.plots.style import curve_labels
-from experiments.result_schema import RESULT_IMPLEMENTATION_VERSION, regret_fieldnames
+from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD, regret_fieldnames
 from experiments.results import (
     iter_result_rows,
-    result_implementation_version,
     result_runtime_environment,
     result_runtime_fingerprint,
 )
@@ -44,6 +43,7 @@ def make_spec(
 def write_result(path, spec: ExperimentSpec) -> None:
     fieldnames = regret_fieldnames()
     row = {field: 0 for field in fieldnames}
+    row[JOINT_ACTION_HISTOGRAM_FIELD] = ""
     row.update(spec.metadata())
     row.update(
         {
@@ -52,6 +52,13 @@ def write_result(path, spec: ExperimentSpec) -> None:
             "horizon": spec.horizon,
         }
     )
+    histogram_horizons = list(joint_action_histogram_checkpoints(spec.horizon))
+    histogram_counts = []
+    for horizon in histogram_horizons:
+        counts = np.zeros((3, 3), dtype=int)
+        counts[0, 0] = horizon
+        histogram_counts.append(counts)
+    histogram_payload = encode_joint_action_histograms(histogram_horizons, histogram_counts)
 
     with path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -63,6 +70,7 @@ def write_result(path, spec: ExperimentSpec) -> None:
                     | {
                         "t": time,
                         "player": player,
+                        JOINT_ACTION_HISTOGRAM_FIELD: histogram_payload if time == spec.horizon and player == 0 else "",
                     }
                 )
 
@@ -81,25 +89,6 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     )
     assert baseline.run_id != changed_horizon.run_id
     assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, stationary_method="pinv").run_id
-    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, implementation_version=2).run_id
-
-
-@pytest.mark.parametrize("version", [3, 4, 5])
-def test_v6_identity_rejects_but_does_not_modify_legacy_results(tmp_path, version) -> None:
-    current = make_spec()
-    legacy = replace(current, implementation_version=version)
-    assert RESULT_IMPLEMENTATION_VERSION == current.implementation_version == 6
-    assert current.run_id != legacy.run_id
-    legacy_path = tmp_path / f"{legacy.run_id}.csv"
-    current_path = tmp_path / f"{current.run_id}.csv"
-    write_result(legacy_path, legacy)
-    legacy_bytes = legacy_path.read_bytes()
-    write_result(current_path, current)
-
-    with pytest.raises(ValueError, match=f"incompatible result implementation_version {version}"):
-        list(iter_result_rows(legacy_path))
-    assert {result_implementation_version(row) for row in iter_result_rows(current_path)} == {6}
-    assert legacy_path.read_bytes() == legacy_bytes
 
 
 def test_runtime_environment_changes_identity_and_is_recorded(tmp_path) -> None:
@@ -233,25 +222,21 @@ def test_metric_curves_are_averaged_across_replicates() -> None:
     assert np.array_equal(means, [2.0, 3.0])
 
 
-def test_fixed_game_loader_rejects_missing_version(tmp_path) -> None:
+def test_fixed_game_loader_rejects_missing_runtime_identity(tmp_path) -> None:
     spec = make_spec()
     result_path = tmp_path / f"{spec.run_id}.csv"
     write_result(result_path, spec)
     with result_path.open(newline="") as file:
         reader = csv.DictReader(file)
         rows = list(reader)
-    legacy_fields = {
-        "implementation_version",
-        "runtime_environment",
-        "runtime_fingerprint",
-    }
-    fieldnames = [field for field in reader.fieldnames if field not in legacy_fields]
+    missing_fields = {"runtime_environment", "runtime_fingerprint"}
+    fieldnames = [field for field in reader.fieldnames if field not in missing_fields]
     with result_path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows({field: row[field] for field in fieldnames} for row in rows)
 
-    with pytest.raises(ValueError, match="incompatible result implementation_version 0"):
+    with pytest.raises(ValueError, match="missing required columns"):
         list(iter_result_rows(result_path))
 
 
@@ -270,9 +255,9 @@ def test_plot_legend_can_distinguish_feedback(algorithm, label) -> None:
         "feedback_mode": "bandit",
     }]
 
-    assert curve_labels(rows) == [label]
+    assert curve_labels(rows) == [f"{label} vs {label}"]
     assert curve_labels([rows[0], rows[0] | {"feedback_mode": "full_information"}]) == [
-        f"{label} · bandit", f"{label} · full info",
+        f"{label} vs {label} · bandit", f"{label} vs {label} · full info",
     ]
 
 

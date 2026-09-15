@@ -5,7 +5,6 @@ from hashlib import sha256
 import json
 import logging
 import os
-from operator import index
 from pathlib import Path
 import tempfile
 
@@ -19,13 +18,9 @@ import numpy as np
 from config import CUSTOM_GAME_DIR, EQUILIBRIUM_LP_TOLERANCE
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.plots import save_figure_pair
-from experiments.plots.style import publication_plot, finish_line_figure
-from experiments.result_trajectories import load_result_action_profiles
+from experiments.plots.style import publication_plot, finish_line_figure, staggered_markevery
+from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, result_game_payoff_digest
-from metrics.empirical_distribution import (
-    EmpiricalDistributionTrajectory,
-    empirical_distribution_trajectory,
-)
 from metrics.equilibrium_distance import (
     EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION,
     EquilibriumDistanceTrajectory,
@@ -35,26 +30,12 @@ from metrics.equilibrium_distance import (
 )
 
 
-MAX_EQUILIBRIUM_DISTANCE_POINTS = 160
-DISTANCE_CACHE_VERSION = 1
-DISTANCE_CHECKPOINT_POLICY = "nearest-log-horizon-v1"
-EQUILIBRIUM_DISTANCE_FIGURE_VERSION = 4
+DISTANCE_CACHE_VERSION = 2
+EQUILIBRIUM_DISTANCE_FIGURE_VERSION = 5
 logger = logging.getLogger(__name__)
 
 
-def equilibrium_distance_point_indices(horizons: np.ndarray) -> np.ndarray:
-    """Select existing exact horizons, approximately uniformly in log time."""
-    if len(horizons) <= MAX_EQUILIBRIUM_DISTANCE_POINTS:
-        return np.arange(len(horizons))
-    logarithms = np.log(horizons)
-    targets = np.linspace(logarithms[0], logarithms[-1], MAX_EQUILIBRIUM_DISTANCE_POINTS)
-    right = np.searchsorted(logarithms, targets).clip(0, len(horizons) - 1)
-    left = np.maximum(right - 1, 0)
-    nearest = np.where(targets - logarithms[left] <= logarithms[right] - targets, left, right)
-    return np.unique(np.concatenate(([0], nearest, [len(horizons) - 1])))
-
-
-def _distance_cache_identity(path: Path, payoff_digest: str, checkpoints) -> dict:
+def _distance_cache_identity(path: Path, payoff_digest: str) -> dict:
     stat = path.stat()
     return {
         "version": DISTANCE_CACHE_VERSION,
@@ -62,14 +43,11 @@ def _distance_cache_identity(path: Path, payoff_digest: str, checkpoints) -> dic
         "ctime_ns": stat.st_ctime_ns, "size": stat.st_size,
         "payoff_digest": payoff_digest,
         "metric_version": EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION,
-        "max_points": MAX_EQUILIBRIUM_DISTANCE_POINTS,
-        "checkpoint_policy": DISTANCE_CHECKPOINT_POLICY,
-        "requested_checkpoints": [index(point) for point in checkpoints] if checkpoints is not None else None,
     }
 
 
-def _load_result_distances(path: Path, payoff_tensor: np.ndarray, checkpoints, cache_dir: Path) -> EquilibriumDistanceTrajectory:
-    identity = _distance_cache_identity(path, payoff_tensor_digest(payoff_tensor), checkpoints)
+def _load_result_distances(path: Path, payoff_tensor: np.ndarray, cache_dir: Path) -> EquilibriumDistanceTrajectory:
+    identity = _distance_cache_identity(path, payoff_tensor_digest(payoff_tensor))
     cache_path = cache_dir / f"{sha256(str(path.resolve()).encode()).hexdigest()}.json"
     try:
         with cache_path.open(encoding="utf-8") as file:
@@ -78,7 +56,7 @@ def _load_result_distances(path: Path, payoff_tensor: np.ndarray, checkpoints, c
             horizons = np.asarray(payload["horizons"])
             ce, cce = np.asarray(payload["ce"], dtype=float), np.asarray(payload["cce"], dtype=float)
             if (horizons.ndim == 1 and np.issubdtype(horizons.dtype, np.integer)
-                    and 0 < len(horizons) <= MAX_EQUILIBRIUM_DISTANCE_POINTS
+                    and len(horizons) > 0
                     and horizons[0] > 0 and np.all(np.diff(horizons) > 0)
                     and ce.shape == cce.shape == horizons.shape
                     and np.all(np.isfinite(ce)) and np.all(np.isfinite(cce))
@@ -89,12 +67,9 @@ def _load_result_distances(path: Path, payoff_tensor: np.ndarray, checkpoints, c
     except (OSError, ValueError, KeyError, TypeError):
         pass
 
-    profiles = load_result_action_profiles(path, payoff_tensor.shape[1:])
-    empirical = empirical_distribution_trajectory(profiles, payoff_tensor.shape[1:], checkpoints)
-    indices = equilibrium_distance_point_indices(empirical.horizons)
-    selected = EmpiricalDistributionTrajectory(empirical.action_shape, empirical.horizons[indices], empirical.vectors[indices])
-    distances = equilibrium_distance_trajectory(payoff_tensor, selected)
-    if _distance_cache_identity(path, identity["payoff_digest"], checkpoints) != identity:
+    empirical = load_result_empirical_distribution_trajectory(path, payoff_tensor.shape[1:])
+    distances = equilibrium_distance_trajectory(payoff_tensor, empirical)
+    if _distance_cache_identity(path, identity["payoff_digest"]) != identity:
         raise RuntimeError("result changed while computing equilibrium distances")
     payload = {"identity": identity, "horizons": distances.horizons.tolist(),
                "ce": distances.ce.tolist(), "cce": distances.cce.tolist()}
@@ -125,7 +100,7 @@ def _plot_equilibrium_distance(
         distances.ce_mean,
         color="#d97706",
         marker="o",
-        markevery=0.12,
+        markevery=staggered_markevery(0, 2),
         linestyle="-",
         linewidth=2.0,
         label="CE",
@@ -135,7 +110,7 @@ def _plot_equilibrium_distance(
         distances.cce_mean,
         color="#2563eb",
         marker="s",
-        markevery=0.12,
+        markevery=staggered_markevery(1, 2),
         linestyle="--",
         linewidth=2.0,
         label="CCE",
@@ -188,17 +163,15 @@ def _load_equilibrium_game(paths: list[Path], custom_game_dir: str | Path) -> tu
 def plot_result_equilibrium_distance(
     input_paths: str | Path | Iterable[str | Path],
     output_path: str | Path,
-    checkpoints: Iterable[int] | None = None,
     custom_game_dir: str | Path = CUSTOM_GAME_DIR,
     *,
     cache_dir: str | Path | None = None,
 ) -> None:
     paths = [Path(input_paths)] if isinstance(input_paths, (str, Path)) else [Path(path) for path in input_paths]
     _, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
-    checkpoints = tuple(checkpoints) if checkpoints is not None else None
     replicate_distances = [
         _load_result_distances(
-            path, payoff_tensor, checkpoints,
+            path, payoff_tensor,
             Path(cache_dir) if cache_dir is not None else
             (path.parent.parent if path.parent.name == "raw" else path.parent) / "cache" / "equilibrium_distance",
         )

@@ -22,14 +22,12 @@ def _run(service, game="rps"):
     )
 
 
-def _historical_copy(source, game, version=None):
+def _historical_copy(source, game):
     with source.open(newline="") as file:
         reader = csv.DictReader(file)
         fields, rows = reader.fieldnames, list(reader)
     for row in rows:
         row.update(game=game, run_id=f"{game}_historical")
-        if version is not None:
-            row["implementation_version"] = str(version)
     path = source.parent / f"{game}_historical.csv"
     with path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -83,20 +81,6 @@ def test_retired_results_are_downloadable_but_not_active_benchmarks(tmp_path, ga
         service.submit_experiment(ExperimentForm(game, "full_information", ("hedge", "hedge"), 2, 42, 1))
     assert _snapshot(originals) == originals
     assert not service.jobs.recent()
-
-
-def test_old_schema_retired_results_do_not_break_dashboard_discovery(tmp_path):
-    version = 2
-    app, service = create_test_app(tmp_path)
-    supported = _run(service)
-    retired = _historical_copy(supported, "bertrand_standard_o1", version)
-    originals = _snapshot([supported, retired])
-    snapshot = service.result_snapshot()
-    assert {summary["game"] for summary in snapshot.summaries()} == {"rps"}
-    assert len(snapshot.warnings) == 1
-    assert f"incompatible result implementation_version {version}" in snapshot.warnings[0]
-    assert app.test_client().get("/").status_code == 200
-    assert _snapshot(originals) == originals
 
 
 def test_supported_and_custom_visual_analysis_works_beside_retired_assets(tmp_path):

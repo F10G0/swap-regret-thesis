@@ -4,7 +4,7 @@ Utilities for regret, empirical play, and equilibrium convergence.
 
 `RegretBundle(n_actions)` maintains one cumulative strategy-weighted replacement-gain matrix. Runners update it every round and extract summaries only at recording checkpoints.
 
-Regret updates trust learner strategies and environment payoff vectors; they perform only the replacement-gain arithmetic. Empirical counting likewise trusts project-generated or loader-validated action profiles, retaining one-time action-shape and checkpoint configuration checks.
+Regret updates trust learner strategies and environment payoff vectors; they perform only the replacement-gain arithmetic. Fixed-game result loaders validate stored cumulative histogram trajectories before equilibrium analysis.
 
 ## Regret
 
@@ -21,9 +21,7 @@ Evaluation is independent of feedback: bandit learners still observe only their 
 
 ## Empirical Play and Equilibria
 
-`joint_action_distribution(...)` counts recorded joint-action profiles. `mean_joint_action_distribution(...)` averages these distributions across replicates for empirical heatmaps. Neither operation solves an equilibrium LP.
-
-`empirical_distribution_trajectory(...)` converts complete joint-action histories into full joint-distribution vectors at deterministic checkpoints.
+`joint_action_distribution(...)` normalizes the final stored cumulative joint-action histogram. `mean_joint_action_distribution(...)` averages these distributions across replicates for empirical heatmaps. Neither operation solves an equilibrium LP.
 
 `equilibrium_l1_distance(...)` solves `min_{q in E} ||q - empirical||_1`, where `E` is CE or CCE. The local implementation in `equilibrium_distance.py` constructs incentive constraints and uses `scipy.optimize.linprog(method="highs")`. Prepared LPs reuse fixed coefficient matrices across checkpoints.
 

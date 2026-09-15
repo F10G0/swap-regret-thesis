@@ -51,9 +51,7 @@ def runtime_environment_json() -> str:
     return json.dumps(environment, sort_keys=True, separators=(",", ":"))
 
 
-def validate_runtime_environment(serialized: str, *, allow_empty: bool = False) -> str:
-    if allow_empty and not serialized:
-        return ""
+def validate_runtime_environment(serialized: str) -> str:
     try:
         environment = json.loads(serialized)
     except (TypeError, json.JSONDecodeError) as error:

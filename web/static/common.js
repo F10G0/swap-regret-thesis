@@ -1,8 +1,5 @@
 "use strict";
 
-const themeStorageKey = "swap-regret-primary-theme";
-const primaryThemes = new Set(["green", "blue", "purple", "orange", "red"]);
-
 function element(id) {
     return document.getElementById(id);
 }
@@ -87,27 +84,6 @@ function updateJobElement(element, job) {
             form.remove();
         }
     }
-}
-
-function applyPrimaryTheme(theme, persist = false) {
-    const selectedTheme = primaryThemes.has(theme) ? theme : "green";
-    document.documentElement.dataset.theme = selectedTheme;
-    const themeSelect = element("primary-theme");
-    if (themeSelect) {
-        themeSelect.value = selectedTheme;
-    }
-    if (!persist) {
-        return;
-    }
-    saveLocalValue(themeStorageKey, selectedTheme, "the primary color");
-}
-
-function installThemeSelector() {
-    const storedTheme = restoreLocalValue(themeStorageKey, "the primary color") || "";
-    applyPrimaryTheme(storedTheme || document.documentElement.dataset.theme);
-    listen("primary-theme", "change", (event) => {
-        applyPrimaryTheme(event.target.value, true);
-    });
 }
 
 function installConfirmations() {
@@ -202,6 +178,5 @@ function setHeatmapSource(image, source, loadingMessage = "Loading heatmap…") 
     load();
 }
 
-installThemeSelector();
 installConfirmations();
 listen("experiment-mode", "change", (event) => event.currentTarget.form.submit());

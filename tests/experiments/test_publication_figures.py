@@ -7,8 +7,9 @@ import pytest
 
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.plots.style import (
-    ALGORITHM_STYLES, FIGURE_WIDTH, algorithm_style, curve_labels,
-    profile_label, publication_plot, regret_axis_label,
+    ALGORITHM_STYLES, FIGURE_WIDTH, MARKER_STEP, PROFILE_MARKERS, algorithm_style,
+    curve_labels, profile_label, profile_series_style, publication_plot, regret_axis_label,
+    regret_series_style, staggered_markevery,
 )
 from experiments.scenarios.adversarial import (
     ALGORITHMS_BY_FEEDBACK_MODE, RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment,
@@ -17,9 +18,9 @@ from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, ru
 
 
 @pytest.mark.parametrize("profile,label", [
-    (("ito", "ito"), "Ito"), (("hedge", "hedge"), "Hedge"),
-    (("stationary_regret_matching",) * 2, "SRM"),
-    (("hedge", "ito"), "Hedge vs Ito"),
+    (("regret_matching",) * 2, "RM vs RM"),
+    (("hedge", "hedge"), "Hedge vs Hedge"),
+    (("hedge", "ito"), "Hedge vs Ito"), (("ito",), "Ito"),
 ])
 def test_publication_profile_labels(profile, label):
     assert profile_label(profile) == label
@@ -36,11 +37,32 @@ def test_style_mapping_is_global_order_independent_and_redundant():
     assert algorithm_style("ito")["color"] != "red"
 
 
+def test_profile_styles_use_solid_deterministic_marker_cycles_and_phases():
+    styles = [profile_series_style(index, 11) for index in range(11)]
+    assert [style["marker"] for style in styles] == [*PROFILE_MARKERS, "o"]
+    assert {style["linestyle"] for style in styles} == {"-"}
+    assert {step for _, step in (style["markevery"] for style in styles)} == {MARKER_STEP}
+    assert [style["markevery"][0] for style in styles] == pytest.approx([index / 11 * MARKER_STEP for index in range(11)])
+    assert all(0 <= style["markevery"][0] < MARKER_STEP for style in styles)
+    assert styles == [profile_series_style(index, 11) for index in range(11)]
+    assert profile_series_style(0, 1)["markevery"] == (0, MARKER_STEP)
+
+
+def test_regret_styles_use_fixed_contrasting_encodings_and_staggered_phases():
+    names = ("external", "internal", "swap")
+    styles = [regret_series_style(name, index, len(names)) for index, name in enumerate(names)]
+    assert [style["color"] for style in styles] == ["#0072B2", "#CC79A7", "#D55E00"]
+    assert [style["linestyle"] for style in styles] == ["-", "-.", "--"]
+    assert [style["markevery"] for style in styles] == [staggered_markevery(index, 3) for index in range(3)]
+    assert styles[2]["zorder"] > styles[0]["zorder"]
+    assert styles == [regret_series_style(name, index, len(names)) for index, name in enumerate(names)]
+
+
 def test_labels_include_only_metadata_needed_to_distinguish_curves():
     base = dict(algorithm="hedge_vs_hedge", seed=42, stationary_method="solve", horizon=100)
-    assert curve_labels([base, base | {"algorithm": "ito_vs_ito"}]) == ["Hedge", "Ito"]
-    assert curve_labels([base, base | {"seed": 7}]) == ["Hedge · seed 42", "Hedge · seed 7"]
-    assert curve_labels([base, base | {"stationary_method": "pinv"}]) == ["Hedge · solver solve", "Hedge · solver pinv"]
+    assert curve_labels([base, base | {"algorithm": "ito_vs_ito"}]) == ["Hedge vs Hedge", "Ito vs Ito"]
+    assert curve_labels([base, base | {"seed": 7}]) == ["Hedge vs Hedge · seed 42", "Hedge vs Hedge · seed 7"]
+    assert curve_labels([base, base | {"stationary_method": "pinv"}]) == ["Hedge vs Hedge · solver solve", "Hedge vs Hedge · solver pinv"]
 
 
 def test_publication_style_is_scoped_even_when_rendering_fails():
@@ -92,14 +114,14 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
             for replicate in (0, 1):
                 run_adversarial_experiment(name, n_actions=9, horizon=100, seed=42,
                     feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT,
-                    environment_seed=7, replicate=replicate, output_dir=raw)
+                    replicate=replicate, output_dir=raw)
         runs = [(path, module.load_adversarial_rows(path)) for path in sorted(raw.glob("*.csv"))]
         module._plot_regret(runs, RANDOM_WALK_ENVIRONMENT,
                             "bandit", 9, "swap", False, output)
     elif family == "scaling":
         spec = AdversarialScalingSpec(environment=RANDOM_WALK_ENVIRONMENT,
             feedback_mode="bandit", algorithm_name="auer_exp3", action_counts=(3, 6, 9),
-            replicates=2, horizon=100, environment_seed=7, learner_seed=42)
+            replicates=2, horizon=100, seed=42)
         path = run_adversarial_scaling_experiment(spec, raw, workers=1)
         module._plot_scaling(module.load_adversarial_scaling_rows(path), output)
     else:
@@ -131,6 +153,10 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
             expected = algorithm_style(name)
             assert (line.get_color(), line.get_linestyle(), line.get_marker()) == (
                 expected["color"], expected["linestyle"], expected["marker"])
+    marker_lines = [line for line in axes.lines if line.get_marker() not in {None, "", "None"}]
+    assert [line.get_markevery() for line in marker_lines] == [
+        staggered_markevery(index, len(marker_lines)) for index in range(len(marker_lines))
+    ]
     if family in {"rps", "bandit", "ilrw", "scaling"}:
         view = "final" if family == "scaling" else "sqrt_scaling" if family == "ilrw" else "average"
         kind = "external" if family == "scaling" else "swap"

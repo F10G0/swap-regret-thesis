@@ -1,7 +1,21 @@
 import csv
 import os
 from pathlib import Path
+import sys
 import tempfile
+
+
+def _allow_large_csv_fields() -> None:
+    limit = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(limit)
+            return
+        except OverflowError:
+            limit //= 10
+
+
+_allow_large_csv_fields()
 
 
 def require_csv_columns(input_path: str | Path, fieldnames, required) -> None:

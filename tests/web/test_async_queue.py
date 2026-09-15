@@ -11,12 +11,12 @@ FIXED = {
 ADVERSARIAL = FIXED | {
     "experiment_type": "adversarial", "algorithm_names": ["hedge"],
     "environment": "lazy_random_walk_v1",
-    "n_actions": "9", "environment_seed": "42", "scaling_action_counts": "3,9", "scaling_replicates": "1",
+    "actions": "9",
 }
 CASES = [
     ("/", FIXED, "submit_experiment", "fixed"),
     ("/", ADVERSARIAL, "submit_adversarial_experiment", "adversarial"),
-    ("/adversarial/action-scaling", ADVERSARIAL, "submit_adversarial_scaling_experiment", "adversarial"),
+    ("/", ADVERSARIAL | {"actions": "3,9"}, "submit_adversarial_experiment", "adversarial"),
 ]
 
 

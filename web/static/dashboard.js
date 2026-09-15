@@ -6,6 +6,7 @@ const dashboardData = dashboardDataElement
     : {mode: "fixed", gameDefinitions: {}, gamePresentations: {}, summaries: [], algorithms: {}, algorithmLabels: {}};
 const onePlayerMode = dashboardData.mode === "adversarial";
 const formStorageKey = onePlayerMode ? "swap-regret-adversarial-form" : "swap-regret-experiment-form";
+const generalSeedStorageKey = "swap-regret-experiment-seed";
 let resultFilters = null;
 let jobPollInFlight = false;
 let jobPollTimer = null;
@@ -49,7 +50,7 @@ async function queueExperiment(event) {
 
 function formFields() {
     const form = element("experiment-form");
-    return form ? [...form.elements].filter((field) => field.name && field.type !== "hidden" && field.name !== "algorithm_names") : [];
+    return form ? [...form.elements].filter((field) => field.name && field.type !== "hidden" && !["algorithm_names", "seed"].includes(field.name)) : [];
 }
 
 function gamePresentation(game) {
@@ -65,29 +66,45 @@ function saveFormState() {
     saveLocalJson(formStorageKey, state, "experiment parameters");
 }
 
+function loadGeneralSeed() {
+    const seed = element("experiment-seed");
+    const stored = restoreLocalValue(generalSeedStorageKey, "experiment seed");
+    if (!seed || stored === null) return;
+    const fallback = seed.value;
+    seed.value = stored;
+    if (!seed.checkValidity()) seed.value = fallback;
+}
+
+function saveGeneralSeed() {
+    const seed = element("experiment-seed");
+    if (seed) saveLocalValue(generalSeedStorageKey, seed.value, "experiment seed");
+}
+
 function restoreFormState() {
     const state = restoreLocalJson(formStorageKey, "experiment parameters");
-    if (!state) {
-        return;
+    if (state) {
+        if ("seed" in state) {
+            delete state.seed;
+            saveLocalJson(formStorageKey, state, "experiment parameters");
+        }
+        for (const control of formFields()) {
+            const key = control.name in state ? control.name : control.id;
+            let value = state[key];
+            if (value === undefined) {
+                continue;
+            }
+            if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === value)) {
+                continue;
+            }
+            const fallback = control.value;
+            control.value = value;
+            if (!control.checkValidity()) {
+                control.value = fallback;
+            }
+        }
+        updatePlayerControls(state.algorithmNames || []);
     }
-
-    for (const control of formFields()) {
-        const key = control.name in state ? control.name : control.id;
-        let value = state[key];
-        if (value === undefined && control.name === "seed") value = state.learner_seed;
-        if (value === undefined) {
-            continue;
-        }
-        if (control instanceof HTMLSelectElement && ![...control.options].some((option) => option.value === value)) {
-            continue;
-        }
-        const fallback = control.value;
-        control.value = value;
-        if (!control.checkValidity()) {
-            control.value = fallback;
-        }
-    }
-    updatePlayerControls(state.algorithmNames || []);
+    loadGeneralSeed();
 }
 
 function installFormPersistence() {
@@ -96,6 +113,11 @@ function installFormPersistence() {
         form.addEventListener("input", saveFormState);
         form.addEventListener("change", saveFormState);
         form.addEventListener("submit", saveFormState);
+    }
+    const seed = element("experiment-seed");
+    if (seed) {
+        seed.addEventListener("input", saveGeneralSeed);
+        seed.addEventListener("change", saveGeneralSeed);
     }
 }
 
@@ -159,11 +181,6 @@ function updateAlgorithmsForFeedbackMode() {
     playerAlgorithmSelects().forEach((select) => updateAlgorithmSelect(select, algorithms));
 }
 
-function selectedResultScope() {
-    const scope = element("filter-scope");
-    return scope && scope.value !== "all" ? scope.value : "";
-}
-
 function updateDashboardForGame(preferredAlgorithms = null) {
     updatePlayerControls(preferredAlgorithms);
     const game = element("game");
@@ -173,47 +190,11 @@ function updateDashboardForGame(preferredAlgorithms = null) {
     }
 }
 
-function updateOnePlayerEnvironment() {
-    const environmentSelect = element("adversarial-environment");
-    const environment = environmentSelect ? environmentSelect.value : "";
-    if (!environment) {
-        return;
-    }
-    const randomWalk = environment === dashboardData.randomWalkEnvironment;
-    for (const [fieldId, enabled] of [
-        ["adversarial-environment-seed-field", randomWalk],
-    ]) {
-        const field = element(fieldId);
-        if (!field) {
-            continue;
-        }
-        field.hidden = !enabled;
-        field.querySelectorAll("input, select").forEach((input) => {
-            input.disabled = !enabled;
-        });
-    }
-}
-
-function updateEnvironmentAnalysis() {
-    const environment = selectedResultScope();
-    const panel = element("environment-panel");
-    const historicalRule = element("historical-frequency-rule");
-    const randomWalkRule = element("random-walk-rule");
-    const randomWalk = environment === dashboardData.randomWalkEnvironment;
-    if (panel) {
-        panel.hidden = !environment;
-    }
-    if (historicalRule) {
-        historicalRule.hidden = !environment || randomWalk;
-    }
-    if (randomWalkRule) {
-        randomWalkRule.hidden = !environment || !randomWalk;
-    }
-}
-
-function updateFilteredAnalysis() {
-    if (onePlayerMode) {
-        updateEnvironmentAnalysis();
+function updateEnvironmentDescription() {
+    const environment = element("adversarial-environment");
+    const description = element("environment-description");
+    if (environment && description) {
+        description.textContent = (dashboardData.environmentDescriptions || {})[environment.value] || "";
     }
 }
 
@@ -315,17 +296,6 @@ function installTableSorting() {
     });
 }
 
-function applyFilters() {
-    document.querySelectorAll("[data-result-card]").forEach((card) => {
-        card.hidden = !matchesResultFilters(card)
-            || (resultFilters.metric !== "all" && card.dataset.metric !== resultFilters.metric);
-    });
-    document.querySelectorAll("[data-result-section]").forEach((section) => {
-        section.hidden = ![...section.querySelectorAll("[data-result-card]")].some((card) => !card.hidden);
-    });
-    updateSummaryRows();
-}
-
 function openFigure(card) {
     const dialog = element("figure-dialog");
     if (!card || !dialog) {
@@ -375,7 +345,6 @@ function showExperimentDetail(index) {
     addDetail(metadata, "Seed", summary.seed);
     addDetail(metadata, "Replicates", `${summary.replicate_label} (n=${summary.replicate_count})`);
     addDetail(metadata, "Stationary solver", summary.stationary_method);
-    addDetail(metadata, "Implementation", summary.implementation_version || "legacy");
 
     const regrets = element("detail-regrets");
     regrets.replaceChildren();
@@ -435,9 +404,10 @@ function reuseSelectedExperiment() {
     element("feedback-mode").value = selectedSummary.feedback_mode;
     updateDashboardForGame(selectedSummary.algorithm_profile);
     element("horizon").value = selectedSummary.horizon;
-    element("seed").value = selectedSummary.seed;
+    element("experiment-seed").value = selectedSummary.seed;
     element("replicates").value = selectedSummary.replicate_count;
     saveFormState();
+    saveGeneralSeed();
     element("experiment-form").scrollIntoView({behavior: "smooth"});
 }
 
@@ -487,9 +457,7 @@ listen("feedback-mode", "change", updateAlgorithmsForFeedbackMode);
 listen("game", "change", () => {
     updateDashboardForGame();
 });
-listen("adversarial-environment", "change", () => {
-    updateOnePlayerEnvironment();
-});
+listen("adversarial-environment", "change", updateEnvironmentDescription);
 listen("synchronize-players", "click", () => {
     synchronizePlayerValues();
     saveFormState();
@@ -523,15 +491,11 @@ listen("refresh-results", "click", () => {
 restoreFormState();
 installFormPersistence();
 updateDashboardForGame(playerAlgorithmSelects().map((select) => select.value));
-if (onePlayerMode) {
-    updateOnePlayerEnvironment();
-}
 installTableSorting();
 document.addEventListener("results-filter-change", (event) => {
     resultFilters = event.detail;
-    applyFilters();
-    updateFilteredAnalysis();
+    updateSummaryRows();
 });
-applyFilters();
-updateFilteredAnalysis();
+updateSummaryRows();
+updateEnvironmentDescription();
 pollActiveJobs();

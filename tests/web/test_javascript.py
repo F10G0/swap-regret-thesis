@@ -5,10 +5,9 @@ import subprocess
 import pytest
 
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT
-from experiments.scenarios.adversarial_scaling import AdversarialScalingSpec, run_adversarial_scaling_experiment
 from tests.web.support import (
     ADVERSARIAL_FORM as VALID_FORM, create_test_app, csrf_token, record_fixed_runs as result,
-    run_ui, submit_and_wait,
+    run_node, run_ui, submit_and_wait,
 )
 from web.jobs import Job
 
@@ -17,16 +16,16 @@ from web.jobs import Job
 def test_browser_submission_and_polling_preserve_jobs_without_navigation(tmp_path, monkeypatch, mode, terminal):
     app, service = create_test_app(tmp_path)
     monkeypatch.setattr(service.jobs, "recent", lambda: [Job("old", "Existing", "running", "Running", "now")])
-    method = "submit_adversarial_scaling_experiment" if mode == "adversarial" else "submit_experiment"
-    endpoint = "/adversarial/action-scaling" if mode == "adversarial" else "/"
+    method = "submit_adversarial_experiment" if mode == "adversarial" else "submit_experiment"
+    endpoint = "/"
     monkeypatch.setattr(service, method, lambda form: Job("new", "New job", "queued", "Waiting", "now"))
-    values = VALID_FORM if mode == "adversarial" else {
+    values = VALID_FORM | {"actions": "3,9"} if mode == "adversarial" else {
         "game": "rps", "feedback_mode": "full_information", "algorithm_names": ["hedge", "bm"],
         "horizon": "4", "seed": "7", "replicates": "1",
     }
     client = app.test_client()
     response = client.post(endpoint, headers={"Accept": "application/json"}, data=values | {
-        "_csrf_token": csrf_token(client), "scaling_action_counts": "3,9", "scaling_replicates": "1",
+        "_csrf_token": csrf_token(client),
     })
     assert response.status_code == 202
     script = r'''
@@ -68,11 +67,15 @@ w.eval(payload.script);
     await tick();
     assert.deepEqual(polls.map(p => p.url), ["/jobs/old"]);
     const expected = new w.FormData(form);
+    assert.equal(d.querySelectorAll('input[name="seed"]').length, 1);
+    assert.equal(d.getElementById("experiment-seed").form, form);
+    assert.equal(expected.get("seed"), d.getElementById("experiment-seed").value);
     submit(); submit();
     assert.equal(posts.length, 1, status.textContent);
     assert.equal(buttons.every((button) => button.disabled), true);
     assert.equal(posts[0].options.headers.Accept, "application/json");
     assert.equal(posts[0].options.body.get("_csrf_token"), expected.get("_csrf_token"));
+    assert.equal(posts[0].options.body.get("seed"), expected.get("seed"));
     assert.deepEqual([...posts[0].options.body.getAll("algorithm_names")], [...expected.getAll("algorithm_names")]);
     finish(posts[0], payload.queued); await tick();
     const added = d.querySelector('[data-job-id="new"]');
@@ -124,7 +127,74 @@ def test_web_javascript_parses(filename: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_shared_filters_six_figures_summary_export_and_stale_responses(tmp_path):
+def test_sidebar_seed_is_shared_while_other_form_state_remains_mode_specific(tmp_path):
+    app, service = create_test_app(tmp_path)
+    script = r'''
+const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const render = (page, stored) => {
+    const dom = new JSDOM(page, {url: "http://localhost/", runScripts: "outside-only"});
+    const w = dom.window;
+    Object.entries(stored).forEach(([key, value]) => w.localStorage.setItem(key, value));
+    w.fetch = async () => ({ok: true, json: async () => payload.catalog});
+    w.eval(payload.script);
+    return dom;
+};
+const contents = storage => Object.fromEntries([...Array(storage.length)].map((_, index) => {
+    const key = storage.key(index); return [key, storage.getItem(key)];
+}));
+const fixedKey = "swap-regret-experiment-form", onePlayerKey = "swap-regret-adversarial-form";
+const seedKey = "swap-regret-experiment-seed";
+const first = render(payload.fixedPage, {
+    [fixedKey]: JSON.stringify({horizon: "17", seed: "11"}),
+    [onePlayerKey]: JSON.stringify({actions: "9", seed: "22"}),
+});
+const firstSeed = first.window.document.getElementById("experiment-seed");
+assert.equal(firstSeed.value, "42");
+assert.equal(first.window.document.getElementById("horizon").value, "17");
+assert.equal(JSON.parse(first.window.localStorage.getItem(fixedKey)).seed, undefined);
+firstSeed.value = "73";
+firstSeed.dispatchEvent(new first.window.Event("input", {bubbles: true}));
+const fixedHorizon = first.window.document.getElementById("horizon");
+fixedHorizon.value = "18"; fixedHorizon.dispatchEvent(new first.window.Event("input", {bubbles: true}));
+let saved = contents(first.window.localStorage);
+assert.equal(saved[seedKey], "73");
+assert.equal(JSON.parse(saved[fixedKey]).seed, undefined);
+assert.equal(JSON.parse(saved[fixedKey]).horizon, "18");
+assert.equal(JSON.parse(saved[onePlayerKey]).actions, "9");
+first.window.close();
+
+const onePlayer = render(payload.onePlayerPage, saved);
+const onePlayerSeed = onePlayer.window.document.getElementById("experiment-seed");
+assert.equal(onePlayerSeed.value, "73");
+assert.equal(onePlayer.window.document.getElementById("actions").value, "9");
+assert.equal(JSON.parse(onePlayer.window.localStorage.getItem(onePlayerKey)).seed, undefined);
+onePlayerSeed.value = "84";
+onePlayerSeed.dispatchEvent(new onePlayer.window.Event("change", {bubbles: true}));
+const actions = onePlayer.window.document.getElementById("actions");
+actions.value = "7"; actions.dispatchEvent(new onePlayer.window.Event("input", {bubbles: true}));
+saved = contents(onePlayer.window.localStorage);
+assert.equal(saved[seedKey], "84");
+assert.equal(JSON.parse(saved[onePlayerKey]).seed, undefined);
+assert.equal(JSON.parse(saved[onePlayerKey]).actions, "7");
+onePlayer.window.close();
+
+const returned = render(payload.fixedPage, saved);
+assert.equal(returned.window.document.getElementById("experiment-seed").value, "84");
+assert.equal(returned.window.document.getElementById("horizon").value, "18");
+returned.window.close();
+'''
+    static = Path(__file__).parents[2] / "web/static"
+    payload = {
+        "fixedPage": app.test_client().get("/").get_data(as_text=True),
+        "onePlayerPage": app.test_client().get("/?mode=adversarial").get_data(as_text=True),
+        "catalog": service.figure_builder.catalog("fixed"),
+        "script": "\n".join((static / name).read_text() for name in ("common.js", "dashboard.js", "figure_builder.js")),
+    }
+    run_node(script, payload=payload, jsdom=True)
+
+
+def test_result_filter_modes_cache_restoration_races_and_export(tmp_path):
     app, service = create_test_app(tmp_path)
     for profile in ("hedge_vs_hedge", "ito_vs_ito", "hedge_vs_ito"):
         result(service, profile)
@@ -140,13 +210,24 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const change = (name, value) => {f(name).value = value; f(name).dispatchEvent(new w.Event("change"));};
 const submit = () => d.getElementById("figure-builder").dispatchEvent(new w.Event("submit", {cancelable: true}));
 const visibleRows = () => [...d.querySelectorAll(".summary-row")].filter(row => !row.hidden);
-const visibleCards = () => [...b("figure").children].filter(card => !card.hidden);
-const allFigures = ["external", "internal", "swap"].flatMap(metric => ["average", "sqrt_scaling"].map(view => ({
-    metric, view, title: metric + " " + view, filename: metric + "_" + view + ".png",
-    pdf_filename: metric + "_" + view + ".pdf", url: "/" + metric + "_" + view + ".png",
-    pdf_url: "/" + metric + "_" + view + ".pdf"
-})));
-let requests = [], exports = [], finish, finishExport, downloads = 0;
+const selectProfiles = values => {
+    [...f("profiles").options].forEach(option => option.selected = values.includes(option.value));
+    f("profiles").dispatchEvent(new w.Event("change"));
+};
+const figuresFor = (body, tag) => {
+    const comparison = body.get("comparison_mode");
+    const metrics = comparison === "regrets" ? ["all"]
+        : (body.get("metric") === "all" ? ["external", "internal", "swap"] : [body.get("metric")]);
+    const views = body.get("view") === "all" ? ["average", "sqrt_scaling"] : [body.get("view")];
+    return metrics.flatMap(metric => views.map((view, index) => ({
+        metric, view, title: metric + " " + view, filename: tag + "_" + index + ".png",
+        pdf_filename: tag + "_" + index + ".pdf", url: "/" + tag + "_" + index + ".png",
+        pdf_url: "/" + tag + "_" + index + ".pdf"
+    })));
+};
+const cacheKey = body => [body.get("comparison_mode"), body.get("metric") || "all", body.get("view"),
+    ...body.getAll("profiles")].join("/");
+let cacheRequests = [], generations = [], exports = [], cached = new Map(), downloads = 0;
 w.HTMLElement.prototype.scrollIntoView = () => {};
 w.HTMLAnchorElement.prototype.click = () => downloads++;
 w.URL.createObjectURL = () => "blob:test";
@@ -154,79 +235,196 @@ w.URL.revokeObjectURL = () => {};
 w.fetch = async (url, options) => {
     if (!options) return {ok: true, json: async () => payload.catalog};
     if (options.body.get("mode") === "figure_builder") {
-        exports.push(options.body.getAll("filenames"));
-        return new Promise(resolve => finishExport = () => resolve({ok: true, blob: async () => new w.Blob(["pdf"])}));
+        return new Promise(resolve => exports.push({filenames: options.body.getAll("filenames"), resolve}));
     }
-    requests.push(options.body);
-    return new Promise(resolve => finish = () => resolve({ok: true, json: async () => ({
-        profiles: options.body.getAll("profiles"), figures: allFigures
-    })}));
+    if (new URL(url, w.location).pathname === "/figure-builder/cache") {
+        return new Promise(resolve => cacheRequests.push({body: options.body, resolve}));
+    }
+    return new Promise(resolve => generations.push({body: options.body, resolve}));
 };
+const finishCache = (index, hit = cached.has(cacheKey(cacheRequests[index].body)), items = null) => {
+    const request = cacheRequests[index], figures = items || cached.get(cacheKey(request.body)) || [];
+    request.resolve({ok: true, json: async () => ({cached: hit, figures: hit ? figures : []})});
+};
+const finishGeneration = (index, tag) => {
+    const request = generations[index], figures = figuresFor(request.body, tag);
+    cached.set(cacheKey(request.body), figures);
+    request.resolve({ok: true, json: async () => ({
+        profiles: request.body.getAll("profiles"), figures
+    })});
+};
+const finishExport = index => exports[index].resolve({ok: true, blob: async () => new w.Blob(["pdf"])});
 w.eval(payload.script);
+for (const name of ["scope", "feedback", "player", "metric", "view", "context", "profiles", "compare-profiles", "compare-regrets"]) {
+    assert.equal(f(name).disabled, true, name + " must be disabled while loading");
+}
 (async () => {
     await tick(); await tick();
+    const game = d.getElementById("game"), gameDescription = d.getElementById("game-description");
+    const gameDescriptionBefore = gameDescription.getBoundingClientRect();
+    game.value = "rpsls"; game.dispatchEvent(new w.Event("change", {bubbles: true}));
+    const gameDescriptionAfter = gameDescription.getBoundingClientRect();
+    assert.equal(d.getElementById("game-description"), gameDescription);
+    assert.deepEqual([gameDescriptionAfter.top, gameDescriptionAfter.bottom],
+        [gameDescriptionBefore.top, gameDescriptionBefore.bottom]);
+    const following = w.Node.DOCUMENT_POSITION_FOLLOWING;
+    assert.equal(d.getElementById("results-controls-heading").textContent, "Result filters");
+    assert.equal(d.getElementById("figure-results-heading").textContent, "Generated figures");
+    assert.equal(d.getElementById("summary-heading").textContent, "Recorded output");
+    const headings = [...d.querySelectorAll("h2")].map(heading => heading.textContent);
+    assert.equal(headings.includes("Filter results"), false); assert.equal(headings.includes("Result filter"), false);
+    assert(d.getElementById("figure-results").classList.contains("panel"));
+    assert.deepEqual([d.getElementById("result-filters"), d.getElementById("figure-results"),
+        d.querySelector(".summary-panel")].map(panel => [panel.querySelector(".eyebrow").textContent,
+            panel.querySelector(".panel-heading h2").textContent]),
+        [["Analysis", "Result filters"], ["Visualization", "Generated figures"], ["Data", "Recorded output"]]);
+    assert.equal(d.querySelector(".figures-panel"), null);
+    assert.equal(f("select-all"), null); assert.equal(f("clear-all"), null);
+    assert(b("generate").closest("#result-filters"));
+    assert(b("download").closest("#figure-results"));
+    assert(b("status").closest("#figure-results"));
+    assert.deepEqual([...d.querySelectorAll(".segmented-control span")].map(node => node.textContent),
+        ["Regret notions", "Algorithm profiles"]);
+    assert.equal(f("compare-regrets").checked, true); assert.equal(f("compare-profiles").checked, false);
+    assert(d.querySelector(".shared-result-filters").compareDocumentPosition(d.querySelector(".comparison-control")) & following);
+    assert(d.querySelector(".comparison-control").compareDocumentPosition(f("profiles")) & following);
+    assert.equal(f("profiles").size, 1); assert.equal(f("profiles").multiple, false);
+    assert.equal(f("profiles-label").textContent, "Algorithm profile");
+    assert.equal(f("profiles").selectedOptions.length, 1);
+    assert.equal(f("scope").disabled, false); assert.equal(f("feedback").disabled, false);
+    assert.equal(f("player").disabled, false); assert.equal(f("metric").disabled, true);
+    assert.equal(f("view").disabled, false); assert.equal(f("profiles").disabled, false);
+    assert.equal(f("compare-profiles").disabled, false); assert.equal(f("compare-regrets").disabled, false);
+    assert.equal(b("generate").textContent, "Generate figures");
+    assert.equal(b("generate").classList.contains("button-primary"), true);
+    assert.equal(b("download").classList.contains("button-primary"), false);
+    const detailGrid = d.getElementById("detail-joint-actions").parentElement;
+    assert(detailGrid.classList.contains("detail-figure-grid"));
+    assert.equal(d.getElementById("detail-convergence").parentElement, detailGrid);
+    assert(d.getElementById("detail-joint-actions").classList.contains("detail-figure-card"));
+    assert(d.getElementById("detail-convergence").classList.contains("detail-figure-card"));
+    for (const id of ["detail-heatmap", "detail-heatmap-download", "detail-equilibrium-distance",
+            "detail-equilibrium-distance-download", "detail-equilibrium-distance-card"]) assert(d.getElementById(id));
     assert.equal(b("generate").disabled, true);
-    assert.equal(visibleRows().length, 0);
+    assert(visibleRows().length > 0);
     assert.equal(d.querySelectorAll("#figure-builder select, .summary-panel select, .summary-panel input").length, 0);
-    change("feedback", "full_information");
-    f("select-all").click();
-    assert.equal(visibleRows().length, 3);
-    assert(visibleRows().every(row => row.dataset.player === "0"));
+    assert.equal(cacheRequests.length, 1); assert.equal(generations.length, 0);
+    assert.deepEqual(cacheRequests[0].body.getAll("profiles"), ["hedge_vs_hedge"]);
+    assert.equal(cacheRequests[0].body.get("comparison_mode"), "regrets");
+    finishCache(0, false); await tick(); await tick();
+    assert.equal(b("status").textContent, "No generated figures for this selection.");
+    assert.equal(b("generate").disabled, false);
+    f("compare-profiles").checked = true;
+    f("compare-profiles").dispatchEvent(new w.Event("change"));
+    assert.equal(f("profiles").multiple, true); assert.equal(f("profiles").size, 3);
+    assert.equal(f("profiles-label").textContent, "Algorithm profiles");
+    assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value), ["hedge_vs_hedge"]);
+    assert.equal(f("metric").disabled, false);
+    change("metric", "internal"); change("view", "average");
+    assert.equal(cacheRequests.length, 4); assert.equal(generations.length, 0);
+    assert.equal(b("figure").children.length, 0); assert.equal(b("generate").disabled, true);
+    finishCache(3, false); await tick(); await tick();
+    assert.equal(b("status").textContent, "No generated figures for this selection.");
+    assert.equal(b("generate").disabled, false);
     submit();
-    assert.equal(requests.length, 1);
-    assert.deepEqual(requests[0].getAll("profiles"), ["hedge_vs_hedge", "hedge_vs_ito", "ito_vs_ito"]);
-    assert.equal(requests[0].has("metric"), false);
-    change("metric", "internal"); change("view", "sqrt_scaling");
-    finish(); await tick(); await tick();
-    assert.equal(b("figure").children.length, 6);
-    assert.deepEqual(visibleCards().map(card => card.dataset.filename), ["internal_sqrt_scaling.png"]);
-    assert.equal(requests.length, 1); // Display filters never regenerate the collection.
-    for (const row of visibleRows()) {
-        const visible = [...row.querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
-        assert.equal(visible.length, 1);
-        assert.equal(visible[0].dataset.metric, "sqrt_scaling_internal");
-        const average = row.querySelector('[data-metric="average_internal"]');
-        assert(Math.abs(Number(visible[0].dataset.value) - Number(average.dataset.value) * Math.sqrt(Number(row.dataset.horizon))) < 1e-12);
-    }
-    change("metric", "all"); change("view", "average");
+    assert.equal(generations.length, 1);
+    finishGeneration(0, "profile-a"); await tick(); await tick();
+    assert.equal(b("figure").children.length, 1); assert.equal(b("generate").disabled, true);
+    selectProfiles(["hedge_vs_hedge", "hedge_vs_ito"]);
+    assert.equal(cacheRequests.length, 5); assert.equal(b("figure").children.length, 0);
+    finishCache(4, false); await tick(); await tick();
+    assert.equal(b("generate").disabled, false);
+    selectProfiles(["hedge_vs_hedge"]);
+    finishCache(5); await tick(); await tick();
+    assert.equal(b("status").textContent, "Cached figures loaded.");
+    assert.equal(b("figure").firstChild.dataset.filename, "profile-a_0.png");
+    assert.equal(b("generate").disabled, true); assert.equal(b("download").disabled, false);
+
+    selectProfiles(["hedge_vs_hedge", "hedge_vs_ito"]);
+    finishCache(6, false); await tick(); await tick();
+    f("compare-regrets").checked = true;
+    f("compare-regrets").dispatchEvent(new w.Event("change"));
+    assert.equal(f("profiles").multiple, false);
+    assert.equal(f("profiles").size, 1);
+    assert.equal(f("profiles-label").textContent, "Algorithm profile");
+    assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value), ["hedge_vs_hedge"]);
+    assert.equal(f("metric").value, "all");
+    assert.equal(f("metric").disabled, true);
+    assert.equal(f("view").disabled, false);
+    assert.equal(cacheRequests[7].body.get("comparison_mode"), "regrets");
+    assert.deepEqual(cacheRequests[7].body.getAll("profiles"), ["hedge_vs_hedge"]);
+    assert.equal(cacheRequests[7].body.has("metric"), false);
+    const stored = JSON.parse(w.localStorage.getItem("swap-regret-shared-filters-fixed"));
+    assert.deepEqual(stored.selections[f("context").value], ["hedge_vs_hedge"]);
+    finishCache(7, false); await tick(); await tick();
+    submit(); finishGeneration(1, "regret-a"); await tick(); await tick();
+    assert.equal(b("figure").children.length, 1);
+    f("profiles").value = "ito_vs_ito"; f("profiles").dispatchEvent(new w.Event("change"));
+    assert.equal(cacheRequests.length, 9); assert.equal(b("figure").children.length, 0);
+    f("profiles").value = "hedge_vs_hedge"; f("profiles").dispatchEvent(new w.Event("change"));
+    finishCache(9); await tick(); await tick();
+    assert.equal(b("figure").firstChild.dataset.filename, "regret-a_0.png");
+    finishCache(8, true, figuresFor(cacheRequests[8].body, "stale-b")); await tick(); await tick();
+    assert.equal(b("figure").firstChild.dataset.filename, "regret-a_0.png");
     b("download").click();
-    assert.deepEqual(exports[0], ["external_average.pdf", "internal_average.pdf", "swap_average.pdf"]);
-    finishExport(); await tick(); await tick(); assert.equal(downloads, 1);
-    b("download").click(); change("metric", "swap"); finishExport(); await tick(); await tick();
-    assert.equal(downloads, 1); // Do not download an obsolete selection after filters change.
-    f("clear-all").click();
-    assert.equal(visibleRows().length, 0); assert.equal(b("figure").children.length, 0);
-    assert.equal(b("download").disabled, true); submit(); assert.equal(requests.length, 1);
-    f("profiles").value = "hedge_vs_ito";
-    f("profiles").dispatchEvent(new w.Event("change"));
-    assert.deepEqual(visibleRows().map(row => row.dataset.profile), ["hedge_vs_ito"]);
-    submit(); f("clear-all").click(); finish(); await tick(); await tick();
-    assert.equal(b("figure").children.length, 0);
-    change("view", "all"); assert.equal(f("profiles").selectedOptions.length, 0);
-    change("feedback", "bandit"); f("select-all").click(); change("player", "1"); f("select-all").click();
-    assert.equal(visibleRows().length, 1);
-    assert.equal(visibleRows()[0].dataset.profile, "auer_exp3_vs_bm");
-    assert.equal(visibleRows()[0].dataset.player, "1");
-    change("scope", "rpsls"); f("select-all").click();
-    assert.equal(visibleRows().length, 1); assert.equal(visibleRows()[0].dataset.scope, "rpsls");
-    f("clear-all").click();
-    const persisted = JSON.parse(w.localStorage.getItem("swap-regret-shared-filters-fixed"));
-    assert.deepEqual(persisted.selections[f("context").value], []);
+    assert.deepEqual(exports[0].filenames, ["regret-a_0.pdf"]);
+    finishExport(0); await tick(); await tick();
+    assert.equal(downloads, 1);
+    f("compare-profiles").checked = true;
+    f("compare-profiles").dispatchEvent(new w.Event("change"));
+    assert.equal(f("profiles").multiple, true);
+    assert.equal(f("metric").disabled, false);
+    assert.equal(f("metric").value, "internal");
+    assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value), ["hedge_vs_hedge"]);
+    finishCache(10); await tick(); await tick();
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
     run_ui(app, service, script)
 
 
-def test_scaling_only_results_remain_filterable(tmp_path):
+def test_result_filter_sizes_profiles_and_disables_empty_dependencies(tmp_path):
     app, service = create_test_app(tmp_path)
-    spec = AdversarialScalingSpec(environment=RANDOM_WALK_ENVIRONMENT, feedback_mode="bandit",
-        algorithm_name="auer_exp3", action_counts=(3, 6), replicates=2, horizon=10,
-        environment_seed=7, learner_seed=42)
-    run_adversarial_scaling_experiment(spec, service.adversarial_scaling_raw_dir, workers=1)
-    service.adversarial_scaling_figure_dir.mkdir(parents=True)
-    (service.adversarial_scaling_figure_dir / f"{spec.run_id}_regret_by_actions.png").write_bytes(b"preview")
+    contexts = []
+    for index, count in enumerate((1, 2, 3, 8, 9), start=1):
+        contexts.append({
+            "id": f"{index:024x}", "mode": "fixed", "scope": f"game_{count}",
+            "scope_label": f"Game {count}", "feedback_mode": "full_information", "player": 0,
+            "batch_label": f"{count} profiles", "result_keys": [],
+            "profiles": [{"id": f"profile_{profile}", "label": f"Profile {profile}",
+                          "metrics": ["external", "internal", "swap"]} for profile in range(count)],
+        })
+    catalog = {"contexts": contexts,
+               "metrics": [{"id": metric, "label": metric.title()} for metric in ("external", "internal", "swap")],
+               "views": [{"id": "average", "label": "Average"}, {"id": "sqrt_scaling", "label": "Scaling"}]}
     script = r'''
+const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const dom = new JSDOM(payload.page, {url: "http://localhost/", runScripts: "outside-only"});
+const w = dom.window, d = w.document, f = name => d.getElementById("filter-" + name);
+w.fetch = async () => ({ok: true, json: async () => payload.catalog});
+w.eval(payload.script);
+for (const select of d.querySelectorAll("#result-filters select")) assert.equal(select.disabled, true);
+(async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f("compare-regrets").checked, true);
+    assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").size, 1);
+    f("compare-profiles").checked = true;
+    f("compare-profiles").dispatchEvent(new w.Event("change"));
+    for (const [scope, size] of [["game_1", 2], ["game_2", 2], ["game_3", 3], ["game_8", 8], ["game_9", 8]]) {
+        f("scope").value = scope;
+        f("scope").dispatchEvent(new w.Event("change"));
+        assert.equal(f("profiles").size, size);
+        assert.equal(f("profiles").disabled, false);
+    }
+    assert([...d.querySelectorAll("#result-filters select")].every(select => select.disabled || select.options.length));
+    dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});
+'''
+    run_ui(app, service, script, catalog=catalog)
+
+    empty_script = r'''
 const assert = require("assert").strict, {JSDOM} = require("jsdom");
 const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
 const dom = new JSDOM(payload.page, {url: "http://localhost/", runScripts: "outside-only"});
@@ -235,20 +433,26 @@ w.fetch = async () => ({ok: true, json: async () => payload.catalog});
 w.eval(payload.script);
 (async () => {
     await new Promise(resolve => setImmediate(resolve));
-    d.getElementById("filter-select-all").click();
-    assert.equal(d.querySelector("[data-result-card]").hidden, false);
+    await new Promise(resolve => setImmediate(resolve));
+    for (const control of d.querySelectorAll("#result-filters select, .comparison-control input")) {
+        assert.equal(control.disabled, true);
+    }
+    const profiles = d.getElementById("filter-profiles");
+    assert.equal(d.getElementById("filter-compare-regrets").checked, true);
+    assert.equal(profiles.multiple, false); assert.equal(profiles.size, 1);
     assert.equal(d.getElementById("builder-generate").disabled, true);
-    const metric = d.getElementById("filter-metric");
-    metric.value = "swap"; metric.dispatchEvent(new w.Event("change"));
-    assert.equal(d.querySelector("[data-result-card]").hidden, true);
-    metric.value = "external"; metric.dispatchEvent(new w.Event("change"));
-    assert.equal(d.querySelector("[data-result-card]").hidden, false);
-    d.getElementById("filter-clear-all").click();
-    assert.equal(d.querySelector("[data-result-card]").hidden, true);
+    assert.equal(d.getElementById("builder-status").textContent, "No figures to display.");
+    assert.equal(d.getElementById("empty-results-heading").textContent, "Recorded output");
+    assert.equal(d.querySelector(".summary-panel .eyebrow").textContent, "Data");
+    assert.equal(d.querySelector(".summary-panel .empty-state strong").textContent, "No results yet.");
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
-    run_ui(app, service, script, "adversarial")
+    run_ui(app, service, empty_script)
+
+    css = (Path(__file__).parents[2] / "web" / "static" / "dashboard.css").read_text()
+    assert all(selector in css for selector in ("button:disabled", "select:disabled", ".segmented-control input:disabled + span", ".result-panel", ".panel-heading", ".empty-state"))
+    assert "background: var(--surface-muted);" in css
 
 
 def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> None:
@@ -288,20 +492,30 @@ const select = (id, value) => {
 };
 (async () => {
 await new Promise(resolve => setImmediate(resolve));
+const description = document.getElementById("environment-description");
+const before = description.getBoundingClientRect();
+select("adversarial-environment", "lazy_random_walk_v1");
+if (document.getElementById("environment-description") !== description) process.exit(3);
+const after = description.getBoundingClientRect();
+if (before.top !== after.top || before.bottom !== after.bottom) process.exit(5);
+if (!description.textContent.includes("Independent lazy random walks")) process.exit(6);
+if (document.getElementById("environment-panel")) process.exit(4);
 select("filter-scope", "lazy_random_walk_v1");
-document.getElementById("filter-select-all").click();
+const profiles = document.getElementById("filter-profiles");
+profiles.options[0].selected = true;
+profiles.dispatchEvent(new window.Event("change"));
 if (!filteredTo(".summary-row", "scope", "lazy_random_walk_v1")) process.exit(2);
-if (document.getElementById("environment-panel").hidden) process.exit(3);
-if (document.getElementById("random-walk-rule").hidden) process.exit(4);
-if (!document.getElementById("historical-frequency-rule").hidden) process.exit(5);
 if (document.getElementById("filter-feedback").value !== "bandit") process.exit(7);
 if (!filteredTo(".summary-row", "profile", "exp3_ix")) process.exit(11);
+const compareProfiles = document.getElementById("filter-compare-profiles");
+compareProfiles.checked = true; compareProfiles.dispatchEvent(new window.Event("change"));
 select("filter-metric", "internal");
 select("filter-view", "sqrt_scaling");
 const row = visible(".summary-row")[0];
 const cells = [...row.querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
 if (cells.length !== 1 || cells[0].dataset.metric !== "sqrt_scaling_internal") process.exit(12);
-document.getElementById("filter-clear-all").click();
+profiles.options[0].selected = false;
+profiles.dispatchEvent(new window.Event("change"));
 if (visible(".summary-row").length) process.exit(13);
 for (const id of ["filter-horizon", "filter-seed", "filter-player-algorithm", "filter-secondary"]) {
     if (document.getElementById(id)) process.exit(14);
@@ -309,3 +523,6 @@ for (const id of ["filter-horizon", "filter-seed", "filter-player-algorithm", "f
 dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});'''
     run_ui(app, service, script, "adversarial")
+    css = (Path(__file__).parents[2] / "web" / "static" / "dashboard.css").read_text()
+    assert ".summary-row[data-summary-index] {" in css
+    assert "\n.summary-row {\n" not in css

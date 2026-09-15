@@ -1,6 +1,7 @@
 from functools import partial
 import csv
 from collections import Counter
+import json
 
 import numpy as np
 import pytest
@@ -11,8 +12,9 @@ from experiments.game_catalog import load_game_payoffs
 from experiments.plots.plot_joint_actions import joint_action_distribution
 from experiments.plots.plot_regret import load_rows, aggregate_metric_curve
 from experiments.plots.plot_adversarial import aggregate_adversarial_regret
-from experiments.recording import decode_action_block, recording_checkpoints
-from experiments.result_trajectories import load_result_action_profiles
+from experiments.recording import MAX_RECORDED_POINTS, joint_action_histogram_checkpoints, recording_checkpoints
+from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD
+from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, load_final_result_rows
 from experiments.runner import run_game
 from experiments.scenarios.adversarial import (
@@ -34,12 +36,32 @@ class MemoryRecorder:
         self.rows.append(row)
 
 
-@pytest.mark.parametrize("horizon", [1, 2, 100, 2000, 2001, 1_000_000])
+@pytest.mark.parametrize("horizon", [1, 2, 100, 200, 201, 1_000_000])
 def test_recording_budget_and_endpoints(horizon):
     points = recording_checkpoints(horizon)
     assert points[0] == 1 and points[-1] == horizon
-    assert len(points) <= 2000
+    assert len(points) <= MAX_RECORDED_POINTS
     assert tuple(sorted(set(points))) == points
+    if horizon <= MAX_RECORDED_POINTS:
+        assert points == tuple(range(1, horizon + 1))
+    else:
+        expected = np.geomspace(1, horizon, MAX_RECORDED_POINTS).astype(int)
+        expected[0], expected[-1] = 1, horizon
+        assert points == tuple(sorted(set(map(int, expected))))
+        assert recording_checkpoints(horizon, MAX_RECORDED_POINTS * 2) == points
+
+
+@pytest.mark.parametrize(("horizon", "expected"), [
+    (1, (1,)),
+    (9, (1, 9)),
+    (10, (1, 10)),
+    (99, (1, 10, 99)),
+    (100, (1, 10, 100)),
+    (12_345, (1, 10, 100, 1_000, 10_000, 12_345)),
+    (1_000_000, (1, 10, 100, 1_000, 10_000, 100_000, 1_000_000)),
+])
+def test_joint_action_histogram_checkpoint_policy(horizon, expected):
+    assert joint_action_histogram_checkpoints(horizon) == expected
 
 
 @pytest.mark.parametrize("mode,name", [*(('full_information', name) for name in FULL), *(('bandit', name) for name in BANDIT)])
@@ -84,16 +106,21 @@ def test_sparse_runner_matches_original_dense_loop(mode, name):
     recorder = MemoryRecorder()
     run_game("rps", mode, game_type(payoff_tensor), name, actual_players, recorder, horizon,
              max_recorded_points=6)
-    blocks = [[], []]
-    previous = [0, 0]
+    histogram_payloads = []
     for stored in recorder.rows:
         row = stored.copy()
-        block = row.pop("action_history")
+        payload = row.pop(JOINT_ACTION_HISTOGRAM_FIELD, "")
+        if payload:
+            histogram_payloads.append(payload)
         t, i = row["t"], row["player"]
         assert row == reference_rows[t, i]
-        blocks[i].extend(decode_action_block(block, t - previous[i]))
-        previous[i] = t
-    assert np.array_equal(np.asarray(blocks).T, history)
+    assert len(histogram_payloads) == 1
+    histograms = json.loads(histogram_payloads[0])
+    assert histograms["horizons"] == [1, 10, horizon]
+    for checkpoint, values in zip(histograms["horizons"], histograms["counts"]):
+        expected = np.zeros((3, 3), dtype=int)
+        np.add.at(expected, tuple(np.asarray(history[:checkpoint]).T), 1)
+        np.testing.assert_array_equal(np.asarray(values).reshape(3, 3), expected)
     for actual, reference in zip(actual_players, reference_players):
         assert actual.t == reference.t == horizon
         assert np.array_equal(actual.strategy(), reference.strategy())
@@ -126,7 +153,7 @@ def test_tracker_updates_every_round_and_summarizes_only_checkpoints(monkeypatch
     (partial(run_cross_play_experiment, feedback_mode="full_information"), ["hedge", "bm"]),
     (partial(run_cross_play_experiment, feedback_mode="bandit"), ["auer_exp3", "ito"]),
 ])
-def test_sparse_csv_preserves_all_actions_regrets_and_joint_distribution(tmp_path, runner, names):
+def test_regret_recording_budget_does_not_change_histograms_or_joint_distribution(tmp_path, runner, names):
     kwargs = dict(game_name="rps", algorithm_names=names, horizon=101, seed=7)
     dense = runner(**kwargs, output_dir=tmp_path / "dense", max_recorded_points=200)
     sparse = runner(**kwargs, output_dir=tmp_path / "sparse", max_recorded_points=8)
@@ -134,9 +161,16 @@ def test_sparse_csv_preserves_all_actions_regrets_and_joint_distribution(tmp_pat
     dense_rows = {(row["t"], row["player"]): row for row in iter_result_rows(dense)}
     sparse_rows = list(iter_result_rows(sparse))
     for row in sparse_rows:
-        assert {k: v for k, v in row.items() if k != "action_history"} == dense_rows[row["t"], row["player"]]
+        expected = dense_rows[row["t"], row["player"]]
+        assert {k: v for k, v in row.items() if k != JOINT_ACTION_HISTOGRAM_FIELD} == {
+            k: v for k, v in expected.items() if k != JOINT_ACTION_HISTOGRAM_FIELD
+        }
     assert len(sparse_rows) <= 16
-    assert np.array_equal(load_result_action_profiles(dense, (3, 3)), load_result_action_profiles(sparse, (3, 3)))
+    assert all("action_history" not in row for row in sparse_rows)
+    dense_histograms = load_result_empirical_distribution_trajectory(dense, (3, 3))
+    sparse_histograms = load_result_empirical_distribution_trajectory(sparse, (3, 3))
+    np.testing.assert_array_equal(dense_histograms.horizons, sparse_histograms.horizons)
+    np.testing.assert_array_equal(dense_histograms.vectors, sparse_histograms.vectors)
     assert np.array_equal(joint_action_distribution(dense)[1], joint_action_distribution(sparse)[1])
     assert len(load_final_result_rows(sparse)) == 2
     assert {row["player"] for row in load_rows(sparse)} == {"0", "1"}
@@ -170,8 +204,8 @@ def test_adversarial_summaries_are_only_extracted_at_checkpoints(tmp_path, monke
     assert calls == Counter({t: 1 for t in recording_checkpoints(51, 6)})
 
 
-@pytest.mark.parametrize("mutate", ["missing_first", "missing_last", "duplicate", "reverse", "missing_player", "missing_block"])
-def test_sparse_validation_still_rejects_corrupt_trajectories(tmp_path, mutate):
+@pytest.mark.parametrize("mutate", ["missing_first", "missing_last", "duplicate", "reverse", "missing_player", "missing_histogram"])
+def test_fixed_result_validation_rejects_corrupt_trajectories(tmp_path, mutate):
     path = run_cross_play_experiment("rps", ["auer_exp3"] * 2, horizon=25,
                                           output_dir=tmp_path, max_recorded_points=6, feedback_mode="bandit")
     rows = read_csv_rows(path)
@@ -186,38 +220,39 @@ def test_sparse_validation_still_rejects_corrupt_trajectories(tmp_path, mutate):
     elif mutate == "missing_player":
         rows.pop(1)
     else:
-        rows[2]["action_history"] = ""
+        next(row for row in rows if row[JOINT_ACTION_HISTOGRAM_FIELD])[JOINT_ACTION_HISTOGRAM_FIELD] = ""
     with path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
     with pytest.raises(ValueError):
-        list(iter_result_rows(path))
+        load_result_empirical_distribution_trajectory(path, (3, 3))
 
 
-def test_plot_primitives_align_legacy_dense_and_default_sparse_checkpoints(tmp_path, monkeypatch):
+def test_regret_plots_use_default_log_checkpoints_and_axes(tmp_path, monkeypatch):
     from experiments.plots import plot_adversarial, plot_regret
 
     def check_points(figure, output_path):
         curve = figure.axes[0].lines[0]
         assert list(curve.get_xdata()) == list(recording_checkpoints(2100))
-        assert len(curve.get_ydata()) <= 2000
+        assert len(curve.get_ydata()) <= MAX_RECORDED_POINTS
+        assert curve.get_markevery() == (0, 0.24)
+        assert figure.axes[0].get_xscale() == "log"
 
     monkeypatch.setattr(plot_adversarial, "save_figure_pair", check_points)
     monkeypatch.setattr(plot_regret, "save_figure_pair", check_points)
     for runner, kwargs, loader in [
         (run_adversarial_experiment, dict(algorithm_name="auer_exp3", feedback_mode="bandit"),
-         lambda path: load_adversarial_rows(path, max_points=2000)),
+         load_adversarial_rows),
         (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["auer_exp3"] * 2), load_rows),
     ]:
-        dense = runner(**kwargs, horizon=2100, output_dir=tmp_path / "dense", max_recorded_points=3000)
-        sparse = runner(**kwargs, horizon=2100, output_dir=tmp_path / "sparse")
-        assert [row["t"] for row in loader(dense)] == [row["t"] for row in loader(sparse)]
-        rows = loader(sparse)
-        if runner is run_adversarial_experiment:
-            plot_adversarial._plot_regret([(sparse, rows)], rows[0]["environment"], "bandit", int(rows[0]["n_actions"]), "external", True, tmp_path / "regret.png")
-        else:
-            plot_regret.plot_regret("rps", [[rows]], "external", 0, True, tmp_path)
+        path = runner(**kwargs, horizon=2100, output_dir=tmp_path)
+        rows = loader(path)
+        for average in (True, False):
+            if runner is run_adversarial_experiment:
+                plot_adversarial._plot_regret([(path, rows)], rows[0]["environment"], "bandit", int(rows[0]["n_actions"]), "external", average, tmp_path / "regret.png")
+            else:
+                plot_regret.plot_regret("rps", [[rows]], "external", 0, average, tmp_path)
 
 
 def test_replicate_aggregation_uses_only_shared_observed_times():

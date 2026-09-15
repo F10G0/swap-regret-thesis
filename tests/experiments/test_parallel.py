@@ -38,7 +38,7 @@ def test_scaling_parallel_output_order_and_identity_are_deterministic(tmp_path):
     spec = AdversarialScalingSpec(
         environment=RANDOM_WALK_ENVIRONMENT, feedback_mode="bandit",
         algorithm_name="auer_exp3", action_counts=(2, 4), replicates=2, horizon=25,
-        environment_seed=11, learner_seed=7,
+        seed=7,
     )
     serial = run_adversarial_scaling_experiment(spec, tmp_path / "serial", workers=1)
     parallel = run_adversarial_scaling_experiment(spec, tmp_path / "parallel", workers=2)
@@ -110,11 +110,11 @@ def test_invalid_worker_count_is_rejected(workers):
 
 
 @pytest.mark.parametrize("cpus,tasks,workers,expected", [
-    (16, 30, None, 16), (16, 10, None, 10), (8, 30, None, 8),
-    (16, 30, 12, 12), (16, 30, 100, 16), (16, 6, 12, 6),
+    (16, 30, None, 12), (8, 30, None, 8), (16, 5, None, 5),
+    (16, 30, 16, 12), (16, 30, 4, 4),
     (16, 30, 1, 1), (1, 10, None, 1),
 ])
-def test_worker_count_uses_available_cpus_without_four_worker_cap(monkeypatch, cpus, tasks, workers, expected):
+def test_worker_count_is_bounded_by_cap_cpus_and_tasks(monkeypatch, cpus, tasks, workers, expected):
     monkeypatch.setattr(parallel, "_available_cpu_count", lambda: cpus)
     assert parallel._replicate_worker_count([dict(horizon=10_000)] * tasks, workers) == expected
 

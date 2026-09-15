@@ -43,7 +43,8 @@ def test_final_csv_reader_returns_the_complete_last_group_across_chunks(tmp_path
     output_path = tmp_path / "grouped.csv"
     with CsvRecorder(["group", "payload"], output_path) as recorder:
         for row in range(300):
-            recorder.record({"group": "final" if row >= 297 else str(row), "payload": "x" * 50})
+            payload = "x" * 150_000 if row == 299 else "x" * 50
+            recorder.record({"group": "final" if row >= 297 else str(row), "payload": payload})
 
     fieldnames, final_group = read_final_csv_rows(output_path, "group")
     _, final_row = read_final_csv_rows(output_path)

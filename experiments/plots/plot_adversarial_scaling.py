@@ -49,7 +49,7 @@ def _plot_scaling(rows: list[dict[str, str]], output_path: Path) -> None:
     axes.plot(
         action_counts,
         means,
-        **(algorithm_style(first["algorithm"]) | {"markevery": 1}),
+        **algorithm_style(first["algorithm"]),
         label=algorithm_label(first["algorithm"]),
     )
     axes.set_xticks(action_counts)

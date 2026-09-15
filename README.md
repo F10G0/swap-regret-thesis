@@ -33,10 +33,10 @@ Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 
 | Command | Purpose |
 |---|---|
-| `make all` | Install and refresh existing plots |
+| `make all` | Install and refresh scaling plots |
 | `make install` | Install project and tests |
 | `make web` | Start the dashboard |
-| `make plot` | Rebuild plots from saved CSVs |
+| `make plot` | Rebuild action-space scaling plots from saved CSVs |
 | `make test` | Run the complete test suite |
 | `make clean` | Remove Python caches and temporary staging files |
 | `make reset` | Remove all experiment-derived results, figures, and caches |
@@ -48,14 +48,14 @@ Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 ```text
 results/
 ├── raw/          fixed-game CSVs
-├── figures/      PNG previews and vector PDFs
-├── adversarial/  stress-test CSVs and figures
-└── cache/        regenerable plot and equilibrium-distance caches
+├── figures/      generated detail figures
+├── adversarial/  one-player CSVs and scaling outputs
+└── cache/        Figure Builder and equilibrium-distance artifacts
 ```
 
-Run IDs include the complete experiment identity and an implementation version, so results from changed code do not collide. Incompatible historical CSVs are left untouched and excluded from current analysis; no migration is performed. Defaults such as the horizon, seeds, replicate count, tolerances, and stationary solver live in `config.py`.
+Run IDs include the complete experiment identity and numerical runtime fingerprint. Results on disk are assumed to come from the current implementation; clear them before making an incompatible scientific change. Defaults such as the horizon, seeds, replicate count, tolerances, and stationary solver live in `config.py`.
 
-The install commands use `requirements.lock`. Each CSV records the canonical Python and numerical-package environment plus its fingerprint, and that fingerprint participates in the run ID. One-player learner and environment randomness use domain-separated, replicate-specific seeds; CSVs retain both the user-supplied base seeds and the effective derived seeds.
+The install commands use `requirements.lock`. Each CSV records the canonical Python and numerical-package environment plus its fingerprint, and that fingerprint participates in the run ID. The dashboard uses one shared experiment Seed, defaulting to 42. One-player learner and environment randomness use domain-separated, replicate-specific seeds derived from that base seed; CSVs retain the base and effective derived seeds.
 
 CE/CCE incentive constraints and L1 projection are implemented locally using NumPy and SciPy’s `linprog(method="highs")`. Empirical heatmaps count recorded joint actions directly and require no equilibrium LP.
 

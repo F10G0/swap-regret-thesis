@@ -5,11 +5,10 @@ from pathlib import Path
 import re
 
 from experiments.result_schema import (
+    JOINT_ACTION_HISTOGRAM_FIELD,
     REGRET_FIELDNAMES,
-    result_implementation_version,
 )
 from experiments.recorder import read_final_csv_rows, require_csv_columns
-from experiments.recording import action_block_length
 from experiments.runtime_environment import (
     runtime_environment_fingerprint,
     validate_runtime_environment,
@@ -28,7 +27,6 @@ IDENTITY_COLUMNS = (
 )
 
 CONSTANT_RESULT_COLUMNS = IDENTITY_COLUMNS + (
-    "implementation_version",
     "runtime_environment",
     "runtime_fingerprint",
     "game_payoff_digest",
@@ -39,6 +37,7 @@ CONSTANT_RESULT_COLUMNS = IDENTITY_COLUMNS + (
 )
 
 BASE_RESULT_COLUMNS = set(IDENTITY_COLUMNS) | {"t", "player"}
+CURRENT_IDENTITY_COLUMNS = {"runtime_environment", "runtime_fingerprint", "game_payoff_digest"}
 LEGACY_ALGORITHM_COLUMNS = {"algorithm_player_0", "algorithm_player_1"}
 PAYOFF_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -52,7 +51,7 @@ def average_regret_column(regret_name: str) -> str:
 
 
 def required_columns() -> set[str]:
-    return BASE_RESULT_COLUMNS | set(REGRET_FIELDNAMES)
+    return BASE_RESULT_COLUMNS | CURRENT_IDENTITY_COLUMNS | set(REGRET_FIELDNAMES) | {JOINT_ACTION_HISTOGRAM_FIELD}
 
 
 def result_algorithm_profile(row: dict[str, str]) -> tuple[str, ...]:
@@ -87,19 +86,12 @@ def result_game_payoff_digest(row: dict[str, str]) -> str:
 
 
 def result_runtime_environment(row: dict[str, str]) -> str:
-    serialized = row.get("runtime_environment", "").strip()
-    if not serialized or serialized == "0":
-        return ""
-    return validate_runtime_environment(serialized)
+    return validate_runtime_environment(row["runtime_environment"])
 
 
 def result_runtime_fingerprint(row: dict[str, str]) -> str:
     environment = result_runtime_environment(row)
-    fingerprint = row.get("runtime_fingerprint", "").strip()
-    if not environment:
-        if not fingerprint or fingerprint == "0":
-            return ""
-        raise ValueError("runtime_fingerprint requires runtime_environment")
+    fingerprint = row["runtime_fingerprint"].strip()
     if not PAYOFF_DIGEST_PATTERN.fullmatch(fingerprint):
         raise ValueError("invalid runtime_fingerprint")
     if runtime_environment_fingerprint(environment) != fingerprint:
@@ -137,14 +129,13 @@ def _validated_rows(
     n_players = None
     first_time = None
     current_time = None
-    previous_time = 0
+    histogram_payload_count = 0
     current_rows: list[dict[str, str]] = []
     for row in rows:
         # Fully validate constants once; compare their original CSV strings on
         # every subsequent row.
         identity = tuple(row.get(column) for column in CONSTANT_RESULT_COLUMNS)
         if expected_identity is None:
-            result_implementation_version(row)
             require_csv_columns(input_path, fieldnames, required_columns())
             if row["feedback_mode"] not in {"full_information", "bandit"}:
                 raise ValueError(f"unknown feedback mode: {row['feedback_mode']}")
@@ -162,6 +153,10 @@ def _validated_rows(
         player = int(row["player"])
         if time <= 0 or time > expected_horizon or not 0 <= player < n_players:
             raise ValueError(f"{input_path} contains invalid round metadata")
+        if row[JOINT_ACTION_HISTOGRAM_FIELD].strip():
+            if player != 0 or time != expected_horizon:
+                raise ValueError(f"{input_path} joint-action histograms must appear only on the final player-0 row")
+            histogram_payload_count += 1
 
         if current_time is None:
             first_time = current_time = time
@@ -171,16 +166,14 @@ def _validated_rows(
             yield from _validated_round(
                 input_path, current_time, current_rows, n_players
             )
-            previous_time, current_time = current_time, time
+            current_time = time
             current_rows = []
-        if "action_history" in fieldnames:
-            count = action_block_length(row["action_history"])
-            if (require_complete_trajectory and count != time - previous_time) or count > time:
-                raise ValueError(f"{input_path} action_history does not cover the checkpoint interval")
         current_rows.append(row)
 
     if current_time is None:
         return
+    if histogram_payload_count != 1:
+        raise ValueError(f"{input_path} must contain exactly one joint-action histogram payload")
 
     yield from _validated_round(input_path, current_time, current_rows, n_players)
     if require_complete_trajectory:

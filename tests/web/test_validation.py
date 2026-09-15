@@ -122,7 +122,7 @@ def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 2
 
 
-def test_dashboard_group_details_downloads_figures_and_deletion(tmp_path):
+def test_dashboard_group_details_downloads_and_figures(tmp_path):
     app, service = create_test_app(tmp_path)
     paths = [run_cross_play_experiment(
         "rps", ["hedge", "hedge"], horizon=2, replicate=r, output_dir=service.raw_dir,
@@ -139,9 +139,25 @@ def test_dashboard_group_details_downloads_figures_and_deletion(tmp_path):
     distance, _ = wait_for_http_response(client, summary["equilibrium_distance_pdf_url"])
     assert heatmap.status_code == distance.status_code == 200
     assert heatmap.mimetype == "image/png" and distance.mimetype == "application/pdf"
-    response = client.post("/delete-experiment", data={"filename": paths[0].name, "_csrf_token": csrf_token(client)})
-    assert response.status_code == 302
-    assert not paths[0].exists() and paths[1].exists()
+
+
+def test_custom_game_generator_uses_header_seed_and_zero_sum_default(tmp_path):
+    app, _ = create_test_app(tmp_path)
+    client = app.test_client()
+    page = client.get("/custom-games").get_data(as_text=True)
+    assert page.count('name="seed"') == 1
+    assert 'id="custom-game-seed" name="seed" form="custom-game-form"' in page
+    assert page.index('id="custom-game-seed"') < page.index('id="custom-game-form"')
+    assert 'id="experiment-seed"' not in page
+    assert '<option value="zero_sum" selected>Symmetric zero-sum</option>' in page
+    assert '<option value="general_sum"' in page
+
+    response = client.post("/custom-games", data={
+        "_csrf_token": csrf_token(client), "name": "General", "payoff_structure": "general_sum",
+        "n_players": "3", "action_counts": ["2", "2", "2"], "seed": "-1",
+    })
+    assert response.status_code == 400
+    assert '<option value="general_sum" selected>General-sum</option>' in response.get_data(as_text=True)
 
 
 @pytest.mark.parametrize("players,counts,structure", [(3, [2, 3, 2], "general_sum"), (2, [3], "zero_sum")])

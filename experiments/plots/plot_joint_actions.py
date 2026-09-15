@@ -13,7 +13,7 @@ from experiments.game_catalog import load_game_payoffs
 from experiments.plots import save_figure_pair
 from experiments.plots.style import publication_plot, HEATMAP_FIGURE_SIZE, heatmap
 from experiments.results import iter_result_rows
-from experiments.result_trajectories import load_result_action_profiles
+from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 
 
 def joint_action_distribution(input_path: str | Path, custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> tuple[str, np.ndarray]:
@@ -27,10 +27,8 @@ def joint_action_distribution(input_path: str | Path, custom_game_dir: str | Pat
     action_counts = load_game_payoffs(game_name, custom_game_dir).shape[1:]
     if len(action_counts) != 2:
         raise ValueError("joint-action heatmaps require exactly two players")
-    profiles = load_result_action_profiles(input_path, action_counts)
-    counts = np.zeros(action_counts, dtype=int)
-    np.add.at(counts, tuple(profiles.T), 1)
-    return game_name, counts / np.sum(counts)
+    empirical = load_result_empirical_distribution_trajectory(input_path, action_counts)
+    return game_name, empirical.distributions[-1]
 
 
 def mean_joint_action_distribution(input_paths: Iterable[str | Path], custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> tuple[str, np.ndarray, int]:

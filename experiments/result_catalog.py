@@ -1,7 +1,7 @@
 """Persisted result sources and explicit consumer-specific membership policies.
 
-Only final observations are read here. Trajectories/action histories continue to
-use the strict, lazy readers; presentation dictionaries never feed grouping.
+Only final observations are read here. Histogram trajectories continue to use
+the strict reader; presentation dictionaries never feed grouping.
 """
 
 from collections import defaultdict
@@ -30,14 +30,14 @@ from experiments.scenarios.cross_play import FEEDBACK_MODE_LABELS
 ResultKind = Literal["fixed", "adversarial", "scaling"]
 SUMMARY_REGRET_FIELDS = tuple(f"average_{name}_regret" for name in REGRET_NAMES)
 FIXED_COMPARISON_FIELDS = ("game", "game_payoff_digest", "feedback_mode", "horizon", "seed",
-                           "stationary_method", "implementation_version", "runtime_fingerprint")
+                           "stationary_method", "runtime_fingerprint")
 
 
 def adversarial_plot_key(row: dict[str, str]) -> tuple:
     # Unlike builder compatibility, this key includes reward_step, retains wire
     # strings, and determines plot sorting. Do not substitute comparison_key.
-    return (row["environment"], row["reward_step"], row["feedback_mode"], row["implementation_version"],
-            row["runtime_fingerprint"], row["n_actions"], row["algorithm"], row["horizon"],
+    return (row["environment"], row["reward_step"], row["feedback_mode"], row["runtime_fingerprint"],
+            row["n_actions"], row["algorithm"], row["horizon"],
             int(row["base_environment_seed"]) if row["environment_seed"] else None, int(row["base_learner_seed"]))
 
 
@@ -77,7 +77,6 @@ class ResultRecord:
     run_id: str
     feedback_mode: str
     horizon: int
-    implementation_version: int
     runtime_environment: str
     runtime_fingerprint: str
     profile: tuple[str, ...]
@@ -127,16 +126,14 @@ class ResultRecord:
                 for field, value in observation.items():
                     if not math.isfinite(value):
                         raise ValueError(f"non-finite value for {field}")
-        # Fixed summaries historically canonicalize runtime JSON; one-player readers
-        # validate it but leave its original serialization intact.
-        runtime = row.get("runtime_environment", "")
+        # Fixed summaries canonicalize runtime JSON; one-player readers validate it
+        # but leave its original serialization intact.
+        runtime = row["runtime_environment"]
         if kind == "fixed":
-            runtime = runtime.strip()
-            runtime = json.dumps(json.loads(runtime), sort_keys=True, separators=(",", ":")) if runtime not in ("", "0") else ""
-        fingerprint = row.get("runtime_fingerprint", "").strip()
+            runtime = json.dumps(json.loads(runtime), sort_keys=True, separators=(",", ":"))
+        fingerprint = row["runtime_fingerprint"].strip()
         return cls(path, kind, row["run_id"], row["feedback_mode"], int(row["horizon"]),
-                   int(row["implementation_version"]), runtime, "" if kind == "fixed" and fingerprint == "0" else fingerprint,
-                   profile, details, values)
+                   runtime, fingerprint, profile, details, values)
 
     @property
     def scope(self) -> str:
@@ -159,7 +156,7 @@ class ResultRecord:
                          for field in FIXED_COMPARISON_FIELDS)
         if isinstance(info, AdversarialDetails):
             return (info.environment, self.feedback_mode, info.n_actions, self.horizon, info.base_learner_seed,
-                    info.base_environment_seed, self.implementation_version, self.runtime_fingerprint)
+                    info.base_environment_seed, self.runtime_fingerprint)
         raise ValueError("scaling aggregates do not define trajectory comparison groups")
 
     @property
@@ -169,7 +166,7 @@ class ResultRecord:
     def summary(self, player: int = 0) -> dict:
         """Serialize a final observation for presentation, never for grouping."""
         info = self.details
-        common = {name: getattr(self, name) for name in ("feedback_mode", "horizon", "implementation_version")}
+        common = {name: getattr(self, name) for name in ("feedback_mode", "horizon")}
         if isinstance(info, FixedDetails):
             return common | {"experiment": self.path.name, "run_id": self.run_id, "game": info.game,
                 "seed": info.seed, "replicate": info.replicate, "stationary_method": info.stationary_method,
@@ -253,6 +250,8 @@ class ResultSet:
                               if field in record.final_values[player]]
                     if len(values) == len(rows):
                         result[field] = float(np.mean(values))
+                if group.records[0].kind == "adversarial":
+                    result["average_regret"] = result[f"average_{result['target_regret']}_regret"]
                 summaries.append(result | {"group_id": group.records[0].group_id, "replicate": replicates[0],
                     "replicates": replicates, "replicate_count": len(replicates), "replicate_label": label, "runs": rows})
         return summaries

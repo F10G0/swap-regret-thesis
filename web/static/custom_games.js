@@ -53,8 +53,8 @@ function updatePayoffStructure() {
     }
     if (payoffStructureHint) {
         payoffStructureHint.textContent = zeroSum
-            ? "Both players share one action set. Centered payoffs satisfy A = −Aᵀ; displayed payoffs use u and 1 − u."
-            : "General-sum payoffs are sampled independently for every player.";
+            ? "Two players share one action count."
+            : "Payoffs are sampled independently for each player.";
     }
     renderActionCounts();
 }

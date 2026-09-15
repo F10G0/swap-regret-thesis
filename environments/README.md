@@ -23,4 +23,4 @@ Runners supply valid actions/player ids and stop at the configured horizon; the 
 
 The historical-frequency adversary adaptively uses the complete earlier action history and assigns payoff 0 to the most frequent half of the actions, rounded up. Bandit mode passes only the sampled payoff to the learner.
 
-The lazy random walk precomputes an independent integer-state walk for every action. Rewards lie on `0, 0.1, ..., 1`; initialization is centered at `0.5` or uniform on that grid. Its environment seed controls the sequence, which never depends on learner actions or the learner seed.
+The lazy random walk precomputes an independent integer-state walk for every action. Rewards lie on `0, 0.1, ..., 1`; initialization is centered at `0.5` or uniform on that grid. Its random stream is derived from the experiment's base seed in a separate domain from the learner and never depends on learner actions.

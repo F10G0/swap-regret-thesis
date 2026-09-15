@@ -51,7 +51,7 @@ def test_removed_exp3_is_rejected_for_new_cross_play_runs(tmp_path) -> None:
 
 @pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
 def test_all_feedback_modes_record_the_canonical_schema(tmp_path, feedback_mode):
-    from experiments.result_schema import REGRET_FIELDNAMES, RESULT_IMPLEMENTATION_VERSION
+    from experiments.result_schema import REGRET_FIELDNAMES
     if feedback_mode == "full_information":
         names = ["hedge", "bm"]
     else:
@@ -60,7 +60,7 @@ def test_all_feedback_modes_record_the_canonical_schema(tmp_path, feedback_mode)
     for row in rows:
         assert {key for key in row if key.endswith("_regret")} == set(REGRET_FIELDNAMES)
         assert "regret_evaluation" not in row
-        assert int(row["implementation_version"]) == RESULT_IMPLEMENTATION_VERSION == 6
+        assert "implementation_version" not in row
 
 
 def test_cancelled_experiment_does_not_publish_partial_result(tmp_path) -> None:

@@ -15,7 +15,7 @@ from web.services import DashboardService
 ADVERSARIAL_FORM = {
     "experiment_type": "adversarial", "environment": "historical_frequency_v3",
     "feedback_mode": "full_information", "algorithm_names": ["hedge"],
-    "n_actions": "3", "horizon": "4", "environment_seed": "11", "seed": "7", "replicates": "1",
+    "actions": "3", "horizon": "4", "seed": "7", "replicates": "1",
 }
 
 
