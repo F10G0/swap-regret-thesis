@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from algorithms.external_regret import AuerExp3, Exp3IX, TsallisINF
+from algorithms.external_regret import AuerExp3, Exp3IX, OptimisticHedge, TsallisINF
+from algorithms.swap_regret import BMOptimisticHedge
 from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE
 
 BANDIT_ALGORITHMS = ALGORITHMS_BY_FEEDBACK_MODE["bandit"]
@@ -13,13 +14,18 @@ def test_registered_bandit_learners_use_literature_specific_inner_learners() -> 
     exp3_ix = BANDIT_ALGORITHMS["exp3_ix"].create(n_actions=3, horizon=100, seed=0)
     bandit_bm = BANDIT_ALGORITHMS["bm"].create(n_actions=3, horizon=100, seed=0)
     bandit_ito = BANDIT_ALGORITHMS["ito"].create(n_actions=3, horizon=100, seed=0)
+    optimistic_hedge = FULL_ALGORITHMS["optimistic_hedge"].create(n_actions=3, horizon=100, seed=0)
+    bm_optimistic_hedge = FULL_ALGORITHMS["bm_optimistic_hedge"].create(n_actions=3, horizon=100, seed=0)
 
     assert list(BANDIT_ALGORITHMS) == ["auer_exp3", "exp3_ix", "bm", "ito", "lce_ix"]
-    assert list(FULL_ALGORITHMS) == ["hedge", "bm", "ito", "regret_matching", "stationary_regret_matching"]
+    assert list(FULL_ALGORITHMS) == ["hedge", "optimistic_hedge", "bm", "bm_optimistic_hedge", "ito", "regret_matching", "stationary_regret_matching"]
     assert isinstance(auer_exp3, AuerExp3) and auer_exp3.horizon == 100
     assert isinstance(exp3_ix, Exp3IX) and exp3_ix.horizon == 100
     assert all(isinstance(inner, AuerExp3) and inner.horizon == 100 for inner in bandit_bm.learners)
     assert all(isinstance(inner, TsallisINF) for inner in bandit_ito.learners)
+    assert isinstance(optimistic_hedge, OptimisticHedge) and optimistic_hedge.horizon == 100
+    assert isinstance(bm_optimistic_hedge, BMOptimisticHedge) and bm_optimistic_hedge.horizon == 100
+    assert bm_optimistic_hedge.n_players == 2
 
 
 @pytest.mark.parametrize("mode,registry", [("bandit", BANDIT_ALGORITHMS), ("full", FULL_ALGORITHMS)])

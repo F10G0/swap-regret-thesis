@@ -58,8 +58,6 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
         raise ValueError("Select exactly one algorithm profile for this comparison")
     if comparison_mode == "regrets" and metric != "all":
         raise ValueError("Regret-notion comparison includes all regret notions")
-    if comparison_mode != "regrets" and metric not in REGRET_NAMES:
-        raise ValueError("Select exactly one regret notion for this comparison")
     action = "all" if comparison_mode == "actions" else values.get("action", "")
     if mode == "adversarial" and comparison_mode != "actions" and not re.fullmatch(r"[1-9][0-9]*", action):
         raise ValueError("Choose an available action count")

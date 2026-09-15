@@ -12,8 +12,9 @@ The experiment runner always stops at a preset positive horizon `T`. The common 
 |---|---|
 | `Hedge(K, horizon=T, seed=...)` | Positive integer `T`; fixed rate, including after `T` updates |
 | `Hedge(K, horizon=None, seed=...)` | Local-time rate; `None` is the default and is specific to Hedge |
+| `OptimisticHedge(K, horizon=T, seed=...)` | Required positive integer `T`; fixed standalone or explicitly supplied rate |
 | `AuerExp3(K, horizon=T, seed=...)`, `Exp3IX(K, horizon=T, seed=...)` | Required positive integer `T`; fixed parameters |
-| `FullBM(K, horizon=T, seed=...)`, `BanditBM(K, horizon=T, seed=...)` | Pass the actual positive experiment horizon to every inner learner |
+| `FullBM(K, horizon=T, seed=...)`, `BMOptimisticHedge(K, horizon=T, seed=...)`, `BanditBM(K, horizon=T, seed=...)` | Pass the actual positive experiment horizon to every inner learner |
 | `TsallisINF(K, seed=...)`, `LCEIXInner(K, seed=...)` | No horizon argument; each implements its own local-time schedule |
 | `RegretMatching`, `StationaryRegretMatching`, `FullIto`, `BanditIto`, `LCEIX` | No horizon argument |
 
@@ -24,6 +25,7 @@ Zero is rejected by horizon-taking learners. Fixed rates never switch automatica
 | Class | Feedback and update | Parameter schedule | Paper and guarantee |
 |---|---|---|---|
 | `Hedge` | Full reward vector; cumulative-gain exponential weights | Fixed `eta=sqrt(8 log(K)/T)` for positive `horizon=T`; local `eta_s=sqrt(8 log(K)/s)` for `horizon=None` | Hedge-style external regret `O(sqrt(T log K))` |
+| `OptimisticHedge` | Full reward vector; Chen–Peng Eq. (3) in reward form: `x_(t+1)(j) ∝ x_t(j) exp(eta (2 r_t(j) - r_(t-1)(j)))`, with `r_0=0` | Chen–Peng Theorem 3.1: fixed `eta=(log(K)/T)^(1/6)`, unless an explicit fixed rate is supplied | Full-information repeated-game tuning |
 | `Exp3IX` | Selected reward is converted to an implicit-exploration loss estimate | [Neu (2015)](https://proceedings.neurips.cc/paper_files/paper/2015/file/1c64ee92596e8ea5050fc435a1d57459-Paper.pdf): fixed `eta=sqrt(2 log(K)/(K T))` and `gamma=eta/2` | Neu-style high-probability adversarial bandit control |
 | `AuerExp3` | Auer et al. (2002), Figure 1: `x_hat[k]=r_k/p_k`; probabilities explicitly mix normalized weights with uniform exploration | [Auer et al. (2002), Corollary 3.2](https://www.schapire.net/papers/AuerCeFrSc01.pdf): `gamma=min(1,sqrt(K log(K)/((e-1)T)))`, `eta=gamma/K`, and `w_k <- w_k exp(eta x_hat[k])` | Standalone known-horizon external-regret baseline |
 | `TsallisINF` | Standard importance-weighted bandit losses and the `1/2`-Tsallis FTRL/OMD distribution | [Zimmert and Seldin (2019)](https://proceedings.mlr.press/v89/zimmert19a/zimmert19a.pdf): `eta_t=1/sqrt(t)` with local update time; `w_i=1/(eta_t^2 (L_hat_i+lambda)^2)` and `lambda` normalizes `w` | Anytime adversarial pseudo-regret at most `4 sqrt(KT)+1`; canonical inner learner for Bandit Ito |
@@ -40,6 +42,7 @@ The bandit experiment registry exposes `auer_exp3`, `exp3_ix`, `bm`, `ito`, and 
 
 - `RegretMatching` implements Hart–Mas-Colell positive action-replacement regret. `StationaryRegretMatching` uses the stationary distribution of its regret transition matrix; its solver supports `solve`, `pinv`, and `iteration`.
 - `FullBM` is the full-information [Blum–Mansour (2007)](https://www.jmlr.org/papers/volume8/blum07a/blum07a.pdf) stationary reduction with one known-horizon `Hedge` learner per outer action.
+- `BMOptimisticHedge` is the Chen–Peng BM-Optimistic-Hedge algorithm: the standard `FullBM` reduction with one `OptimisticHedge` learner per outer action. Inner learner `i` receives weighted reward `x_t(i) r_t` and uses the fixed Theorem 5.1 rate `eta=(K log(K)/(m^2 T))^(1/4)` for `m` players. This and the standalone Optimistic Hedge rate are repeated-game tunings from Chen and Peng, not universal optimal choices for arbitrary environments.
 - `BanditBM` is the partial-information Blum–Mansour reduction with one BM-tuned `AuerExp3` learner per outer action. When outer action `k` is played, inner learner `i` receives the paper's observed gain `g_{i,k}=p_i q_{i,k} r_k/p_k`; its Auer learner then importance-weights by `q_{i,k}`. All inner learners update every round. Theorem 11 bounds swap pseudo-regret (the maximum over swap functions outside the expectation) by `O(K sqrt(K T log K))` with `B_max=T`.
 - `FullIto` follows the efficient reduction of [Ito (2020)](https://proceedings.neurips.cc/paper/2020/file/d79c8788088c2193f0244d8f1f36d2db-Paper.pdf): sample one inner learner from the stationary outer distribution, sample its action, and update only that learner. Its inner learners are anytime `Hedge` instances.
 - `BanditIto` uses the same Ito reduction with independent anytime `TsallisINF` inner learners. Each instance advances only when selected, so its time index is its own random local update count. Combining Ito's reduction with the minimax `O(sqrt(KT))` bandit learner yields the `O(K sqrt(T))` bandit swap-regret order.

@@ -1,9 +1,11 @@
 ALGORITHM_LABELS = {
     "hedge": "Hedge",
+    "optimistic_hedge": "Optimistic Hedge",
     "exp3": "EXP3",  # Retained for historical result labels only.
     "auer_exp3": "AuerExp3",
     "exp3_ix": "EXP3-IX",
     "bm": "BM",
+    "bm_optimistic_hedge": "BM-Optimistic-Hedge",
     "ito": "Ito",
     "lce_ix": "LCE-IX",
     "regret_matching": "RM",

@@ -3,8 +3,8 @@ from functools import partial
 import numpy as np
 import pytest
 
-from algorithms.external_regret import AuerExp3, Exp3IX, Hedge, TsallisINF
-from algorithms.swap_regret import BanditBM, FullBM, LCEIX, LCEIXInner
+from algorithms.external_regret import AuerExp3, Exp3IX, Hedge, OptimisticHedge, TsallisINF
+from algorithms.swap_regret import BMOptimisticHedge, BanditBM, FullBM, LCEIX, LCEIXInner
 from config import NUMERICAL_TOLERANCE
 
 
@@ -317,24 +317,24 @@ def test_unknown_horizon_learning_rates_follow_local_updates() -> None:
     assert hedge.learning_rate == pytest.approx(np.sqrt(8.0 * np.log(3) / 2))
 
 
-@pytest.mark.parametrize("learner_type", [Hedge, AuerExp3, Exp3IX])
+@pytest.mark.parametrize("learner_type", [Hedge, OptimisticHedge, AuerExp3, Exp3IX])
 def test_fixed_schedule_does_not_switch_after_horizon(learner_type) -> None:
     learner = learner_type(2, horizon=2, seed=0)
     initial_rate = learner.learning_rate
     for _ in range(4):
         learner.sample_action()
-        learner.update(np.array([0.2, 0.8]) if learner_type is Hedge else 0.5)
+        learner.update(np.array([0.2, 0.8]) if learner_type in {Hedge, OptimisticHedge} else 0.5)
         assert learner.learning_rate == initial_rate
 
 
-@pytest.mark.parametrize("learner_type", [Hedge, AuerExp3, Exp3IX, FullBM, BanditBM])
+@pytest.mark.parametrize("learner_type", [Hedge, OptimisticHedge, AuerExp3, Exp3IX, FullBM, BMOptimisticHedge, BanditBM])
 @pytest.mark.parametrize("horizon", [0, -1, 1.5, np.inf, np.nan, True])
 def test_known_horizon_must_be_a_positive_integer(learner_type, horizon) -> None:
     with pytest.raises(ValueError, match="horizon"):
         learner_type(3, horizon=horizon)
 
 
-@pytest.mark.parametrize("learner_type", [AuerExp3, Exp3IX, FullBM, BanditBM])
+@pytest.mark.parametrize("learner_type", [OptimisticHedge, AuerExp3, Exp3IX, FullBM, BMOptimisticHedge, BanditBM])
 def test_known_horizon_is_required(learner_type) -> None:
     with pytest.raises(TypeError, match="horizon"):
         learner_type(3)

@@ -29,7 +29,6 @@
     const profiles = () => [...filter("profiles").selectedOptions].map(option => option.value);
     const selectionValid = () => currentContext && profiles().length > 0
         && (comparisonMode() === "profiles" || profiles().length === 1)
-        && (comparisonMode() === "regrets" || filter("metric").value !== "all")
         && (!onePlayer || comparisonMode() === "actions" || filter("action").value !== "all");
     const selected = () => ({
         scope: filter("scope").value, feedback: filter("feedback").value,
@@ -71,7 +70,7 @@
     function updateButtons() {
         const pending = probingRevision === selectionRevision || generatingRevision !== null;
         builder("generate").disabled = pending || !selectionValid() || figures.length > 0;
-        builder("download").disabled = exporting || figures.length === 0;
+        builder("download").disabled = exporting || visibleFigures().length === 0;
         const count = profiles().length;
         filter("selection-status").textContent = `${count} profile${count === 1 ? "" : "s"} selected.`;
         announceSelection();
@@ -87,7 +86,19 @@
     function showFigures(items) {
         figures = items;
         builder("figure").replaceChildren(...figures.map(figureCard));
+        filterFigureCards();
         displayRevision += 1;
+    }
+
+    const visibleFigures = () => figures.filter(figure =>
+        (filter("metric").value === "all" || figure.metric === filter("metric").value)
+        && (filter("view").value === "all" || figure.view === filter("view").value));
+
+    function filterFigureCards() {
+        for (const card of builder("figure").children) {
+            card.hidden = (filter("metric").value !== "all" && card.dataset.metric !== filter("metric").value)
+                || (filter("view").value !== "all" && card.dataset.view !== filter("view").value);
+        }
     }
 
     function updateComparisonControls() {
@@ -171,7 +182,7 @@
 
         const hasFilterContext = Boolean(currentContext);
         const metrics = comparisonMode() === "regrets" ? [["all", "All regrets"]]
-            : catalog.metrics.map(metric => [metric.id, metric.label]);
+            : [["all", "All regrets"], ...catalog.metrics.map(metric => [metric.id, metric.label])];
         setOptions(filter("metric"), metrics, comparisonMode() === "regrets" ? "all" : profileMetric, hasFilterContext);
         setOptions(filter("view"), [["all", "Both views"], ...catalog.views.map(view => [view.id, view.label])],
             selectedView, hasFilterContext);
@@ -211,6 +222,8 @@
         const card = document.createElement("article");
         card.className = "figure-card";
         card.dataset.filename = result.filename;
+        card.dataset.metric = result.metric;
+        card.dataset.view = result.view;
         const open = document.createElement("button");
         open.type = "button";
         open.className = "figure-open";
@@ -259,13 +272,14 @@
     });
 
     builder("download").addEventListener("click", async () => {
-        if (exporting || !figures.length) return;
+        const displayedFigures = visibleFigures();
+        if (exporting || !displayedFigures.length) return;
         exporting = true;
         const revision = displayRevision;
         builder("download").disabled = true;
-        builder("export-status").textContent = `Combining ${figures.length} PDFs…`;
+        builder("export-status").textContent = `Combining ${displayedFigures.length} PDFs…`;
         const body = new URLSearchParams({_csrf_token: form.elements._csrf_token.value, mode: "figure_builder"});
-        figures.forEach(figure => body.append("filenames", figure.pdf_filename));
+        displayedFigures.forEach(figure => body.append("filenames", figure.pdf_filename));
         try {
             const response = await fetch(form.dataset.exportUrl, {method: "POST", body});
             if (!response.ok) {
@@ -287,7 +301,7 @@
             if (revision === displayRevision) builder("export-status").textContent = error.message;
         } finally {
             exporting = false;
-            builder("download").disabled = !figures.length;
+            builder("download").disabled = !visibleFigures().length;
         }
     });
 
@@ -301,11 +315,15 @@
     filter("context").addEventListener("change", () => { remember(); updateProfiles(); });
     filter("metric").addEventListener("change", () => {
         profileMetric = filter("metric").value;
-        selectionChanged();
+        filterFigureCards();
+        displayRevision += 1;
+        updateButtons();
     });
     filter("view").addEventListener("change", () => {
         selectedView = filter("view").value;
-        selectionChanged();
+        filterFigureCards();
+        displayRevision += 1;
+        updateButtons();
     });
     for (const mode of comparisonModes) {
         filter(`compare-${mode}`).addEventListener("change", () => {

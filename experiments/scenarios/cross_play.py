@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from algorithms.base import Algorithm
-from algorithms.external_regret import AuerExp3, Exp3IX, Hedge
+from algorithms.external_regret import AuerExp3, Exp3IX, Hedge, OptimisticHedge
 from algorithms.internal_regret import RegretMatching, StationaryRegretMatching
-from algorithms.swap_regret import BanditBM, BanditIto, FullBM, FullIto, LCEIX
+from algorithms.swap_regret import BMOptimisticHedge, BanditBM, BanditIto, FullBM, FullIto, LCEIX
 from config import CUSTOM_GAME_DIR, HORIZON, RAW_DIR, SEED
 from environments import BanditRepeatedGame, RepeatedGame
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
@@ -32,7 +32,9 @@ class AlgorithmFactory:
 ALGORITHMS_BY_FEEDBACK_MODE = {
     "full_information": {
         "hedge": AlgorithmFactory(Hedge, uses_horizon=True),
+        "optimistic_hedge": AlgorithmFactory(OptimisticHedge, uses_horizon=True),
         "bm": AlgorithmFactory(FullBM, uses_horizon=True),
+        "bm_optimistic_hedge": AlgorithmFactory(BMOptimisticHedge, uses_horizon=True),
         "ito": AlgorithmFactory(FullIto, uses_horizon=False),
         "regret_matching": AlgorithmFactory(RegretMatching, uses_horizon=False),
         "stationary_regret_matching": AlgorithmFactory(StationaryRegretMatching, uses_horizon=False),

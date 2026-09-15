@@ -16,7 +16,7 @@ make web
 
 | Feedback | Learners |
 |---|---|
-| Full information | Hedge, Regret Matching, SRM, Blum–Mansour, Ito |
+| Full information | Hedge, Optimistic Hedge, Regret Matching, SRM, Blum–Mansour, BM-Optimistic-Hedge, Ito |
 | Bandit | AuerExp3, Exp3-IX, Blum–Mansour, Ito, LCE-IX |
 
 Built-in games are RPS and RPSLS, defined locally as fixed payoff matrices. Matching Pennies is a local test-only fixture. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary and an action-independent lazy reward walk; multiple K values can be queued as one ordinary-result batch.

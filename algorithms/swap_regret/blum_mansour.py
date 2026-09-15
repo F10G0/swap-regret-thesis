@@ -2,7 +2,7 @@ from functools import partial
 
 import numpy as np
 
-from algorithms.external_regret import AuerExp3, Hedge
+from algorithms.external_regret import AuerExp3, Hedge, OptimisticHedge
 from algorithms.external_regret.exp3 import ImplicitExplorationAlgorithm
 from algorithms.swap_regret.base import StationaryReduction
 
@@ -20,6 +20,22 @@ class FullBM(StationaryReduction):
         for i, learner in enumerate(self.learners):
             weighted_reward = self.current_strategy[i] * reward_vector
             learner.update(weighted_reward)
+
+
+class BMOptimisticHedge(FullBM):
+    """Chen-Peng BM reduction with optimistic Hedge inner learners."""
+
+    def __init__(self, n_actions: int, horizon: int, n_players: int = 2, seed: int | None = None) -> None:
+        if n_actions <= 0:
+            raise ValueError("n_actions must be positive.")
+        if not isinstance(horizon, (int, np.integer)) or isinstance(horizon, bool) or horizon <= 0:
+            raise ValueError("horizon must be a positive integer")
+        if not isinstance(n_players, (int, np.integer)) or isinstance(n_players, bool) or n_players <= 0:
+            raise ValueError("n_players must be a positive integer")
+        self.n_players = n_players
+        self.inner_learning_rate = (n_actions * np.log(n_actions) / (n_players**2 * horizon)) ** (1.0 / 4.0)
+        inner_factory = partial(OptimisticHedge, learning_rate=self.inner_learning_rate)
+        super().__init__(n_actions, horizon, inner_algorithm_factory=inner_factory, seed=seed)
 
 
 class BanditBM(StationaryReduction):

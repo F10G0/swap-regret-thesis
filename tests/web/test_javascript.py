@@ -210,23 +210,22 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const change = (name, value) => {f(name).value = value; f(name).dispatchEvent(new w.Event("change"));};
 const submit = () => d.getElementById("figure-builder").dispatchEvent(new w.Event("submit", {cancelable: true}));
 const visibleRows = () => [...d.querySelectorAll(".summary-row")].filter(row => !row.hidden);
+const visibleCards = () => [...b("figure").children].filter(card => !card.hidden);
 const selectProfiles = values => {
     [...f("profiles").options].forEach(option => option.selected = values.includes(option.value));
     f("profiles").dispatchEvent(new w.Event("change"));
 };
 const figuresFor = (body, tag) => {
     const comparison = body.get("comparison_mode");
-    const metrics = comparison === "regrets" ? ["all"]
-        : (body.get("metric") === "all" ? ["external", "internal", "swap"] : [body.get("metric")]);
-    const views = body.get("view") === "all" ? ["average", "sqrt_scaling"] : [body.get("view")];
-    return metrics.flatMap(metric => views.map((view, index) => ({
-        metric, view, title: metric + " " + view, filename: tag + "_" + index + ".png",
-        pdf_filename: tag + "_" + index + ".pdf", url: "/" + tag + "_" + index + ".png",
-        pdf_url: "/" + tag + "_" + index + ".pdf"
+    const metrics = comparison === "regrets" ? ["all"] : ["external", "internal", "swap"];
+    const views = ["average", "sqrt_scaling"];
+    return metrics.flatMap(metric => views.map(view => ({
+        metric, view, title: metric + " " + view, filename: `${tag}_${metric}_${view}.png`,
+        pdf_filename: `${tag}_${metric}_${view}.pdf`, url: `/${tag}_${metric}_${view}.png`,
+        pdf_url: `/${tag}_${metric}_${view}.pdf`
     })));
 };
-const cacheKey = body => [body.get("comparison_mode"), body.get("metric") || "all", body.get("view"),
-    ...body.getAll("profiles")].join("/");
+const cacheKey = body => [body.get("comparison_mode"), body.get("action") || "", ...body.getAll("profiles")].join("/");
 let cacheRequests = [], generations = [], exports = [], cached = new Map(), downloads = 0;
 w.HTMLElement.prototype.scrollIntoView = () => {};
 w.HTMLAnchorElement.prototype.click = () => downloads++;
@@ -320,28 +319,38 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(f("profiles-label").textContent, "Algorithm profiles");
     assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value), ["hedge_vs_hedge"]);
     assert.equal(f("metric").disabled, false);
+    assert.deepEqual([...f("metric").options].map(option => option.value), ["all", "external", "internal", "swap"]);
     change("metric", "internal"); change("view", "average");
-    assert.equal(cacheRequests.length, 4); assert.equal(generations.length, 0);
+    assert.equal(cacheRequests.length, 2); assert.equal(generations.length, 0);
     assert.equal(b("figure").children.length, 0); assert.equal(b("generate").disabled, true);
-    finishCache(3, false); await tick(); await tick();
+    finishCache(1, false); await tick(); await tick();
     assert.equal(b("status").textContent, "No generated figures for this selection.");
     assert.equal(b("generate").disabled, false);
     submit();
     assert.equal(generations.length, 1);
     finishGeneration(0, "profile-a"); await tick(); await tick();
-    assert.equal(b("figure").children.length, 1); assert.equal(b("generate").disabled, true);
+    assert.equal(b("figure").children.length, 6); assert.equal(visibleCards().length, 1);
+    assert.deepEqual([visibleCards()[0].dataset.metric, visibleCards()[0].dataset.view], ["internal", "average"]);
+    assert.equal(b("generate").disabled, true);
+    change("metric", "all");
+    assert.equal(cacheRequests.length, 2); assert.equal(visibleCards().length, 3);
+    change("view", "all");
+    assert.equal(cacheRequests.length, 2); assert.equal(visibleCards().length, 6);
+    change("metric", "internal"); change("view", "average");
+    assert.equal(cacheRequests.length, 2); assert.equal(visibleCards().length, 1);
     selectProfiles(["hedge_vs_hedge", "hedge_vs_ito"]);
-    assert.equal(cacheRequests.length, 5); assert.equal(b("figure").children.length, 0);
-    finishCache(4, false); await tick(); await tick();
+    assert.equal(cacheRequests.length, 3); assert.equal(b("figure").children.length, 0);
+    finishCache(2, false); await tick(); await tick();
     assert.equal(b("generate").disabled, false);
     selectProfiles(["hedge_vs_hedge"]);
-    finishCache(5); await tick(); await tick();
+    finishCache(3); await tick(); await tick();
     assert.equal(b("status").textContent, "Cached figures loaded.");
-    assert.equal(b("figure").firstChild.dataset.filename, "profile-a_0.png");
+    assert.equal(b("figure").firstChild.dataset.filename, "profile-a_external_average.png");
+    assert.equal(b("figure").children.length, 6); assert.equal(visibleCards().length, 1);
     assert.equal(b("generate").disabled, true); assert.equal(b("download").disabled, false);
 
     selectProfiles(["hedge_vs_hedge", "hedge_vs_ito"]);
-    finishCache(6, false); await tick(); await tick();
+    finishCache(4, false); await tick(); await tick();
     f("compare-regrets").checked = true;
     f("compare-regrets").dispatchEvent(new w.Event("change"));
     assert.equal(f("profiles").multiple, false);
@@ -351,23 +360,23 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(f("metric").value, "all");
     assert.equal(f("metric").disabled, true);
     assert.equal(f("view").disabled, false);
-    assert.equal(cacheRequests[7].body.get("comparison_mode"), "regrets");
-    assert.deepEqual(cacheRequests[7].body.getAll("profiles"), ["hedge_vs_hedge"]);
-    assert.equal(cacheRequests[7].body.has("metric"), false);
+    assert.equal(cacheRequests[5].body.get("comparison_mode"), "regrets");
+    assert.deepEqual(cacheRequests[5].body.getAll("profiles"), ["hedge_vs_hedge"]);
+    assert.equal(cacheRequests[5].body.has("metric"), false);
     const stored = JSON.parse(w.localStorage.getItem("swap-regret-shared-filters-fixed"));
     assert.deepEqual(stored.selections[f("context").value], ["hedge_vs_hedge"]);
-    finishCache(7, false); await tick(); await tick();
+    finishCache(5, false); await tick(); await tick();
     submit(); finishGeneration(1, "regret-a"); await tick(); await tick();
-    assert.equal(b("figure").children.length, 1);
+    assert.equal(b("figure").children.length, 2); assert.equal(visibleCards().length, 1);
     f("profiles").value = "ito_vs_ito"; f("profiles").dispatchEvent(new w.Event("change"));
-    assert.equal(cacheRequests.length, 9); assert.equal(b("figure").children.length, 0);
+    assert.equal(cacheRequests.length, 7); assert.equal(b("figure").children.length, 0);
     f("profiles").value = "hedge_vs_hedge"; f("profiles").dispatchEvent(new w.Event("change"));
-    finishCache(9); await tick(); await tick();
-    assert.equal(b("figure").firstChild.dataset.filename, "regret-a_0.png");
-    finishCache(8, true, figuresFor(cacheRequests[8].body, "stale-b")); await tick(); await tick();
-    assert.equal(b("figure").firstChild.dataset.filename, "regret-a_0.png");
+    finishCache(7); await tick(); await tick();
+    assert.equal(b("figure").firstChild.dataset.filename, "regret-a_all_average.png");
+    finishCache(6, true, figuresFor(cacheRequests[6].body, "stale-b")); await tick(); await tick();
+    assert.equal(b("figure").firstChild.dataset.filename, "regret-a_all_average.png");
     b("download").click();
-    assert.deepEqual(exports[0].filenames, ["regret-a_0.pdf"]);
+    assert.deepEqual(exports[0].filenames, ["regret-a_all_average.pdf"]);
     finishExport(0); await tick(); await tick();
     assert.equal(downloads, 1);
     f("compare-profiles").checked = true;
@@ -376,7 +385,7 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(f("metric").disabled, false);
     assert.equal(f("metric").value, "internal");
     assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value), ["hedge_vs_hedge"]);
-    finishCache(10); await tick(); await tick();
+    finishCache(8); await tick(); await tick();
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
@@ -525,7 +534,7 @@ w.eval(payload.script);
     assert.equal(f("action").disabled, false);
     assert.equal(f("profiles").multiple, true);
     assert.equal(f("metric").disabled, false);
-    assert(![...f("metric").options].some(option => option.value === "all"));
+    assert.deepEqual([...f("metric").options].map(option => option.value), ["all", "external", "internal", "swap"]);
     select("metric", "internal");
     select("view", "sqrt_scaling");
     const cells = [...visible(".summary-row")[0].querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
@@ -536,7 +545,7 @@ w.eval(payload.script);
     assert.deepEqual([...f("action").options].map(option => [option.value, option.textContent]), [["all", "All actions"]]);
     assert.equal(f("action").disabled, true);
     assert.equal(f("metric").value, "internal"); assert.equal(f("metric").disabled, false);
-    assert(![...f("metric").options].some(option => option.value === "all"));
+    assert.deepEqual([...f("metric").options].map(option => option.value), ["all", "external", "internal", "swap"]);
     assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").selectedOptions.length, 1);
     assert.deepEqual(visible(".summary-row").map(row => row.dataset.action).sort(), ["2", "3", "4"]);
 

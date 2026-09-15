@@ -143,8 +143,8 @@ class FigureBuilder:
         paths = self._selected_paths(selection, context) if context else []
         sources = self._sources(paths)
         loaded = {}
-        metrics = ("all",) if selection.comparison_mode == "regrets" else (selection.metric,)
-        views = VIEWS if selection.view == "all" else (selection.view,)
+        metrics = ("all",) if selection.comparison_mode == "regrets" else REGRET_NAMES
+        views = VIEWS
         figures = []
         for metric in metrics:
             for view in views:
