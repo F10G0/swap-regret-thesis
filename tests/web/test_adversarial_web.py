@@ -158,10 +158,28 @@ def test_algorithm_options_follow_feedback_mode(tmp_path, mode) -> None:
     algorithm = "auer_exp3"
     app, _ = _app(tmp_path)
     client = app.test_client()
-    labels = dashboard_data(client.get("/", query_string={"mode": mode}))["algorithmLabels"]
-    assert {name: labels[name] for name in ("lce_ix", "auer_exp3", "regret_matching", "stationary_regret_matching")} == {
-        "lce_ix": "LCE-IX", "auer_exp3": "AuerExp3", "regret_matching": "RM", "stationary_regret_matching": "SRM",
+    initial_page = client.get("/", query_string={"mode": mode})
+    data = dashboard_data(initial_page)
+    assert data["algorithmLabels"] == {
+        "full_information": {
+            "hedge": "Hedge", "optimistic_hedge": "OptHedge", "bm_hedge": "BM-Hedge",
+            "bm_optimistic_hedge": "BM-OptHedge", "ito_hedge": "Ito-Hedge",
+            "regret_matching": "RM", "stationary_regret_matching": "SRM",
+        },
+        "bandit": {
+            "auer_exp3": "EXP3", "exp3_ix": "EXP3-IX", "bm_exp3": "BM-EXP3",
+            "ito_tsallis": "Ito-Tsallis", "lce_ix": "LCE-IX",
+        },
     }
+    assert data["algorithms"]["full_information"][2:5] == ["bm_hedge", "bm_optimistic_hedge", "ito_hedge"]
+    assert data["algorithms"]["bandit"][0:4] == ["auer_exp3", "exp3_ix", "bm_exp3", "ito_tsallis"]
+    initial_html = initial_page.get_data(as_text=True)
+    assert "Full information" in initial_html and "Bandit feedback" in initial_html
+    if mode == "fixed":
+        assert data["gamePresentations"]["rps"]["label"] == "Rock–Paper–Scissors"
+        assert data["gamePresentations"]["rpsls"]["label"] == "Rock–Paper–Scissors–Lizard–Spock"
+    else:
+        assert "Historical-frequency" in initial_html and "Lazy random walk" in initial_html
     response = client.post(
         "/",
         data=VALID_FORM | {
@@ -179,7 +197,7 @@ def test_algorithm_options_follow_feedback_mode(tmp_path, mode) -> None:
     options = page.split('<select id="algorithm_player_0"', 1)[1].split("</select>", 1)[0]
     assert f'<option value="{algorithm}" selected' in options
     assert '<option value="auer_exp3"' in options
-    assert "AuerExp3" in options
+    assert "EXP3" in options
     assert '<option value="exp3"' not in options
     assert '<option value="lce_ix"' in options
     assert '<option value="hedge"' not in options

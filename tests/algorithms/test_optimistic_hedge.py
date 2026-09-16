@@ -67,6 +67,12 @@ def test_explicit_rate_and_reset_are_fixed_and_copy_feedback() -> None:
     np.testing.assert_array_equal(learner.previous_reward, np.zeros(3))
 
 
+@pytest.mark.parametrize("learning_rate", [0.0, -0.1, np.inf, -np.inf, np.nan])
+def test_explicit_learning_rate_must_be_finite_and_strictly_positive(learning_rate) -> None:
+    with pytest.raises(ValueError, match="learning_rate"):
+        OptimisticHedge(3, horizon=7, learning_rate=learning_rate)
+
+
 def test_bm_optimistic_hedge_uses_theorem_rate_and_inner_learners() -> None:
     learner = BMOptimisticHedge(3, horizon=1, n_players=2, seed=0)
     expected = (3.0 * np.log(3.0) / 4.0) ** 0.25

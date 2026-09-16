@@ -137,7 +137,7 @@
                 <label for="{{ algorithm_field }}">Algorithm</label>
                 <select id="{{ algorithm_field }}" name="algorithm_names" class="player-algorithm" required>
                     {% for algorithm in current_algorithms %}
-                        <option value="{{ algorithm }}" {% if algorithm == selected_algorithms[player_id] | default(current_algorithms[0]) %}selected{% endif %}>{{ algorithm_labels[algorithm] }}</option>
+                        <option value="{{ algorithm }}" {% if algorithm == selected_algorithms[player_id] | default(current_algorithms[0]) %}selected{% endif %}>{{ algorithm_labels[form_state.feedback_mode][algorithm] }}</option>
                     {% endfor %}
                 </select>
             </div>

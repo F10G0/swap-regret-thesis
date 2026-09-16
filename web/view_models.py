@@ -84,6 +84,7 @@ def dashboard_context(
         summaries.append({
             **summary,
             "profile_label": algorithm_profile_label(summary["algorithm_profile"]),
+            "feedback_label": FEEDBACK_MODE_LABELS[summary["feedback_mode"]],
             "display_regrets": _display_regrets(summary),
             "runs": [
                 {

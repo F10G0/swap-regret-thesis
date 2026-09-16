@@ -14,12 +14,12 @@ from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adver
 
 
 @pytest.mark.parametrize("runner,options", [
-    (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["auer_exp3", "bm"])),
-    (partial(run_cross_play_experiment, feedback_mode="full_information"), dict(game_name="rps", algorithm_names=["hedge", "ito"])),
+    (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["auer_exp3", "bm_exp3"])),
+    (partial(run_cross_play_experiment, feedback_mode="full_information"), dict(game_name="rps", algorithm_names=["hedge", "ito_hedge"])),
     (run_adversarial_experiment, dict(algorithm_name="auer_exp3", feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT)),
     *[(run_adversarial_experiment, dict(algorithm_name=name, feedback_mode="bandit", n_actions=9))
-      for name in ("exp3_ix", "bm", "lce_ix", "ito")],
-    (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["ito", "bm"])),
+      for name in ("exp3_ix", "bm_exp3", "lce_ix", "ito_tsallis")],
+    (partial(run_cross_play_experiment, feedback_mode="bandit"), dict(game_name="rps", algorithm_names=["ito_tsallis", "bm_exp3"])),
 ])
 def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, runner, options):
     results = []

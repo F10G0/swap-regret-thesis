@@ -4,6 +4,7 @@ from threading import Event
 import time
 
 import pytest
+from pypdf import PdfReader
 
 from web.jobs import Job, JobManager, ServiceBusyError
 from experiments.scenarios.cross_play import run_cross_play_experiment
@@ -325,6 +326,11 @@ def test_joint_action_heatmap_is_generated_and_cached(tmp_path, grouped):
     assert request() == first and first.stat().st_mtime_ns == timestamp
     assert first.read_bytes().startswith(b"\x89PNG")
     assert first.with_suffix(".pdf").read_bytes().startswith(b"%PDF")
+    pdf = PdfReader(first.with_suffix(".pdf"))
+    information = pdf.pages[0].extract_text()
+    assert len(pdf.pages) == 2
+    assert "Figure:" in information and "Joint-action distribution" in information
+    assert ("Aggregation:  Replicate mean" in information) is grouped
 
 
 def test_custom_zero_sum_joint_action_heatmap_uses_saved_game(tmp_path: Path) -> None:

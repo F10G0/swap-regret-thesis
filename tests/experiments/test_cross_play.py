@@ -12,20 +12,24 @@ FULL_ALGORITHMS = ALGORITHMS_BY_FEEDBACK_MODE["full_information"]
 def test_registered_bandit_learners_use_literature_specific_inner_learners() -> None:
     auer_exp3 = BANDIT_ALGORITHMS["auer_exp3"].create(n_actions=3, horizon=100, seed=0)
     exp3_ix = BANDIT_ALGORITHMS["exp3_ix"].create(n_actions=3, horizon=100, seed=0)
-    bandit_bm = BANDIT_ALGORITHMS["bm"].create(n_actions=3, horizon=100, seed=0)
-    bandit_ito = BANDIT_ALGORITHMS["ito"].create(n_actions=3, horizon=100, seed=0)
-    optimistic_hedge = FULL_ALGORITHMS["optimistic_hedge"].create(n_actions=3, horizon=100, seed=0)
-    bm_optimistic_hedge = FULL_ALGORITHMS["bm_optimistic_hedge"].create(n_actions=3, horizon=100, seed=0)
+    bandit_bm = BANDIT_ALGORITHMS["bm_exp3"].create(n_actions=3, horizon=100, seed=0)
+    bandit_ito = BANDIT_ALGORITHMS["ito_tsallis"].create(n_actions=3, horizon=100, seed=0)
+    optimistic_hedge = FULL_ALGORITHMS["optimistic_hedge"].create(n_actions=3, horizon=100, seed=0, n_players=3)
+    bm_optimistic_hedge = FULL_ALGORITHMS["bm_optimistic_hedge"].create(n_actions=3, horizon=100, seed=0, n_players=2)
+    three_player_bm = FULL_ALGORITHMS["bm_optimistic_hedge"].create(n_actions=3, horizon=100, seed=0, n_players=3)
 
-    assert list(BANDIT_ALGORITHMS) == ["auer_exp3", "exp3_ix", "bm", "ito", "lce_ix"]
-    assert list(FULL_ALGORITHMS) == ["hedge", "optimistic_hedge", "bm", "bm_optimistic_hedge", "ito", "regret_matching", "stationary_regret_matching"]
+    assert list(BANDIT_ALGORITHMS) == ["auer_exp3", "exp3_ix", "bm_exp3", "ito_tsallis", "lce_ix"]
+    assert list(FULL_ALGORITHMS) == ["hedge", "optimistic_hedge", "bm_hedge", "bm_optimistic_hedge", "ito_hedge", "regret_matching", "stationary_regret_matching"]
     assert isinstance(auer_exp3, AuerExp3) and auer_exp3.horizon == 100
     assert isinstance(exp3_ix, Exp3IX) and exp3_ix.horizon == 100
     assert all(isinstance(inner, AuerExp3) and inner.horizon == 100 for inner in bandit_bm.learners)
     assert all(isinstance(inner, TsallisINF) for inner in bandit_ito.learners)
     assert isinstance(optimistic_hedge, OptimisticHedge) and optimistic_hedge.horizon == 100
+    assert not hasattr(optimistic_hedge, "n_players")
     assert isinstance(bm_optimistic_hedge, BMOptimisticHedge) and bm_optimistic_hedge.horizon == 100
     assert bm_optimistic_hedge.n_players == 2
+    assert three_player_bm.n_players == 3
+    assert three_player_bm.inner_learning_rate == pytest.approx((3 * np.log(3) / (9 * 100)) ** 0.25)
 
 
 @pytest.mark.parametrize("mode,registry", [("bandit", BANDIT_ALGORITHMS), ("full", FULL_ALGORITHMS)])
@@ -43,7 +47,7 @@ def test_registered_learners_execute_with_explicit_horizon_contracts(mode, regis
         assert np.isclose(learner.strategy().sum(), 1.0)
 
 
-@pytest.mark.parametrize("name", ["ito", "lce_ix"])
+@pytest.mark.parametrize("name", ["ito_tsallis", "lce_ix"])
 def test_local_schedules_do_not_depend_on_experiment_horizon(name) -> None:
     first = BANDIT_ALGORITHMS[name].create(n_actions=3, horizon=10, seed=7)
     second = BANDIT_ALGORITHMS[name].create(n_actions=3, horizon=1000, seed=7)

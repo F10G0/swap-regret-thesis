@@ -8,7 +8,7 @@ from experiments.plots.plot_joint_actions import (
     joint_action_distribution,
     mean_joint_action_distribution,
 )
-from experiments.recording import encode_joint_action_histograms
+from experiments.recording import encode_joint_action_histograms, joint_action_histogram_checkpoints
 from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD, regret_fieldnames
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, load_final_result_rows
@@ -86,7 +86,7 @@ def test_streaming_result_loader_accepts_checkpoint_gaps(tmp_path) -> None:
 
     assert [int(row["t"]) for row in iter_result_rows(output_path)] == [1, 1, 3, 3]
     trajectory = load_result_empirical_distribution_trajectory(output_path, (3, 3))
-    assert trajectory.horizons.tolist() == [1, 3]
+    assert trajectory.horizons.tolist() == list(joint_action_histogram_checkpoints(3))
     np.testing.assert_allclose(trajectory.vectors.sum(axis=1), 1.0)
 
 

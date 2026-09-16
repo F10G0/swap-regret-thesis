@@ -19,6 +19,7 @@ from experiments.plots.style import (
 from experiments.results import average_regret_column, regret_column
 from experiments.result_schema import REGRET_NAMES
 from experiments.scenarios.adversarial import ENVIRONMENT_LABELS
+from experiments.scenarios.cross_play import FEEDBACK_MODE_LABELS
 from web.validation import FigureSelection, validate_leaf_filename
 
 
@@ -46,9 +47,8 @@ class FigureBuilder:
             for group in groups:
                 first = group.records[0]
                 info = first.details
-                key = (first.scope, first.feedback_mode, first.horizon, info.base_learner_seed,
-                       info.base_environment_seed, first.runtime_environment, first.runtime_fingerprint,
-                       tuple(group.replicates))
+                key = (first.scope, first.horizon, info.base_learner_seed, info.base_environment_seed,
+                       first.runtime_environment, first.runtime_fingerprint, tuple(group.replicates))
                 compatible[key].append(group)
             contexts = {}
             for key, family in compatible.items():
@@ -57,11 +57,12 @@ class FigureBuilder:
                 context_id = _digest((mode, key, 0))[:24]
                 context = {
                     "id": context_id, "mode": mode, "scope": first.scope,
-                    "scope_label": ENVIRONMENT_LABELS[first.scope], "feedback_mode": first.feedback_mode,
+                    "scope_label": ENVIRONMENT_LABELS[first.scope],
                     "player": 0, "horizon": first.horizon, "base_seed": info.base_learner_seed,
                     "batch_label": (f"T={first.horizon:,} · seed {info.base_learner_seed} · replicates "
                                     + ",".join(map(str, family[0].replicates)) + f" · {context_id[:6]}"),
                     "actions": [], "profiles": [], "result_keys": [], "_paths": {},
+                    "_replicates": tuple(family[0].replicates),
                 }
                 profile_data = {}
                 for group in family:
@@ -74,55 +75,69 @@ class FigureBuilder:
                     context["_paths"].setdefault(action, {})[profile] = group.paths
                     context["result_keys"].extend(path.name for path in group.paths)
                     data = profile_data.setdefault(profile, {
-                        "id": profile, "label": algorithm_profile_label(result.profile), "metrics": set(), "actions": [],
+                        "id": profile, "feedback_mode": result.feedback_mode,
+                        "label": algorithm_profile_label(result.profile), "metrics": set(), "actions": [],
                     })
                     data["metrics"].update(metrics)
                     data["actions"].append(result.details.n_actions)
                 context["actions"] = sorted(map(int, context["_paths"]))
+                context["feedback_modes"] = sorted({data["feedback_mode"] for data in profile_data.values()})
                 context["profiles"] = [data | {"metrics": sorted(data["metrics"]), "actions": sorted(data["actions"])}
                                        for _, data in sorted(profile_data.items())]
                 if context["profiles"]:
                     contexts[context_id] = context
             return contexts
 
-        contexts = {}
+        compatible = defaultdict(list)
         for group in groups:
             first = group.records[0]
             if first.scope not in presentations:
                 continue
+            key = (*first.comparison_key[:2], *first.comparison_key[3:], tuple(group.replicates))
+            compatible[key].append(group)
+        contexts = {}
+        for key, family in compatible.items():
+            first = family[0].records[0]
             info = first.details
-            profile = "_vs_".join(first.profile)
             label = presentations[first.scope]["label"]
             for player in range(len(first.profile)):
-                context_id = group.context_id(player)
-                context = contexts.setdefault(context_id, {
+                context_id = _digest((mode, key, player))[:24]
+                context = {
                     "id": context_id, "mode": mode, "scope": first.scope, "scope_label": label,
-                    "feedback_mode": first.feedback_mode, "player": player, "horizon": first.horizon,
-                    "base_seed": info.seed,
+                    "player": player, "horizon": first.horizon, "base_seed": info.seed,
                     "batch_label": (
                         f"T={first.horizon:,} · "
                         + f"seed {info.seed} · "
                         + f"{info.stationary_method} · "
-                        + "replicates " + ",".join(map(str, group.replicates))
+                        + "replicates " + ",".join(map(str, family[0].replicates))
                         + f" · {context_id[:6]}"
                     ),
                     "actions": [], "profiles": [], "result_keys": [], "_paths": {},
-                })
-                metrics = first.metrics(player)
-                if not metrics:
-                    continue
-                context["profiles"].append({"id": profile, "label": algorithm_profile_label(profile.split("_vs_")), "metrics": metrics})
-                context["_paths"][profile] = group.paths
-                context["result_keys"].append(first.group_id)
-        for context in contexts.values():
-            context["profiles"].sort(key=lambda profile: profile["id"])
-        return {key: context for key, context in contexts.items() if context["profiles"]}
+                    "_replicates": tuple(family[0].replicates),
+                }
+                for group in family:
+                    result = group.records[0]
+                    profile = "_vs_".join(result.profile)
+                    metrics = result.metrics(player)
+                    if not metrics:
+                        continue
+                    context["profiles"].append({
+                        "id": profile, "feedback_mode": result.feedback_mode,
+                        "label": algorithm_profile_label(result.profile), "metrics": metrics,
+                    })
+                    context["_paths"][profile] = group.paths
+                    context["result_keys"].append(result.group_id)
+                context["feedback_modes"] = sorted({profile["feedback_mode"] for profile in context["profiles"]})
+                context["profiles"].sort(key=lambda profile: profile["id"])
+                if context["profiles"]:
+                    contexts[context_id] = context
+        return contexts
 
     def catalog(self, mode: str) -> dict:
         contexts = self._contexts(mode)
         return {
             "contexts": [{key: value for key, value in context.items() if not key.startswith("_")}
-                         for context in sorted(contexts.values(), key=lambda c: (c["scope"], c["feedback_mode"], c["player"], c["id"]))],
+                         for context in sorted(contexts.values(), key=lambda c: (c["scope"], c["player"], c["id"]))],
             "metrics": [{"id": name, "label": name.title()} for name in REGRET_NAMES],
             "views": [{"id": name, "label": label} for name, label in VIEWS.items()],
         }
@@ -170,6 +185,47 @@ class FigureBuilder:
         action_paths = context["_paths"].get(selection.action, {})
         return [path for profile in selection.profiles for path in action_paths.get(profile, [])]
 
+    @staticmethod
+    def _information_rows(selection, context, profiles) -> list[tuple[str, str]]:
+        profile_data = {profile["id"]: profile for profile in context["profiles"]}
+        selected = [profile_data[profile] for profile in profiles]
+        feedback_modes = {profile["feedback_mode"] for profile in selected}
+        rows = [
+            ("Figure", {"profiles": "Algorithm comparison", "regrets": "Regret-notion comparison",
+                        "actions": "Action-space comparison"}[selection.comparison_mode]),
+            ("Game" if selection.mode == "fixed" else "Environment", context["scope_label"]),
+        ]
+        if selection.mode == "fixed":
+            rows.append(("Player", str(context["player"])))
+        elif selection.comparison_mode == "actions":
+            actions = [action for action in sorted(context["_paths"], key=int)
+                       if profiles[0] in context["_paths"][action]]
+            rows.append(("Actions", ", ".join(actions)))
+        else:
+            rows.append(("Actions", selection.action))
+        rows.append(("Feedback", "Both" if len(feedback_modes) > 1 else FEEDBACK_MODE_LABELS[next(iter(feedback_modes))]))
+        if selection.comparison_mode == "profiles":
+            labels = []
+            for profile in selected:
+                label = profile["label"]
+                if len(feedback_modes) > 1:
+                    label += f" [{FEEDBACK_MODE_LABELS[profile['feedback_mode']]}]"
+                labels.append(label)
+            rows.append(("Algorithms", ", ".join(labels)))
+        else:
+            rows.append(("Profile" if selection.mode == "fixed" else "Algorithm", selected[0]["label"]))
+        rows.extend([
+            ("Horizon", f"{context['horizon']:,}"),
+            ("Replicates", str(len(context["_replicates"]))),
+            ("Seed", str(context["base_seed"])),
+        ])
+        if selection.comparison_mode == "regrets":
+            rows.append(("Regrets", "External, Internal, Swap"))
+        else:
+            rows.append(("Metric", f"{selection.metric.title()} regret"))
+        rows.append(("View", "R / T" if selection.view == "average" else "R / sqrt(T)"))
+        return rows
+
     def _build(self, selection, context, loaded, render=True) -> dict | None:
         profiles = tuple(sorted(set(selection.profiles)))
         if not profiles:
@@ -185,7 +241,8 @@ class FigureBuilder:
         if context is None:
             raise ValueError("This result set is unavailable. Refresh the available profiles.")
         required_metrics = REGRET_NAMES if selection.comparison_mode == "regrets" else (selection.metric,)
-        available = {profile["id"] for profile in context["profiles"] if set(required_metrics) <= set(profile["metrics"])
+        available = {profile["id"] for profile in context["profiles"]
+                     if set(required_metrics) <= set(profile["metrics"])
                      and (selection.mode == "fixed" or selection.comparison_mode == "actions"
                           or int(selection.action) in profile["actions"])}
         if not set(profiles) <= available:
@@ -205,7 +262,9 @@ class FigureBuilder:
         artifact_id = _digest(artifact_identity)
         dimension = f"p{context['player']}" if selection.mode == "fixed" else (
             "actions" if selection.comparison_mode == "actions" else f"k{selection.action}")
-        filename = f"{context['scope']}_{context['feedback_mode']}_{selection.metric}_{selection.view}_{dimension}_{artifact_id}.png"
+        profile_modes = {profile["id"]: profile["feedback_mode"] for profile in context["profiles"]}
+        feedback = "both" if len({profile_modes[profile] for profile in profiles}) > 1 else profile_modes[profiles[0]]
+        filename = f"{context['scope']}_{feedback}_{selection.metric}_{selection.view}_{dimension}_{artifact_id}.png"
         output_path = self.output_dir / filename
         title_metric = "Regret notions" if selection.comparison_mode == "regrets" else selection.metric.title()
         title_dimension = f"Player {context['player']}" if selection.mode == "fixed" else (
@@ -273,7 +332,8 @@ class FigureBuilder:
                 self.output_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix=".selection-", dir=self.output_dir) as directory:
                     source_path = Path(directory) / filename
-                    fixed.plot_regret_curves(make_curves(), y_label, source_path)
+                    fixed.plot_regret_curves(make_curves(), y_label, source_path,
+                                             information_rows=self._information_rows(selection, context, profiles))
                     if self._sources(paths) != sources:
                         raise ValueError("Results changed during rendering. Refresh and try again.")
                     publish_figure_pair(source_path, output_path)

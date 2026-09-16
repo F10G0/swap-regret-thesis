@@ -6,6 +6,7 @@ import pytest
 
 import experiments.results as results
 import experiments.runtime_environment as runtime
+from experiments.algorithm_labels import algorithm_profile_label
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
@@ -14,7 +15,7 @@ from tests.support import read_csv_rows
 
 def create_run(directory, max_recorded_points=6):
     return run_cross_play_experiment(
-        "rps", ["hedge", "bm"], horizon=30,
+        "rps", ["hedge", "bm_hedge"], horizon=30,
         output_dir=directory, max_recorded_points=max_recorded_points,
         feedback_mode="full_information",
     )
@@ -57,7 +58,7 @@ def test_fixed_loader_rejects_constant_changes_on_every_row(tmp_path, field):
     path = create_run(tmp_path)
     rows = read_csv_rows(path)
     for row in rows:
-        row.update(n_players="2", algorithm_player_0="hedge", algorithm_player_1="bm")
+        row.update(n_players="2", algorithm_player_0="hedge", algorithm_player_1="bm_hedge")
     rows[1][field] = "corrupted"
     rewrite_rows(path, rows)
     with pytest.raises(ValueError, match="inconsistent run metadata"):
@@ -91,7 +92,7 @@ def test_profile_compatibility_and_catalog_decoding_budget(tmp_path, monkeypatch
     for row in rows:
         if legacy:
             del row["algorithm_profile"]
-            row.update(algorithm_player_0="hedge", algorithm_player_1="bm")
+            row.update(algorithm_player_0="hedge", algorithm_player_1="bm_hedge")
         if override is not None:
             row["player_algorithm"] = override
     rewrite_rows(path, rows)
@@ -107,8 +108,10 @@ def test_profile_compatibility_and_catalog_decoding_budget(tmp_path, monkeypatch
     monkeypatch.setattr(json, "loads", loads)
     record = result_catalog.ResultRecord.read(path, "fixed")
     assert calls <= 2  # A file-level budget, not a required helper call sequence.
-    expected = ("other", "other") if override == " other " else ("hedge", "bm")
+    expected = ("other", "other") if override == " other " else ("hedge", "bm_hedge")
     assert tuple(record.summary(player)["player_algorithm"] for player in (0, 1)) == expected
+    assert record.profile == ("hedge", "bm_hedge")
+    assert algorithm_profile_label(record.profile) == "Hedge vs BM-Hedge"
 
 
 def test_runtime_fingerprint_does_not_reparse_canonical_input(monkeypatch):
@@ -158,13 +161,18 @@ def test_histogram_loader_keeps_file_boundary_checks(tmp_path, corruption):
         load_result_empirical_distribution_trajectory(path, (3, 3))
 
 
-def test_histogram_loader_rejects_malformed_counts(tmp_path):
+@pytest.mark.parametrize("corruption", ["counts", "checkpoints"])
+def test_histogram_loader_rejects_malformed_trajectory(tmp_path, corruption):
     path = create_run(tmp_path)
     rows = read_csv_rows(path)
     row = next(row for row in rows if row[JOINT_ACTION_HISTOGRAM_FIELD])
     payload = json.loads(row[JOINT_ACTION_HISTOGRAM_FIELD])
-    payload["counts"][-1][0] += 1
+    if corruption == "counts":
+        payload["counts"][-1][0] += 1
+    else:
+        payload["horizons"].pop(1)
     row[JOINT_ACTION_HISTOGRAM_FIELD] = json.dumps(payload)
     rewrite_rows(path, rows)
-    with pytest.raises(ValueError, match="sum to their horizon"):
+    message = "sum to their horizon" if corruption == "counts" else "checkpoint policy"
+    with pytest.raises(ValueError, match=message):
         load_result_empirical_distribution_trajectory(path, (3, 3))

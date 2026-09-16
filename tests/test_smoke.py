@@ -26,7 +26,7 @@ def test_fixed_experiment_records_feedback_and_refuses_overwrite(tmp_path, monke
 @pytest.mark.parametrize("feedback_mode,names", [
     ("full_information", ["regret_matching", "hedge"]),
     ("full_information", ["stationary_regret_matching", "hedge"]),
-    ("bandit", ["exp3_ix", "bm"]),
+    ("bandit", ["exp3_ix", "bm_exp3"]),
     ("bandit", ["lce_ix", "exp3_ix"]),
 ])
 def test_registered_profiles_record_without_learning_rate_columns(tmp_path, feedback_mode, names):
@@ -53,9 +53,9 @@ def test_removed_exp3_is_rejected_for_new_cross_play_runs(tmp_path) -> None:
 def test_all_feedback_modes_record_the_canonical_schema(tmp_path, feedback_mode):
     from experiments.result_schema import REGRET_FIELDNAMES
     if feedback_mode == "full_information":
-        names = ["hedge", "bm"]
+        names = ["hedge", "bm_hedge"]
     else:
-        names = ["exp3_ix", "bm"]
+        names = ["exp3_ix", "bm_exp3"]
     rows = _read_rows(run_cross_play_experiment("rps", names, feedback_mode=feedback_mode, horizon=4, seed=7, output_dir=tmp_path))
     for row in rows:
         assert {key for key in row if key.endswith("_regret")} == set(REGRET_FIELDNAMES)

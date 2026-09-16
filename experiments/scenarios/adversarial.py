@@ -41,8 +41,8 @@ from metrics.regret import RegretBundle
 HISTORICAL_FREQUENCY_ENVIRONMENT = "historical_frequency_v3"
 RANDOM_WALK_ENVIRONMENT = "lazy_random_walk_v1"
 ENVIRONMENT_LABELS = {
-    HISTORICAL_FREQUENCY_ENVIRONMENT: "Historical-frequency adversary",
-    RANDOM_WALK_ENVIRONMENT: "Independent lazy random walk",
+    HISTORICAL_FREQUENCY_ENVIRONMENT: "Historical-frequency",
+    RANDOM_WALK_ENVIRONMENT: "Lazy random walk",
 }
 MAX_ADVERSARIAL_ACTIONS = 100
 ADVERSARIAL_IDENTITY_FIELDS = (

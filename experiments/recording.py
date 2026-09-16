@@ -6,6 +6,7 @@ import numpy as np
 
 
 MAX_RECORDED_POINTS = 500
+MAX_EQUILIBRIUM_POINTS = 20
 
 
 def recording_checkpoints(horizon: int, max_points: int = MAX_RECORDED_POINTS) -> tuple[int, ...]:
@@ -22,15 +23,7 @@ def recording_checkpoints(horizon: int, max_points: int = MAX_RECORDED_POINTS) -
 
 
 def joint_action_histogram_checkpoints(horizon: int) -> tuple[int, ...]:
-    if horizon <= 0:
-        raise ValueError("horizon must be positive")
-    checkpoints = [1]
-    checkpoint = 10
-    while checkpoint <= horizon:
-        checkpoints.append(checkpoint)
-        checkpoint *= 10
-    checkpoints.append(horizon)
-    return tuple(sorted(set(checkpoints)))
+    return recording_checkpoints(horizon, MAX_EQUILIBRIUM_POINTS)
 
 
 def encode_joint_action_histograms(horizons: list[int], counts: list[np.ndarray]) -> str:

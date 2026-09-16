@@ -26,7 +26,7 @@ from experiments.game_catalog import (
 from experiments.games import PAYOFF_FACTORIES
 from experiments.plots import figure_pair_is_current, publish_figure_pair
 from experiments.results import iter_result_rows
-from experiments.result_catalog import ResultRepository, ResultSet, ResultKind
+from experiments.result_catalog import ResultRecord, ResultRepository, ResultSet, ResultKind
 from experiments.parallel import run_replicates
 from experiments.spec import ExperimentSpec
 from experiments.scenarios.adversarial import (
@@ -231,8 +231,9 @@ class DashboardService:
         return self.algorithms_by_feedback_mode
 
     @property
-    def algorithm_labels(self) -> dict[str, str]:
-        return {name: algorithm_label(name) for algorithms in self.algorithms_by_feedback_mode.values() for name in algorithms}
+    def algorithm_labels(self) -> dict[str, dict[str, str]]:
+        return {mode: {name: algorithm_label(name) for name in algorithms}
+                for mode, algorithms in self.algorithms_by_feedback_mode.items()}
 
     def default_form_state(self) -> dict:
         feedback_mode = "full_information"
@@ -373,7 +374,8 @@ class DashboardService:
             specs,
             self.raw_dir,
             lambda spec: spec.run_id,
-            f"{form.game}: {algorithm_profile_label(form.algorithm_names)}",
+            f"{self.game_presentations[form.game]['label']}: "
+            f"{algorithm_profile_label(form.algorithm_names)}",
             run_cross_play_experiment,
             task_kwargs,
             "all requested replicates already exist or are queued",
@@ -397,19 +399,37 @@ class DashboardService:
         membership = "\n".join(path.name for path in input_paths)
         return f"{group_id}_{sha256(membership.encode('utf-8')).hexdigest()[:8]}"
 
+    def _detail_figure_information(self, input_paths: list[Path], figure: str, replicate_mean: bool,
+                                   extra_rows: tuple[tuple[str, str], ...] = ()) -> list[tuple[str, str]]:
+        records = [ResultRecord.read(path, "fixed") for path in input_paths]
+        first = records[0]
+        rows = [
+            ("Figure", figure),
+            ("Game", self.game_presentations[first.scope]["label"]),
+            ("Feedback", FEEDBACK_MODE_LABELS[first.feedback_mode]),
+            ("Profile", algorithm_profile_label(first.profile)),
+            ("Horizon", f"{first.horizon:,}"),
+            ("Replicates", str(len(records))),
+            ("Seed", str(first.details.seed)),
+            *extra_rows,
+        ]
+        if replicate_mean:
+            rows.append(("Aggregation", "Replicate mean"))
+        return rows
+
     def joint_action_figure(self, filename: str) -> Path:
         filename = validate_leaf_filename(filename, ".csv")
         input_path = self.raw_dir / filename
         if not input_path.is_file():
             raise FileNotFoundError(filename)
-        return self._joint_action_figure([input_path], input_path.stem)
+        return self._joint_action_figure([input_path], input_path.stem, False)
 
     def group_joint_action_figure(self, group_id: str) -> Path:
         input_paths = self._result_group_paths(group_id)
         cache_stem = self._group_cache_stem(group_id, input_paths)
-        return self._joint_action_figure(input_paths, f"{cache_stem}_replicate_mean")
+        return self._joint_action_figure(input_paths, f"{cache_stem}_replicate_mean", True)
 
-    def _joint_action_figure(self, input_paths: list[Path], cache_stem: str) -> Path:
+    def _joint_action_figure(self, input_paths: list[Path], cache_stem: str, replicate_mean: bool) -> Path:
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_matrix_figures(game_name):
             raise ValueError(f"joint-action heatmaps are unavailable for {game_name}")
@@ -429,6 +449,8 @@ class DashboardService:
                     input_paths,
                     temporary_path,
                     self.game_catalog.custom_game_dir,
+                    information_rows=self._detail_figure_information(
+                        input_paths, "Joint-action distribution", replicate_mean),
                 )
                 publish_figure_pair(temporary_path, output_path)
         return output_path
@@ -519,6 +541,7 @@ class DashboardService:
             lambda: self._generate_equilibrium_distance(
                 [input_path],
                 output_path,
+                False,
             ),
             filename,
         )
@@ -537,6 +560,7 @@ class DashboardService:
             lambda: self._generate_equilibrium_distance(
                 input_paths,
                 output_path,
+                True,
             ),
             f"group {group_id}",
         )
@@ -545,6 +569,7 @@ class DashboardService:
         self,
         input_paths: list[Path],
         output_path: Path,
+        replicate_mean: bool,
     ) -> Path:
         with self._detail_figure_lock:
             input_state = {path: path.stat().st_mtime_ns for path in input_paths}
@@ -568,6 +593,10 @@ class DashboardService:
                 temporary_path,
                 custom_game_dir=self.game_catalog.custom_game_dir,
                 cache_dir=self.results_dir / "cache" / "equilibrium_distance",
+                information_rows=self._detail_figure_information(
+                    input_paths, "Equilibrium-distance convergence", replicate_mean,
+                    (("Distances", "CE, CCE"), ("Norm", "L1")),
+                ),
             )
             with self._detail_figure_lock:
                 if generation != self._detail_figure_generation:

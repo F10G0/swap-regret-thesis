@@ -10,7 +10,7 @@
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(storageKey)) || {}; } catch (_) {}
     const selections = new Map(Object.entries(saved.selections || {}));
-    const feedbackLabels = {full_information: "Full information", bandit: "Bandit"};
+    const feedbackLabels = {full_information: "Full information", bandit: "Bandit feedback", both: "Both"};
     let catalog = {contexts: [], metrics: [], views: []};
     let currentContext = null, selectionKey = "";
     let selectionRevision = 0, displayRevision = 0;
@@ -158,21 +158,25 @@
 
     function updateProfiles() {
         currentContext = catalog.contexts.find(context => context.id === filter("context").value) || null;
+        const feedback = filter("feedback").value;
+        const feedbackProfiles = currentContext ? currentContext.profiles.filter(profile =>
+            feedback === "both" || profile.feedback_mode === feedback) : [];
         if (onePlayer) {
             if (comparisonMode() === "actions") {
                 if (filter("action").value && filter("action").value !== "all") selectedAction = filter("action").value;
                 setOptions(filter("action"), [["all", "All actions"]], "all", false);
             } else {
-                const actions = currentContext ? currentContext.actions.map(action => [String(action), `K=${action}`]) : [];
+                const actions = [...new Set(feedbackProfiles.flatMap(profile => profile.actions))]
+                    .sort((left, right) => left - right).map(action => [String(action), `K=${action}`]);
                 setOptions(filter("action"), actions, selectedAction, Boolean(currentContext));
                 selectedAction = filter("action").value;
             }
         }
         const action = onePlayer ? filter("action").value : "";
-        const entries = currentContext ? currentContext.profiles.filter(profile => !onePlayer
-            || action === "all" || profile.actions.map(String).includes(action)) : [];
+        const entries = feedbackProfiles.filter(profile => !onePlayer
+            || action === "all" || profile.actions.map(String).includes(action));
         const unique = new Map(entries.map(profile => [profile.id, profile.label]));
-        selectionKey = currentContext ? (onePlayer ? `${currentContext.id}:${action}` : currentContext.id) : "";
+        selectionKey = currentContext ? `${currentContext.id}:${feedback}${onePlayer ? `:${action}` : ""}` : "";
         const remembered = Array.isArray(selections.get(selectionKey)) ? selections.get(selectionKey) : [];
         filter("profiles").disabled = true;
         filter("profiles").replaceChildren(...[...unique].sort(([left], [right]) => left.localeCompare(right))
@@ -202,15 +206,18 @@
         comparisonModes.forEach(value => filter(`compare-${value}`).disabled = true);
 
         let available = catalog.contexts.filter(context => context.scope === filter("scope").value);
-        const feedbacks = [...new Set(available.map(context => context.feedback_mode))];
-        setOptions(filter("feedback"), feedbacks.map(value => [value, feedbackLabels[value] || value]), wantedFeedback);
-        available = available.filter(context => context.feedback_mode === filter("feedback").value);
+        const feedbacks = ["full_information", "bandit"].filter(value =>
+            available.some(context => context.feedback_modes.includes(value)));
+        setOptions(filter("feedback"), [...feedbacks.map(value => [value, feedbackLabels[value]]), ["both", "Both"]],
+            wantedFeedback);
+        available = available.filter(context => filter("feedback").value === "both"
+            || context.feedback_modes.includes(filter("feedback").value));
         if (!onePlayer) {
             const players = [...new Set(available.map(context => context.player))].sort((a, b) => a - b);
             setOptions(filter("player"), players.map(value => [String(value), `Player ${value}`]), wantedPlayer);
         }
         const contexts = catalog.contexts.filter(context => context.scope === filter("scope").value
-            && context.feedback_mode === filter("feedback").value
+            && (filter("feedback").value === "both" || context.feedback_modes.includes(filter("feedback").value))
             && (onePlayer || String(context.player) === filter("player").value));
         const entries = contexts.map(context => [context.id, context.batch_label]);
         setOptions(filter("context"), entries, wantedContext);
@@ -255,7 +262,7 @@
         builder("status").textContent = "Generating figures…";
         updateButtons();
         try {
-            const response = await fetch(form.action, {method: "POST", body: new URLSearchParams(new FormData(form))});
+            const response = await fetch(form.getAttribute("action"), {method: "POST", body: new URLSearchParams(new FormData(form))});
             const result = await response.json().catch(() => ({}));
             if (revision !== selectionRevision) return;
             if (!response.ok) throw new Error(result.error || "Figure generation failed.");

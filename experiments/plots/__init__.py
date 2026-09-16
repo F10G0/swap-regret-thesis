@@ -1,5 +1,10 @@
 import os
+from io import BytesIO
 from pathlib import Path
+
+from pypdf import PdfWriter
+
+from experiments.plots.pdf_information import experiment_information_pdf
 
 
 HEATMAP_COLORMAP = "Blues"
@@ -45,12 +50,23 @@ def save_figure_pair(
     figure,
     output_path: str | Path,
     png_dpi: int | None = None,
+    information_rows: list[tuple[str, str]] | None = None,
     **kwargs,
 ) -> tuple[Path, Path]:
     preview_path, pdf_path = figure_paths(output_path)
     preview_path.parent.mkdir(parents=True, exist_ok=True)
     # Keep the physical page size; PDF artists remain vector, PNG is a preview.
     png_options = kwargs | {"dpi": png_dpi or 150}
-    figure.savefig(pdf_path, **kwargs)
+    if information_rows is None:
+        figure.savefig(pdf_path, **kwargs)
+    else:
+        figure_pdf = BytesIO()
+        figure.savefig(figure_pdf, format="pdf", **kwargs)
+        figure_pdf.seek(0)
+        information_pdf = experiment_information_pdf(information_rows)
+        with PdfWriter() as writer:
+            writer.append(information_pdf, import_outline=False)
+            writer.append(figure_pdf, import_outline=False)
+            writer.write(pdf_path)
     figure.savefig(preview_path, **png_options)
     return preview_path, pdf_path

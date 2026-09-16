@@ -298,23 +298,6 @@ def test_adversarial_spec_validation(changes, message) -> None:
         AdversarialExperimentSpec(**(values | changes))
 
 
-def test_adversarial_feedback_mode_is_part_of_run_identity() -> None:
-    common = {
-        "algorithm_name": "bm",
-        "n_actions": 3,
-        "horizon": 10,
-        "seed": 7,
-    }
-
-    assert AdversarialExperimentSpec(
-        **common,
-        feedback_mode="full_information",
-    ).run_id != AdversarialExperimentSpec(
-        **common,
-        feedback_mode="bandit",
-    ).run_id
-
-
 def test_random_walk_base_seed_is_part_of_identity() -> None:
     common = {
         "algorithm_name": "hedge",

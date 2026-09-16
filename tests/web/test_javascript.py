@@ -20,7 +20,7 @@ def test_browser_submission_and_polling_preserve_jobs_without_navigation(tmp_pat
     endpoint = "/"
     monkeypatch.setattr(service, method, lambda form: Job("new", "New job", "queued", "Waiting", "now"))
     values = VALID_FORM | {"actions": "3,9"} if mode == "adversarial" else {
-        "game": "rps", "feedback_mode": "full_information", "algorithm_names": ["hedge", "bm"],
+        "game": "rps", "feedback_mode": "full_information", "algorithm_names": ["hedge", "bm_hedge"],
         "horizon": "4", "seed": "7", "replicates": "1",
     }
     client = app.test_client()
@@ -127,6 +127,76 @@ def test_web_javascript_parses(filename: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_custom_game_form_state_persists_and_validation_state_takes_precedence(tmp_path):
+    app, service = create_test_app(tmp_path)
+    definition = service.create_custom_game("Inspect Me", 2, [2, 2], 7, "zero_sum")
+    client = app.test_client()
+    error_page = client.post("/custom-games", data={
+        "_csrf_token": csrf_token(client), "name": "Submitted Game", "payoff_structure": "general_sum",
+        "n_players": "3", "action_counts": ["4", "5", "6"], "seed": "-1",
+    }).get_data(as_text=True)
+    static = Path(__file__).parents[2] / "web" / "static"
+    payload = {
+        "page": client.get("/custom-games").get_data(as_text=True),
+        "inspectionPage": client.get(f"/custom-games/{definition.id}").get_data(as_text=True),
+        "errorPage": error_page,
+        "script": "\n".join((static / name).read_text() for name in ("common.js", "custom_games.js")),
+    }
+    script = r'''
+const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const key = "swap-regret-custom-game-form";
+const render = (page, stored = null) => {
+    const dom = new JSDOM(page, {url: "http://localhost/custom-games", runScripts: "outside-only"});
+    if (stored !== null) dom.window.localStorage.setItem(key, stored);
+    dom.window.eval(payload.script);
+    return dom;
+};
+const values = dom => {
+    const d = dom.window.document;
+    return {
+        name: d.getElementById("custom-game-name").value,
+        seed: d.getElementById("custom-game-seed").value,
+        payoffStructure: d.getElementById("custom-payoff-structure").value,
+        playerCount: d.getElementById("custom-player-count").value,
+        actionCounts: [...d.querySelectorAll("#custom-action-counts input")].map(input => input.value),
+    };
+};
+
+const first = render(payload.page), w = first.window, d = w.document;
+const change = (id, value, eventName) => {
+    const input = d.getElementById(id); input.value = value;
+    input.dispatchEvent(new w.Event(eventName, {bubbles: true}));
+};
+change("custom-game-name", "Stateful Game", "input");
+change("custom-game-seed", "91", "input");
+change("custom-payoff-structure", "general_sum", "change");
+change("custom-player-count", "3", "input");
+["2", "3", "4"].forEach((value, index) => {
+    const input = d.querySelectorAll("#custom-action-counts input")[index]; input.value = value;
+    input.dispatchEvent(new w.Event("input", {bubbles: true}));
+});
+const expected = values(first);
+const form = d.getElementById("custom-game-form");
+assert.equal(form.dispatchEvent(new w.Event("submit", {cancelable: true})), true);
+const stored = w.localStorage.getItem(key);
+assert.deepEqual(JSON.parse(stored), expected);
+first.window.close();
+
+const inspection = render(payload.inspectionPage, stored);
+assert.deepEqual(values(inspection), expected);
+inspection.window.close();
+
+const failed = render(payload.errorPage, stored);
+const submitted = {name: "Submitted Game", seed: "-1", payoffStructure: "general_sum",
+    playerCount: "3", actionCounts: ["4", "5", "6"]};
+assert.deepEqual(values(failed), submitted);
+assert.deepEqual(JSON.parse(failed.window.localStorage.getItem(key)), submitted);
+failed.window.close();
+'''
+    run_node(script, payload=payload, jsdom=True)
+
+
 def test_sidebar_seed_is_shared_while_other_form_state_remains_mode_specific(tmp_path):
     app, service = create_test_app(tmp_path)
     script = r'''
@@ -196,10 +266,10 @@ returned.window.close();
 
 def test_result_filter_modes_cache_restoration_races_and_export(tmp_path):
     app, service = create_test_app(tmp_path)
-    for profile in ("hedge_vs_hedge", "ito_vs_ito", "hedge_vs_ito"):
+    for profile in ("hedge_vs_hedge", "ito_hedge_vs_ito_hedge", "hedge_vs_ito_hedge"):
         result(service, profile)
-    result(service, "auer_exp3_vs_bm", mode="bandit")
-    result(service, "bm_vs_bm", game="rpsls")
+    result(service, "auer_exp3_vs_bm_exp3", mode="bandit")
+    result(service, "bm_hedge_vs_bm_hedge", game="rpsls")
     script = r'''
 const assert = require("assert").strict, {JSDOM} = require("jsdom");
 const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
@@ -211,8 +281,11 @@ const change = (name, value) => {f(name).value = value; f(name).dispatchEvent(ne
 const submit = () => d.getElementById("figure-builder").dispatchEvent(new w.Event("submit", {cancelable: true}));
 const visibleRows = () => [...d.querySelectorAll(".summary-row")].filter(row => !row.hidden);
 const visibleCards = () => [...b("figure").children].filter(card => !card.hidden);
+const profileValue = value => [...f("profiles").options].find(option =>
+    option.value === value || option.value.endsWith(`__${value}`)).value;
 const selectProfiles = values => {
-    [...f("profiles").options].forEach(option => option.selected = values.includes(option.value));
+    const selected = values.map(profileValue);
+    [...f("profiles").options].forEach(option => option.selected = selected.includes(option.value));
     f("profiles").dispatchEvent(new w.Event("change"));
 };
 const figuresFor = (body, tag) => {
@@ -291,6 +364,8 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(f("profiles-label").textContent, "Algorithm profile");
     assert.equal(f("profiles").selectedOptions.length, 1);
     assert.equal(f("scope").disabled, false); assert.equal(f("feedback").disabled, false);
+    assert.deepEqual([...f("feedback").options].map(option => [option.value, option.textContent]),
+        [["full_information", "Full information"], ["bandit", "Bandit feedback"], ["both", "Both"]]);
     assert.equal(f("player").disabled, false); assert.equal(f("metric").disabled, true);
     assert.equal(f("view").disabled, false); assert.equal(f("profiles").disabled, false);
     assert.equal(f("compare-profiles").disabled, false); assert.equal(f("compare-regrets").disabled, false);
@@ -306,6 +381,7 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
             "detail-equilibrium-distance-download", "detail-equilibrium-distance-card"]) assert(d.getElementById(id));
     assert.equal(b("generate").disabled, true);
     assert(visibleRows().length > 0);
+    assert.equal(visibleRows()[0].children[1].textContent, "Full information");
     assert.equal(d.querySelectorAll("#figure-builder select, .summary-panel select, .summary-panel input").length, 0);
     assert.equal(cacheRequests.length, 1); assert.equal(generations.length, 0);
     assert.deepEqual(cacheRequests[0].body.getAll("profiles"), ["hedge_vs_hedge"]);
@@ -338,7 +414,7 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(cacheRequests.length, 2); assert.equal(visibleCards().length, 6);
     change("metric", "internal"); change("view", "average");
     assert.equal(cacheRequests.length, 2); assert.equal(visibleCards().length, 1);
-    selectProfiles(["hedge_vs_hedge", "hedge_vs_ito"]);
+    selectProfiles(["hedge_vs_hedge", "hedge_vs_ito_hedge"]);
     assert.equal(cacheRequests.length, 3); assert.equal(b("figure").children.length, 0);
     finishCache(2, false); await tick(); await tick();
     assert.equal(b("generate").disabled, false);
@@ -349,7 +425,7 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(b("figure").children.length, 6); assert.equal(visibleCards().length, 1);
     assert.equal(b("generate").disabled, true); assert.equal(b("download").disabled, false);
 
-    selectProfiles(["hedge_vs_hedge", "hedge_vs_ito"]);
+    selectProfiles(["hedge_vs_hedge", "hedge_vs_ito_hedge"]);
     finishCache(4, false); await tick(); await tick();
     f("compare-regrets").checked = true;
     f("compare-regrets").dispatchEvent(new w.Event("change"));
@@ -364,13 +440,13 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.deepEqual(cacheRequests[5].body.getAll("profiles"), ["hedge_vs_hedge"]);
     assert.equal(cacheRequests[5].body.has("metric"), false);
     const stored = JSON.parse(w.localStorage.getItem("swap-regret-shared-filters-fixed"));
-    assert.deepEqual(stored.selections[f("context").value], ["hedge_vs_hedge"]);
+    assert.deepEqual(stored.selections[`${f("context").value}:full_information`], ["hedge_vs_hedge"]);
     finishCache(5, false); await tick(); await tick();
     submit(); finishGeneration(1, "regret-a"); await tick(); await tick();
     assert.equal(b("figure").children.length, 2); assert.equal(visibleCards().length, 1);
-    f("profiles").value = "ito_vs_ito"; f("profiles").dispatchEvent(new w.Event("change"));
+    f("profiles").value = profileValue("ito_hedge_vs_ito_hedge"); f("profiles").dispatchEvent(new w.Event("change"));
     assert.equal(cacheRequests.length, 7); assert.equal(b("figure").children.length, 0);
-    f("profiles").value = "hedge_vs_hedge"; f("profiles").dispatchEvent(new w.Event("change"));
+    f("profiles").value = profileValue("hedge_vs_hedge"); f("profiles").dispatchEvent(new w.Event("change"));
     finishCache(7); await tick(); await tick();
     assert.equal(b("figure").firstChild.dataset.filename, "regret-a_all_average.png");
     finishCache(6, true, figuresFor(cacheRequests[6].body, "stale-b")); await tick(); await tick();
@@ -386,6 +462,15 @@ for (const name of ["scope", "feedback", "player", "metric", "view", "context", 
     assert.equal(f("metric").value, "internal");
     assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value), ["hedge_vs_hedge"]);
     finishCache(8); await tick(); await tick();
+
+    change("feedback", "both");
+    assert.deepEqual([...f("profiles").options].map(option => option.textContent).sort(),
+        ["EXP3 vs BM-EXP3", "Hedge vs Hedge", "Hedge vs Ito-Hedge", "Ito-Hedge vs Ito-Hedge"].sort());
+    selectProfiles(["hedge_vs_hedge", "auer_exp3_vs_bm_exp3"]);
+    assert.deepEqual(new Set(visibleRows().map(row => row.dataset.feedback)), new Set(["full_information", "bandit"]));
+    f("compare-regrets").checked = true;
+    f("compare-regrets").dispatchEvent(new w.Event("change"));
+    assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").selectedOptions.length, 1);
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
@@ -398,9 +483,10 @@ def test_result_filter_sizes_profiles_and_disables_empty_dependencies(tmp_path):
     for index, count in enumerate((1, 2, 3, 8, 9), start=1):
         contexts.append({
             "id": f"{index:024x}", "mode": "fixed", "scope": f"game_{count}",
-            "scope_label": f"Game {count}", "feedback_mode": "full_information", "player": 0,
+            "scope_label": f"Game {count}", "feedback_modes": ["full_information"], "player": 0,
             "batch_label": f"{count} profiles", "result_keys": [],
-            "profiles": [{"id": f"profile_{profile}", "label": f"Profile {profile}",
+            "profiles": [{"id": f"profile_{profile}",
+                          "feedback_mode": "full_information", "label": f"Profile {profile}",
                           "metrics": ["external", "internal", "swap"]} for profile in range(count)],
         })
     catalog = {"contexts": contexts,
@@ -480,6 +566,8 @@ def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> N
         submit_and_wait(client, service, form)
     for form in (
         VALID_FORM | {"actions": "2,4"},
+        VALID_FORM | {"environment": RANDOM_WALK_ENVIRONMENT, "algorithm_names": ["hedge"],
+                      "actions": "2,4", "horizon": "5", "seed": "9"},
         VALID_FORM | {"environment": RANDOM_WALK_ENVIRONMENT, "feedback_mode": "bandit",
                       "algorithm_names": ["exp3_ix"], "actions": "2,4", "horizon": "5", "seed": "9"},
         VALID_FORM | {"environment": RANDOM_WALK_ENVIRONMENT, "feedback_mode": "bandit",
@@ -495,12 +583,20 @@ const dom = new JSDOM(payload.page, {url: "http://localhost/?mode=adversarial", 
 const w = dom.window, d = w.document, f = name => d.getElementById("filter-" + name);
 const visible = selector => [...d.querySelectorAll(selector)].filter(node => !node.hidden);
 const select = (name, value) => {f(name).value = value; f(name).dispatchEvent(new w.Event("change", {bubbles: true}));};
-w.fetch = async () => ({ok: true, json: async () => payload.catalog});
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const generationUrls = [];
+w.fetch = async (url, options) => {
+    if (!options) return {ok: true, json: async () => payload.catalog};
+    if (new URL(String(url), w.location).pathname === "/figure-builder/cache") {
+        return {ok: true, json: async () => ({cached: false, figures: []})};
+    }
+    generationUrls.push(String(url));
+    return {ok: true, json: async () => ({figures: []})};
+};
 w.HTMLElement.prototype.scrollIntoView = () => {};
 w.eval(payload.script);
 (async () => {
-    await new Promise(resolve => setImmediate(resolve));
-    await new Promise(resolve => setImmediate(resolve));
+    await tick(); await tick();
     assert.equal(d.querySelector('label[for="filter-action"]').textContent, "Action");
     assert.equal(f("player"), null);
     assert.deepEqual([...d.querySelectorAll(".segmented-control span")].map(node => node.textContent),
@@ -517,7 +613,8 @@ w.eval(payload.script);
     assert(description.textContent.includes("Independent lazy random walks"));
 
     select("scope", "lazy_random_walk_v1");
-    assert.equal(f("feedback").value, "bandit");
+    assert.deepEqual([...f("feedback").options].map(option => option.value), ["full_information", "bandit", "both"]);
+    select("feedback", "bandit");
     const target = payload.catalog.contexts.find(context => context.scope === "lazy_random_walk_v1"
         && context.horizon === 5 && context.base_seed === 9);
     select("context", target.id);
@@ -549,6 +646,14 @@ w.eval(payload.script);
     assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").selectedOptions.length, 1);
     assert.deepEqual(visible(".summary-row").map(row => row.dataset.action).sort(), ["2", "3", "4"]);
 
+    select("feedback", "both");
+    assert.deepEqual([...f("profiles").options].map(option => [option.value, option.textContent]), [
+        ["exp3_ix", "EXP3-IX"], ["hedge", "Hedge"]]);
+    f("profiles").value = "hedge";
+    f("profiles").dispatchEvent(new w.Event("change", {bubbles: true}));
+    assert.deepEqual(new Set(visible(".summary-row").map(row => row.dataset.feedback)), new Set(["full_information"]));
+    assert.deepEqual(visible(".summary-row").map(row => row.dataset.action).sort(), ["2", "4"]);
+
     f("compare-regrets").checked = true;
     f("compare-regrets").dispatchEvent(new w.Event("change"));
     assert.equal(f("action").value, "3"); assert.equal(f("action").disabled, false);
@@ -557,6 +662,12 @@ w.eval(payload.script);
     for (const id of ["filter-horizon", "filter-seed", "filter-player-algorithm", "filter-secondary"]) {
         assert.equal(d.getElementById(id), null);
     }
+    await tick(); await tick();
+    const builderForm = d.getElementById("figure-builder");
+    Object.defineProperty(builderForm, "action", {value: f("action")});
+    assert.equal(builderForm.dispatchEvent(new w.Event("submit", {cancelable: true})), false);
+    await tick();
+    assert.deepEqual(generationUrls, ["/figure-builder/collection"]);
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});'''
     run_ui(app, service, script, "adversarial")

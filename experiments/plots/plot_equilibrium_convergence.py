@@ -18,7 +18,7 @@ import numpy as np
 from config import CUSTOM_GAME_DIR, EQUILIBRIUM_LP_TOLERANCE
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.plots import save_figure_pair
-from experiments.plots.style import publication_plot, finish_line_figure, staggered_markevery
+from experiments.plots.style import publication_plot, finish_line_figure
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, result_game_payoff_digest
 from metrics.equilibrium_distance import (
@@ -92,6 +92,7 @@ def _load_result_distances(path: Path, payoff_tensor: np.ndarray, cache_dir: Pat
 def _plot_equilibrium_distance(
     distances: ReplicateEquilibriumDistanceTrajectory,
     output_path: str | Path,
+    information_rows: list[tuple[str, str]] | None = None,
 ) -> None:
     output_path = Path(output_path)
     figure, axes = plt.subplots()
@@ -100,7 +101,6 @@ def _plot_equilibrium_distance(
         distances.ce_mean,
         color="#d97706",
         marker="o",
-        markevery=staggered_markevery(0, 2),
         linestyle="-",
         linewidth=2.0,
         label="CE",
@@ -110,7 +110,6 @@ def _plot_equilibrium_distance(
         distances.cce_mean,
         color="#2563eb",
         marker="s",
-        markevery=staggered_markevery(1, 2),
         linestyle="--",
         linewidth=2.0,
         label="CCE",
@@ -124,7 +123,10 @@ def _plot_equilibrium_distance(
     axes.set_ylabel(r"$L^1$ distance")
     axes.set_ylim(bottom=0.0)
     finish_line_figure(figure, axes)
-    save_figure_pair(figure, output_path)
+    if information_rows is None:
+        save_figure_pair(figure, output_path)
+    else:
+        save_figure_pair(figure, output_path, information_rows=information_rows)
     plt.close(figure)
 
 
@@ -166,6 +168,7 @@ def plot_result_equilibrium_distance(
     custom_game_dir: str | Path = CUSTOM_GAME_DIR,
     *,
     cache_dir: str | Path | None = None,
+    information_rows: list[tuple[str, str]] | None = None,
 ) -> None:
     paths = [Path(input_paths)] if isinstance(input_paths, (str, Path)) else [Path(path) for path in input_paths]
     _, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
@@ -183,4 +186,5 @@ def plot_result_equilibrium_distance(
     _plot_equilibrium_distance(
         distances,
         output_path,
+        information_rows,
     )

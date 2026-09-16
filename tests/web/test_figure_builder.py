@@ -20,6 +20,7 @@ from web.validation import parse_profile_selection
 
 
 def form(context, profiles, comparison_mode="profiles", metric="external", view="all", action=None):
+    assert set(profiles) <= {profile["id"] for profile in context["profiles"]}
     values = {"mode": context["mode"], "context_id": context["id"], "comparison_mode": comparison_mode,
               "metric": metric, "view": view, "profiles": profiles}
     if context["mode"] == "adversarial":
@@ -38,8 +39,8 @@ def digest_files(directory):
 
 
 @pytest.mark.parametrize(("algorithm", "label"), [
-    ("optimistic_hedge", "Optimistic Hedge"),
-    ("bm_optimistic_hedge", "BM-Optimistic-Hedge"),
+    ("optimistic_hedge", "OptHedge"),
+    ("bm_optimistic_hedge", "BM-OptHedge"),
 ])
 def test_new_full_information_algorithms_run_through_web_and_figure_builder(tmp_path, algorithm, label):
     app, service = create_test_app(tmp_path)
@@ -58,7 +59,10 @@ def test_new_full_information_algorithms_run_through_web_and_figure_builder(tmp_
     rows = read_csv_rows(result_path)
     assert {row["algorithm"] for row in rows} == {profile}
     context = context_for(service, player=0)
-    assert context["profiles"] == [{"id": profile, "label": f"{label} vs {label}", "metrics": ["external", "internal", "swap"]}]
+    assert context["profiles"] == [{
+        "id": profile, "feedback_mode": "full_information",
+        "label": f"{label} vs {label}", "metrics": ["external", "internal", "swap"],
+    }]
 
     response = client.post("/figure-builder/collection", data=form(context, [profile], view="average") | {"_csrf_token": csrf_token(client)})
     assert response.status_code == 200
@@ -68,10 +72,10 @@ def test_new_full_information_algorithms_run_through_web_and_figure_builder(tmp_
 
 
 def test_comparison_selection_is_canonical_and_enforces_mode_contracts():
-    data = MultiDict([("mode", "fixed"), ("context_id", "a" * 24), ("metric", "external"), ("profiles", "ito_vs_ito"),
-                      ("profiles", "hedge_vs_hedge"), ("profiles", "ito_vs_ito")])
+    data = MultiDict([("mode", "fixed"), ("context_id", "a" * 24), ("metric", "external"), ("profiles", "ito_hedge_vs_ito_hedge"),
+                      ("profiles", "hedge_vs_hedge"), ("profiles", "ito_hedge_vs_ito_hedge")])
     selection = parse_profile_selection(data)
-    assert selection.profiles == ("hedge_vs_hedge", "ito_vs_ito")
+    assert selection.profiles == ("hedge_vs_hedge", "ito_hedge_vs_ito_hedge")
     assert (selection.comparison_mode, selection.metric, selection.view) == ("profiles", "external", "all")
     all_metrics = data.copy()
     all_metrics["metric"] = "all"
@@ -113,26 +117,59 @@ def test_selection_rejects_invalid_inputs(changes):
 def test_options_use_real_groups_and_separate_incompatible_metadata(tmp_path):
     app, service = create_test_app(tmp_path)
     result(service, "hedge_vs_hedge")
-    result(service, "ito_vs_ito")
-    result(service, "hedge_vs_ito")
-    result(service, "ito_vs_hedge")
-    result(service, "bm_vs_bm", horizon=31)
+    result(service, "ito_hedge_vs_ito_hedge")
+    result(service, "hedge_vs_ito_hedge")
+    result(service, "ito_hedge_vs_hedge")
+    result(service, "bm_hedge_vs_bm_hedge", horizon=31)
     result(service, "regret_matching_vs_regret_matching", seed=7)
     result(service, "stationary_regret_matching_vs_stationary_regret_matching", replicates=(0,))
-    result(service, "auer_exp3_vs_bm", mode="bandit")
+    result(service, "auer_exp3_vs_bm_exp3", mode="bandit")
     result(service, "hedge_vs_hedge", game="rpsls")
     response = app.test_client().get("/figure-builder/options?mode=fixed")
     assert response.status_code == 200
     contexts = response.json["contexts"]
-    compatible = next(c for c in contexts if {p["id"] for p in c["profiles"]} == {
-        "hedge_vs_hedge", "ito_vs_ito", "hedge_vs_ito", "ito_vs_hedge"})
+    compatible = next(context for context in contexts if context["feedback_modes"] == ["bandit", "full_information"]
+                      and context["player"] == 0)
     assert {p["label"] for p in compatible["profiles"]} == {
-        "Hedge vs Hedge", "Ito vs Ito", "Hedge vs Ito", "Ito vs Hedge"}
+        "Hedge vs Hedge", "Ito-Hedge vs Ito-Hedge", "Hedge vs Ito-Hedge", "Ito-Hedge vs Hedge", "EXP3 vs BM-EXP3"}
+    assert {p["id"] for p in compatible["profiles"]} == {
+        "hedge_vs_hedge", "ito_hedge_vs_ito_hedge", "hedge_vs_ito_hedge",
+        "ito_hedge_vs_hedge", "auer_exp3_vs_bm_exp3"}
     assert compatible["horizon"] == 30 and compatible["base_seed"] == 42
     assert {c["player"] for c in contexts} == {0, 1}
-    assert all([p["id"] for p in c["profiles"]] == ["auer_exp3_vs_bm"] for c in contexts if c["feedback_mode"] == "bandit")
     assert str(service.raw_dir.resolve()) not in json.dumps(contexts)
     assert not service.figure_builder.output_dir.exists()
+
+
+def test_algorithm_comparison_can_mix_compatible_feedback_modes(tmp_path, monkeypatch):
+    import experiments.plots.plot_regret as plotting
+
+    _, service = create_test_app(tmp_path)
+    result(service, "hedge_vs_hedge")
+    result(service, "auer_exp3_vs_bm_exp3", mode="bandit")
+    context = context_for(service, player=0)
+    captured = []
+    original_save = plotting.save_figure_pair
+
+    def save(figure, path, **kwargs):
+        captured.append([line.get_label() for line in figure.axes[0].lines if not line.get_label().startswith("_")])
+        return original_save(figure, path, **kwargs)
+
+    monkeypatch.setattr(plotting, "save_figure_pair", save)
+    selection = parse_profile_selection(form(context, [
+        "hedge_vs_hedge", "auer_exp3_vs_bm_exp3",
+    ]))
+    collection = service.figure_builder.build_collection(selection)
+
+    assert len(collection["figures"]) == 6
+    assert collection["profiles"] == ["auer_exp3_vs_bm_exp3", "hedge_vs_hedge"]
+    assert captured == [["EXP3 vs BM-EXP3", "Hedge vs Hedge"]] * 6
+    pages = PdfReader(service.figure_builder.artifact_path(collection["figures"][0]["pdf_filename"])).pages
+    information = pages[0].extract_text()
+    assert len(pages) == 2
+    assert "Feedback:    Both" in information
+    assert "EXP3 vs BM-EXP3 [Bandit feedback]" in information
+    assert "Hedge vs Hedge [Full information]" in information
 
 
 def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, monkeypatch):
@@ -140,7 +177,7 @@ def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, mo
     import web.figure_builder as builder
     _, service = create_test_app(tmp_path)
     paths = result(service, "hedge_vs_hedge")
-    result(service, "ito_vs_ito")
+    result(service, "ito_hedge_vs_ito_hedge")
     context = context_for(service, player=0)
 
     def selection(profiles, metric="swap", view="average", comparison_mode="profiles"):
@@ -156,20 +193,20 @@ def test_cache_depends_on_subset_view_style_and_selected_file_state(tmp_path, mo
         build([])
     with monkeypatch.context() as patch:
         patch.setattr(plotting, "plot_regret_curves", lambda *a, **k: pytest.fail("cache probe rendered"))
-        missing = service.figure_builder.cached_collection(selection(["ito_vs_ito", "hedge_vs_hedge"]))
+        missing = service.figure_builder.cached_collection(selection(["ito_hedge_vs_ito_hedge", "hedge_vs_hedge"]))
     assert missing["cached"] is False and missing["figures"] == []
     assert not service.figure_builder.output_dir.exists()
-    complete = build(["ito_vs_ito", "hedge_vs_hedge", "ito_vs_ito"])
+    complete = build(["ito_hedge_vs_ito_hedge", "hedge_vs_hedge", "ito_hedge_vs_ito_hedge"])
     assert [(item["metric"], item["view"]) for item in complete["figures"]] == [
         (metric, view) for metric in ("external", "internal", "swap")
         for view in ("average", "sqrt_scaling")]
     first = figure(complete)
-    assert first["profiles"] == ["hedge_vs_hedge", "ito_vs_ito"]
+    assert first["profiles"] == ["hedge_vs_hedge", "ito_hedge_vs_ito_hedge"]
     output = service.figure_builder.output_dir / first["filename"]
     timestamp = output.stat().st_mtime_ns
     with monkeypatch.context() as patch:
         patch.setattr(plotting, "plot_regret_curves", lambda *a, **k: pytest.fail("cache miss"))
-        cached = service.figure_builder.cached_collection(selection(["ito_vs_ito", "hedge_vs_hedge"]))
+        cached = service.figure_builder.cached_collection(selection(["ito_hedge_vs_ito_hedge", "hedge_vs_hedge"]))
         assert cached == complete
     assert output.stat().st_mtime_ns == timestamp
     assert service.figure_builder.cached_collection(selection(["hedge_vs_hedge"]))["cached"] is False
@@ -195,15 +232,15 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     if mode == "fixed":
         plotting = fixed_plotting
         loader_module = plotting
-        profiles = ["hedge_vs_hedge", "hedge_vs_ito"]
-        for profile in profiles + ["bm_vs_bm"]:
+        profiles = ["hedge_vs_hedge", "hedge_vs_ito_hedge"]
+        for profile in profiles + ["bm_hedge_vs_bm_hedge"]:
             result(service, profile)
         loader_name = "load_rows"
     else:
         import experiments.plots.plot_adversarial as plotting
         from experiments.scenarios import adversarial as loader_module
-        profiles = ["auer_exp3", "ito"]
-        for name in profiles + ["bm"]:
+        profiles = ["auer_exp3", "ito_tsallis"]
+        for name in profiles + ["bm_exp3"]:
             for replicate in (0, 1):
                 run_adversarial_experiment(name, n_actions=3, horizon=30, seed=42,
                     feedback_mode="bandit", environment=RANDOM_WALK_ENVIRONMENT,
@@ -240,7 +277,8 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     assert len(reads) == 4 and set(reads.values()) == {1}
     styles = {}
     for figure, lines in zip(figures, curves):
-        assert [line.get_label() for line in lines] == [algorithm_profile_label(p.split("_vs_")) for p in profiles]
+        assert [line.get_label() for line in lines] == [
+            algorithm_profile_label(profile.split("_vs_")) for profile in profiles]
         column = ("average_" if figure["view"] == "average" else "") + figure["metric"] + "_regret"
         scaled = figure["view"] == "sqrt_scaling"
         for profile, line in zip(profiles, lines):
@@ -255,14 +293,16 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
             style = (line.get_color(), line.get_linestyle(), line.get_marker(), line.get_markevery())
             styles.setdefault(profile, style)
             assert styles[profile] == style
-        assert figure["profiles"] == profiles
+        assert figure["profiles"] == sorted(data["profiles"])
         assert figure["comparison_mode"] == "profiles"
         preview, pdf = client.get(figure["url"]), client.get(figure["pdf_url"])
         assert preview.status_code == pdf.status_code == 200
         assert preview.data.startswith(b"\x89PNG")
-        assert len(PdfReader(BytesIO(pdf.data)).pages) == 1
+        pdf_pages = PdfReader(BytesIO(pdf.data)).pages
+        assert len(pdf_pages) == 2
+        assert "Experiment Information" in pdf_pages[0].extract_text()
     timestamps = {p: p.stat().st_mtime_ns for p in service.figure_builder.output_dir.iterdir()}
-    cached = client.post("/figure-builder/cache", data=data | {"profiles": profiles})
+    cached = client.post("/figure-builder/cache", data=data)
     assert cached.json == response.json
     assert set(reads.values()) == {1} and len(curves) == 6
     assert {style[1] for style in styles.values()} == {"-"}
@@ -276,11 +316,12 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
     })
     assert download.status_code == 200 and download.mimetype == "application/pdf"
     pages = PdfReader(BytesIO(download.data)).pages
-    assert len(pages) == 6
-    for page, figure in zip(pages, figures):
-        original = PdfReader(service.figure_builder.artifact_path(figure["pdf_filename"])).pages[0]
-        assert page.extract_text() == original.extract_text()
-        assert not list(page.images)  # Merging keeps the publication PDFs vector-based.
+    assert len(pages) == 12
+    for index, figure in enumerate(figures):
+        original = PdfReader(service.figure_builder.artifact_path(figure["pdf_filename"])).pages
+        assert pages[2 * index].extract_text() == original[0].extract_text()
+        assert pages[2 * index + 1].extract_text() == original[1].extract_text()
+        assert not list(pages[2 * index + 1].images)  # Merging keeps publication PDFs vector-based.
     assert client.post("/figure-builder/collection", data=data | {"profiles": []}).status_code == 400
     assert client.post("/figure-builder/collection", data=data | {"profiles": ["unknown"]}).status_code == 400
     assert client.post("/figure-builder/collection", data=data | {"context_id": "a" * 24}).status_code == 400
@@ -304,7 +345,7 @@ def test_action_space_comparison_uses_compatible_ordinary_trajectories(tmp_path,
     run_adversarial_experiment("hedge", n_actions=6, horizon=30, seed=9, output_dir=service.adversarial_raw_dir)
     context = context_for(service, "adversarial", base_seed=42)
     assert context["actions"] == [2, 4]
-    assert context["profiles"] == [{"id": "hedge", "label": "Hedge",
+    assert context["profiles"] == [{"id": "hedge", "feedback_mode": "full_information", "label": "Hedge",
                                      "metrics": ["external", "internal", "swap"], "actions": [2, 4]}]
 
     captured = []
@@ -395,24 +436,23 @@ def test_regret_comparison_combines_three_fixed_series_for_selected_views_and_ex
             "filenames": [figure["pdf_filename"] for figure in figures],
         })
         assert response.status_code == 200
-        assert len(PdfReader(BytesIO(response.data)).pages) == expected_pages
+        assert len(PdfReader(BytesIO(response.data)).pages) == 2 * expected_pages
 
 
 def test_context_identity_and_ordering_preserve_duplicate_policies(tmp_path):
     _, service = create_test_app(tmp_path)
-    paths = result(service, "ito_vs_hedge", replicates=(2, 0))
-    result(service, "hedge_vs_ito", replicates=(0, 2))
+    paths = result(service, "ito_hedge_vs_hedge", replicates=(2, 0))
+    result(service, "hedge_vs_ito_hedge", replicates=(0, 2))
     row = read_csv_rows(paths[0])[0]
-    key = ("rps", row["game_payoff_digest"], "full_information", 30, 42, row["stationary_method"],
-           row["runtime_fingerprint"])
+    key = ("rps", row["game_payoff_digest"], 30, 42, row["stationary_method"], row["runtime_fingerprint"], (0, 2))
     contexts = {context["id"]: context for context in service.figure_builder.catalog("fixed")["contexts"]}
     for player in (0, 1):
-        expected_id = sha256(json.dumps(("fixed", key, player, [0, 2]), sort_keys=True,
+        expected_id = sha256(json.dumps(("fixed", key, player), sort_keys=True,
                                        separators=(",", ":")).encode()).hexdigest()[:24]
         context = contexts[expected_id]
-        assert [profile["id"] for profile in context["profiles"]] == ["hedge_vs_ito", "ito_vs_hedge"]
+        assert [profile["id"] for profile in context["profiles"]] == ["hedge_vs_ito_hedge", "ito_hedge_vs_hedge"]
     groups = service.result_snapshot().groups("builder")
-    assert next(group.paths for group in groups if group.records[0].profile == ("ito", "hedge")) == list(reversed(paths))
+    assert next(group.paths for group in groups if group.records[0].profile == ("ito_hedge", "hedge")) == list(reversed(paths))
     for replicate in (2, 0):
         path = run_adversarial_experiment("hedge", n_actions=3, horizon=30, seed=42,
             replicate=replicate, output_dir=service.adversarial_raw_dir)
@@ -428,7 +468,7 @@ def test_builder_rejects_source_mutation_before_publication(tmp_path, monkeypatc
     paths = result(service, "hedge_vs_hedge")
     context = context_for(service, player=0)
 
-    def render(*args):
+    def render(*args, **kwargs):
         output = args[-1]
         output.write_bytes(b"png")
         output.with_suffix(".pdf").write_bytes(b"pdf")

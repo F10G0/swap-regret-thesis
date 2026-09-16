@@ -97,9 +97,10 @@ def test_supported_and_custom_visual_analysis_works_beside_retired_assets(tmp_pa
     contexts = client.get("/figure-builder/options?mode=fixed").json["contexts"]
     assert {context["scope"] for context in contexts} == {"rps", custom.id}
     context = next(context for context in contexts if context["scope"] == custom.id and context["player"] == 0)
+    profile = context["profiles"][0]["id"]
     response = client.post("/figure-builder/collection", data={
         "_csrf_token": token, "mode": "fixed", "context_id": context["id"],
-        "metric": "external", "profiles": ["hedge_vs_hedge"],
+        "metric": "external", "profiles": [profile],
     })
     assert response.status_code == 200
     figure = response.json["figures"][0]

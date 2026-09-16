@@ -16,12 +16,14 @@ make web
 
 | Feedback | Learners |
 |---|---|
-| Full information | Hedge, Optimistic Hedge, Regret Matching, SRM, Blum–Mansour, BM-Optimistic-Hedge, Ito |
-| Bandit | AuerExp3, Exp3-IX, Blum–Mansour, Ito, LCE-IX |
+| Full information | Hedge, OptHedge, BM-Hedge, BM-OptHedge, Ito-Hedge, RM, SRM |
+| Bandit | EXP3, EXP3-IX, BM-EXP3, Ito-Tsallis, LCE-IX |
+
+These presentation names map to unique experiment identifiers: `bm_hedge`, `bm_optimistic_hedge`, `ito_hedge`, `bm_exp3`, and `ito_tsallis` identify the reduction variants. Implementation class names remain unchanged. OptHedge is `OptimisticHedge`, EXP3 is the repository's Auer et al. `AuerExp3`, and Ito-Tsallis uses Tsallis-INF inner learners.
 
 Built-in games are RPS and RPSLS, defined locally as fixed payoff matrices. Matching Pennies is a local test-only fixture. The dashboard also creates random general-sum games and symmetric two-player zero-sum games. One-player experiments cover a historical-frequency adversary and an action-independent lazy reward walk; multiple K values can be queued as one ordinary-result batch.
 
-Fixed-game and one-player experiments use realized external, internal, and swap regret from the sampled action trajectory. Bandit learners receive only their sampled reward; the evaluator uses the full payoff vector offline. Results record every round through horizon 500 and at most 500 geometric checkpoints for longer runs. Figures report replicate means, without confidence bands or interval toggles. Empirical joint-action heatmaps show the same recorded play, and equilibrium convergence uses full-space L1 distance to CE and CCE.
+Fixed-game and one-player experiments use realized external, internal, and swap regret from the sampled action trajectory. Bandit learners receive only their sampled reward; the evaluator uses the full payoff vector offline. Regret trajectories record every round through horizon 500 and at most 500 geometric checkpoints for longer runs. Empirical joint-action and equilibrium-distance trajectories use the same sampling rule with a 20-point budget. Figures report replicate means, without confidence bands or interval toggles. Empirical joint-action heatmaps show the same recorded play, and equilibrium convergence uses full-space L1 distance to CE and CCE.
 
 Payoffs are finite values in `[0, 1]`. Fixed-game tensors have shape:
 

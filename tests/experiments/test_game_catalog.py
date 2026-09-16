@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from experiments.scenarios.cross_play import run_cross_play_experiment
+from experiments.scenarios.cross_play import AlgorithmFactory, run_cross_play_experiment
 from experiments.game_catalog import (
     CUSTOM_GAME_FORMAT_VERSION,
     CUSTOM_GAME_PREFIX,
@@ -144,10 +144,18 @@ def test_custom_game_can_be_deleted_without_affecting_other_games(tmp_path) -> N
         catalog.delete("rps")
 
 
-def test_three_player_custom_game_records_every_player(tmp_path) -> None:
+def test_three_player_custom_game_records_every_player(tmp_path, monkeypatch) -> None:
     game_dir = tmp_path / "games"
     raw_dir = tmp_path / "raw"
     definition = GameCatalog(game_dir).create_random("three", 3, [2, 3, 2], 9)
+    player_counts = []
+    original_create = AlgorithmFactory.create
+
+    def create(factory, *args, **kwargs):
+        player_counts.append(kwargs.get("n_players"))
+        return original_create(factory, *args, **kwargs)
+
+    monkeypatch.setattr(AlgorithmFactory, "create", create)
 
     output_path = run_cross_play_experiment(
         definition.id,
@@ -160,6 +168,7 @@ def test_three_player_custom_game_records_every_player(tmp_path) -> None:
     rows = read_csv_rows(output_path)
 
     assert len(rows) == 6
+    assert player_counts == [3, 3, 3]
     assert {int(row["player"]) for row in rows} == {0, 1, 2}
     assert json.loads(rows[0]["algorithm_profile"]) == ["hedge", "hedge", "hedge"]
     assert "player_algorithm" not in rows[0]

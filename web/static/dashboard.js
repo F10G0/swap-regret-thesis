@@ -121,8 +121,8 @@ function installFormPersistence() {
     }
 }
 
-function updateAlgorithmSelect(select, algorithms) {
-    replaceSelectOptions(select, algorithms, dashboardData.algorithmLabels);
+function updateAlgorithmSelect(select, algorithms, feedbackMode) {
+    replaceSelectOptions(select, algorithms, dashboardData.algorithmLabels[feedbackMode] || {});
 }
 
 function playerAlgorithmSelects() {
@@ -163,7 +163,7 @@ function updatePlayerControls(preferredValues = null) {
         } else {
             fields.push(field);
         }
-        updateAlgorithmSelect(select, algorithms);
+        updateAlgorithmSelect(select, algorithms, feedback ? feedback.value : "");
         if (algorithms.includes(existingValues[player])) {
             select.value = existingValues[player];
         }
@@ -178,7 +178,7 @@ function updateAlgorithmsForFeedbackMode() {
     }
 
     const algorithms = dashboardData.algorithms[feedbackSelect.value] || [];
-    playerAlgorithmSelects().forEach((select) => updateAlgorithmSelect(select, algorithms));
+    playerAlgorithmSelects().forEach((select) => updateAlgorithmSelect(select, algorithms, feedbackSelect.value));
 }
 
 function updateDashboardForGame(preferredAlgorithms = null) {
@@ -210,7 +210,7 @@ function synchronizePlayerValues() {
 function matchesResultFilters(record, state = resultFilters) {
     if (!state) return false;
     return record.dataset.scope === state.scope
-        && record.dataset.feedback === state.feedback
+        && (state.feedback === "both" || record.dataset.feedback === state.feedback)
         && (onePlayerMode ? state.action === "all" || record.dataset.action === state.action
             : record.dataset.player === state.player)
         && state.profiles.includes(record.dataset.profile);
@@ -340,7 +340,7 @@ function showExperimentDetail(index) {
     element("detail-title").textContent = `${gameLabel} · player ${summary.player}`;
     const metadata = element("detail-metadata");
     metadata.replaceChildren();
-    addDetail(metadata, "Feedback", summary.feedback_mode);
+    addDetail(metadata, "Feedback", summary.feedback_label);
     addDetail(metadata, "Profile", summary.profile_label);
     addDetail(metadata, "Horizon", summary.horizon);
     addDetail(metadata, "Seed", summary.seed);

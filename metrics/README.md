@@ -21,7 +21,7 @@ Each round therefore updates only `G[I_t, :]`. The evaluator uses the full payof
 
 ## Empirical Play and Equilibria
 
-`joint_action_distribution(...)` normalizes the final stored cumulative joint-action histogram. `mean_joint_action_distribution(...)` averages these distributions across replicates for empirical heatmaps. Neither operation solves an equilibrium LP.
+`joint_action_distribution(...)` normalizes the final stored cumulative joint-action histogram. `mean_joint_action_distribution(...)` averages these distributions across replicates for empirical heatmaps. Cumulative histograms and equilibrium distances use the regret checkpoint sampling rule with a separate 20-point budget. Neither operation solves an equilibrium LP.
 
 `equilibrium_l1_distance(...)` solves `min_{q in E} ||q - empirical||_1`, where `E` is CE or CCE. The local implementation in `equilibrium_distance.py` constructs incentive constraints and uses `scipy.optimize.linprog(method="highs")`. Prepared LPs reuse fixed coefficient matrices across checkpoints.
 

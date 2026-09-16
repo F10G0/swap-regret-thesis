@@ -34,7 +34,7 @@
                         <input id="custom-game-seed" name="seed" form="custom-game-form" type="number" value="{{ form_state.seed }}" min="0" title="Generator seed for reproducibility." required>
                     </div>
                 </div>
-                <form id="custom-game-form" method="post" action="{{ url_for('dashboard.custom_games') }}">
+                <form id="custom-game-form" method="post" action="{{ url_for('dashboard.custom_games') }}" data-submitted-state="{{ 'true' if inline_error else 'false' }}">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
                     <div class="field">
                         <label for="custom-game-name">Game name</label>
@@ -54,7 +54,7 @@
                         <label for="custom-player-count">Players</label>
                         <input id="custom-player-count" name="n_players" type="number" value="{{ form_state.n_players }}" min="2" max="{{ max_players }}" required>
                     </div>
-                    <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson }}"></div>
+                    <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson | forceescape }}"></div>
                     <p class="hint">At most {{ "{:,}".format(max_payoff_values) }} payoff values.</p>
                     <button class="button-primary" type="submit">Generate and save game</button>
                 </form>

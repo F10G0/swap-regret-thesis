@@ -147,7 +147,8 @@ class ResultRecord:
                 "algorithm_profile": list(self.profile), "player_algorithm": info.player_algorithms[player],
                 "co_player_algorithms": [name for index, name in enumerate(self.profile) if index != player],
                 **self.final_values[player]}
-        common |= {"filename": self.path.name, "algorithm": self.profile[0], "algorithm_label": algorithm_label(self.profile[0]),
+        common |= {"filename": self.path.name, "algorithm": self.profile[0],
+                   "algorithm_label": algorithm_label(self.profile[0]),
                    "feedback_label": FEEDBACK_MODE_LABELS[self.feedback_mode], "environment": info.environment,
                    "environment_label": ENVIRONMENT_LABELS[info.environment], "base_learner_seed": info.base_learner_seed}
         return common | {"n_actions": info.n_actions, "base_environment_seed": info.base_environment_seed,

@@ -8,15 +8,19 @@ import experiments.plots.plot_equilibrium_convergence as plotting
 import metrics.equilibrium_distance as metric
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.game_catalog import load_game_payoffs
+from experiments.recording import joint_action_histogram_checkpoints
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 
 
 def create_result(directory, replicate=0):
     return run_cross_play_experiment(
-        "rps", ["hedge", "bm"], horizon=300, seed=7, replicate=replicate,
+        "rps", ["hedge", "bm_hedge"], horizon=300, seed=7, replicate=replicate,
         output_dir=directory, max_recorded_points=8,
         feedback_mode="full_information",
     )
+
+
+DISTANCE_POINT_COUNT = len(joint_action_histogram_checkpoints(300))
 
 
 @pytest.mark.parametrize("replicate_count", [1, 2])
@@ -51,11 +55,11 @@ def test_style_redraw_reuses_cached_distance_values(tmp_path, monkeypatch):
     calls = count_solves(monkeypatch)
     kwargs = dict(cache_dir=tmp_path / "cache")
     plotting.plot_result_equilibrium_distance(path, tmp_path / "first.png", **kwargs)
-    assert calls == Counter(ce=4, cce=4)
+    assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
     monkeypatch.setattr(plotting, "load_result_empirical_distribution_trajectory", lambda *args: pytest.fail("redraw loaded histograms"))
     monkeypatch.setattr(plotting, "EQUILIBRIUM_DISTANCE_FIGURE_VERSION", plotting.EQUILIBRIUM_DISTANCE_FIGURE_VERSION + 1)
     plotting.plot_result_equilibrium_distance(path, tmp_path / "redrawn.png", **kwargs)
-    assert calls == Counter(ce=4, cce=4)
+    assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
 
 
 def count_solves(monkeypatch):
@@ -75,11 +79,11 @@ def test_first_request_caches_and_unchanged_request_skips_lp_and_histograms(tmp_
     calls = count_solves(monkeypatch)
     cache = tmp_path / "cache"
     first = plotting._load_result_distances(path, load_game_payoffs("rps"), cache)
-    assert calls == Counter(ce=4, cce=4)
+    assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
     assert len(list(cache.glob("*.json"))) == 1
     monkeypatch.setattr(plotting, "load_result_empirical_distribution_trajectory", lambda *args: pytest.fail("cache hit loaded histograms"))
     second = plotting._load_result_distances(path, load_game_payoffs("rps"), cache)
-    assert calls == Counter(ce=4, cce=4)
+    assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
     np.testing.assert_array_equal(first.ce, second.ce)
     np.testing.assert_array_equal(first.cce, second.cce)
     np.testing.assert_array_equal(first.horizons, second.horizons)
@@ -118,11 +122,11 @@ def test_new_replicate_reuses_old_curve_before_aggregating(tmp_path, monkeypatch
     monkeypatch.setattr(plotting, "_plot_equilibrium_distance", lambda distances, *args: aggregates.append(distances))
     kwargs = dict(output_path=tmp_path / "figure.png", cache_dir=tmp_path / "cache")
     plotting.plot_result_equilibrium_distance(first, **kwargs)
-    assert calls == Counter(ce=4, cce=4)
+    assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
     plotting.plot_result_equilibrium_distance([first, second], **kwargs)
-    assert calls == Counter(ce=8, cce=8)
+    assert calls == Counter(ce=2 * DISTANCE_POINT_COUNT, cce=2 * DISTANCE_POINT_COUNT)
     plotting.plot_result_equilibrium_distance([second, first], **kwargs)
-    assert calls == Counter(ce=8, cce=8)
+    assert calls == Counter(ce=2 * DISTANCE_POINT_COUNT, cce=2 * DISTANCE_POINT_COUNT)
     assert aggregates[-1].n_replicates == 2
     a = plotting._load_result_distances(first, load_game_payoffs("rps"), tmp_path / "cache")
     b = plotting._load_result_distances(second, load_game_payoffs("rps"), tmp_path / "cache")
@@ -143,6 +147,6 @@ def test_distances_use_every_stored_histogram_checkpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(plotting, "equilibrium_distance_trajectory", capture)
     plotting._load_result_distances(path, load_game_payoffs("rps"), tmp_path / "cache")
     empirical = captured[0]
-    np.testing.assert_array_equal(empirical.horizons, [1, 10, 100, 300])
+    np.testing.assert_array_equal(empirical.horizons, joint_action_histogram_checkpoints(300))
     np.testing.assert_array_equal(empirical.horizons, stored.horizons)
     np.testing.assert_array_equal(empirical.vectors, stored.vectors)

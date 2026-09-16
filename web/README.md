@@ -13,7 +13,7 @@ The **Experiments** page uses one template, controller, result filters, figure g
 
 - Configure built-in or custom games and one learner per player.
 - Queue, monitor, and cancel jobs, and download recorded results.
-- Filter figures and summaries by game or environment and feedback mode.
+- Filter figures and summaries by game or environment and by full-information, bandit, or both feedback modes.
 - Create reproducible general-sum or symmetric two-player zero-sum games.
 - Switch the **Experiments** page between fixed games and one-player historical-frequency or lazy-random-walk environments.
 - Enter one or more action counts to queue ordinary one-player experiments.
@@ -28,7 +28,7 @@ The sidebar configures the next run. The page flows through **Execution / Job st
 
 PNG previews have matching vector PDFs. Experiment jobs save CSVs; regret figures are generated explicitly through Figure Builder. Detail figures are generated lazily and cached. Result details retain mean empirical joint-action heatmaps for supported two-player games and asynchronously computed full-space CE/CCE convergence figures.
 
-**Figure Builder** compares one or more algorithm profiles for one regret notion, external/internal/swap regret together for one profile, or compatible action spaces for one one-player profile and regret notion. The selected view always plots trajectories over time. Exact cached selections may restore automatically; a cache miss requires **Generate figures**. The collected-PDF download combines generated PDFs in their displayed order. Exporting does not rerun experiments or rebuild plots.
+**Figure Builder** compares one or more algorithm profiles for one regret notion, external/internal/swap regret together for one profile, or compatible action spaces for one one-player profile and regret notion. Its **Both** feedback filter can combine otherwise-compatible full-information and bandit profiles because reduction variants have unique result IDs. The selected view always plots trajectories over time. Exact cached selections may restore automatically; a cache miss requires **Generate figures**. The collected-PDF download combines generated PDFs in their displayed order. Exporting does not rerun experiments or rebuild plots.
 
 | Location | Contents |
 |---|---|

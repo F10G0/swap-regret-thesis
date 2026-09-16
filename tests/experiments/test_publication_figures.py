@@ -15,8 +15,9 @@ from experiments.plots.style import (
 
 @pytest.mark.parametrize("profile,label", [
     (("regret_matching",) * 2, "RM vs RM"),
-    (("hedge", "hedge"), "Hedge vs Hedge"),
-    (("hedge", "ito"), "Hedge vs Ito"), (("ito",), "Ito"),
+    (("hedge", "ito_hedge"), "Hedge vs Ito-Hedge"),
+    (("auer_exp3", "bm_exp3"), "EXP3 vs BM-EXP3"),
+    (("ito_tsallis",), "Ito-Tsallis"),
 ])
 def test_publication_profile_labels(profile, label):
     assert algorithm_profile_label(profile) == label
@@ -59,7 +60,7 @@ def test_publication_style_is_scoped_even_when_rendering_fails():
 
 
 def fixed_results(directory, bandit=False):
-    algorithms = ["auer_exp3", "bm"] if bandit else ["hedge", "ito"]
+    algorithms = ["auer_exp3", "bm_exp3"] if bandit else ["hedge", "ito_hedge"]
     return [run_cross_play_experiment("rps", [name, name], feedback_mode="bandit" if bandit else "full_information", horizon=100, seed=42,
                    replicate=replicate, output_dir=directory, max_recorded_points=20)
             for name in algorithms for replicate in (0, 1)]
@@ -111,9 +112,12 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
         assert 0 <= box.y0 < box.y1 < axes.get_window_extent(renderer).y0
         assert all(text.get_fontsize() == 9 for text in legend.get_texts())
     marker_lines = [line for line in axes.lines if line.get_marker() not in {None, "", "None"}]
-    assert [line.get_markevery() for line in marker_lines] == [
-        staggered_markevery(index, len(marker_lines)) for index in range(len(marker_lines))
-    ]
+    if family == "distance":
+        assert [line.get_markevery() for line in marker_lines] == [None, None]
+    else:
+        assert [line.get_markevery() for line in marker_lines] == [
+            staggered_markevery(index, len(marker_lines)) for index in range(len(marker_lines))
+        ]
     if family == "regret":
         assert axes.get_ylabel() == regret_axis_label("swap")
     pdf = PdfReader(output.with_suffix(".pdf"))

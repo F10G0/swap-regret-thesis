@@ -42,7 +42,9 @@ def mean_joint_action_distribution(input_paths: Iterable[str | Path], custom_gam
 
 
 @publication_plot
-def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_path: str | Path, custom_game_dir: str | Path = CUSTOM_GAME_DIR) -> None:
+def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_path: str | Path,
+                       custom_game_dir: str | Path = CUSTOM_GAME_DIR,
+                       information_rows: list[tuple[str, str]] | None = None) -> None:
     paths = [input_paths] if isinstance(input_paths, (str, Path)) else list(input_paths)
     _, frequencies, _ = mean_joint_action_distribution(paths, custom_game_dir)
     output_path = Path(output_path)
@@ -54,5 +56,8 @@ def plot_joint_actions(input_paths: str | Path | Iterable[str | Path], output_pa
     colorbar = figure.colorbar(image, ax=axes, label="Empirical frequency")
     colorbar.solids.set_rasterized(False)
     figure.tight_layout()
-    save_figure_pair(figure, output_path)
+    if information_rows is None:
+        save_figure_pair(figure, output_path)
+    else:
+        save_figure_pair(figure, output_path, information_rows=information_rows)
     plt.close(figure)

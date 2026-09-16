@@ -1,6 +1,8 @@
 import json
+from io import BytesIO
 from pathlib import Path
 import pytest
+from pypdf import PdfReader
 
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
@@ -136,9 +138,16 @@ def test_dashboard_group_details_downloads_and_figures(tmp_path):
     for run in summary["runs"]:
         assert client.get(run["download_url"]).data == (service.raw_dir / run["experiment"]).read_bytes()
     heatmap = client.get(summary["joint_actions_url"])
+    heatmap_pdf = client.get(summary["joint_actions_pdf_url"])
     distance, _ = wait_for_http_response(client, summary["equilibrium_distance_pdf_url"])
-    assert heatmap.status_code == distance.status_code == 200
-    assert heatmap.mimetype == "image/png" and distance.mimetype == "application/pdf"
+    assert heatmap.status_code == heatmap_pdf.status_code == distance.status_code == 200
+    assert heatmap.mimetype == "image/png" and heatmap_pdf.mimetype == distance.mimetype == "application/pdf"
+    for response, figure in ((heatmap_pdf, "Joint-action distribution"),
+                             (distance, "Equilibrium-distance convergence")):
+        pages = PdfReader(BytesIO(response.data)).pages
+        assert len(pages) == 2
+        assert figure in pages[0].extract_text()
+        assert "Aggregation:  Replicate mean" in pages[0].extract_text()
 
 
 def test_custom_game_generator_uses_header_seed_and_zero_sum_default(tmp_path):
@@ -212,6 +221,7 @@ def test_custom_game_payoff_inspector_slice_and_download(tmp_path: Path) -> None
     download = client.get(f"/custom-games/{definition.id}/download")
 
     assert page.status_code == 200
+    assert b"Inspect Me" in page.data
     assert b'id="payoff-inspector"' in page.data
     assert "3 × 2 × 3 × 2".encode() in page.data
     assert b"Download NPZ" in page.data

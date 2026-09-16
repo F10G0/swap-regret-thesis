@@ -18,32 +18,36 @@ from experiments.spec import ExperimentSpec
 
 @dataclass(frozen=True)
 class AlgorithmFactory:
-    """Declare whether a learner's parameters use the experiment horizon."""
+    """Declare which experiment parameters a learner constructor uses."""
 
     algorithm_class: type[Algorithm]
     uses_horizon: bool
+    uses_n_players: bool = False
 
-    def create(self, n_actions: int, horizon: int, seed: int) -> Algorithm:
+    def create(self, n_actions: int, horizon: int, seed: int, n_players: int = 2) -> Algorithm:
+        parameters = {"n_actions": n_actions, "seed": seed}
         if self.uses_horizon:
-            return self.algorithm_class(n_actions=n_actions, horizon=horizon, seed=seed)
-        return self.algorithm_class(n_actions=n_actions, seed=seed)
+            parameters["horizon"] = horizon
+        if self.uses_n_players:
+            parameters["n_players"] = n_players
+        return self.algorithm_class(**parameters)
 
 
 ALGORITHMS_BY_FEEDBACK_MODE = {
     "full_information": {
         "hedge": AlgorithmFactory(Hedge, uses_horizon=True),
         "optimistic_hedge": AlgorithmFactory(OptimisticHedge, uses_horizon=True),
-        "bm": AlgorithmFactory(FullBM, uses_horizon=True),
-        "bm_optimistic_hedge": AlgorithmFactory(BMOptimisticHedge, uses_horizon=True),
-        "ito": AlgorithmFactory(FullIto, uses_horizon=False),
+        "bm_hedge": AlgorithmFactory(FullBM, uses_horizon=True),
+        "bm_optimistic_hedge": AlgorithmFactory(BMOptimisticHedge, uses_horizon=True, uses_n_players=True),
+        "ito_hedge": AlgorithmFactory(FullIto, uses_horizon=False),
         "regret_matching": AlgorithmFactory(RegretMatching, uses_horizon=False),
         "stationary_regret_matching": AlgorithmFactory(StationaryRegretMatching, uses_horizon=False),
     },
     "bandit": {
         "auer_exp3": AlgorithmFactory(AuerExp3, uses_horizon=True),
         "exp3_ix": AlgorithmFactory(Exp3IX, uses_horizon=True),
-        "bm": AlgorithmFactory(BanditBM, uses_horizon=True),
-        "ito": AlgorithmFactory(BanditIto, uses_horizon=False),
+        "bm_exp3": AlgorithmFactory(BanditBM, uses_horizon=True),
+        "ito_tsallis": AlgorithmFactory(BanditIto, uses_horizon=False),
         "lce_ix": AlgorithmFactory(LCEIX, uses_horizon=False),
     },
 }
@@ -99,7 +103,7 @@ def run_cross_play_experiment(game_name: str, algorithm_names: list[str], horizo
     )
     game = (RepeatedGame if feedback_mode == "full_information" else BanditRepeatedGame)(payoff_tensor)
     players = [
-        algorithm_registry[name].create(n_actions, horizon, player_seed(spec, player_id))
+        algorithm_registry[name].create(n_actions, horizon, player_seed(spec, player_id), n_players=game.n_players)
         for player_id, (name, n_actions) in enumerate(zip(spec.algorithm_names, game.n_actions))
     ]
     output_path = Path(RAW_DIR if output_dir is None else output_dir) / f"{spec.run_id}.csv"

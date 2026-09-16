@@ -12,7 +12,12 @@ from experiments.game_catalog import load_game_payoffs
 from experiments.plots.plot_joint_actions import joint_action_distribution
 from experiments.plots.plot_regret import load_rows, aggregate_metric_curve
 from experiments.plots.plot_adversarial import aggregate_adversarial_regret
-from experiments.recording import MAX_RECORDED_POINTS, joint_action_histogram_checkpoints, recording_checkpoints
+from experiments.recording import (
+    MAX_EQUILIBRIUM_POINTS,
+    MAX_RECORDED_POINTS,
+    joint_action_histogram_checkpoints,
+    recording_checkpoints,
+)
 from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, load_final_result_rows
@@ -51,17 +56,15 @@ def test_recording_budget_and_endpoints(horizon):
         assert recording_checkpoints(horizon, MAX_RECORDED_POINTS * 2) == points
 
 
-@pytest.mark.parametrize(("horizon", "expected"), [
-    (1, (1,)),
-    (9, (1, 9)),
-    (10, (1, 10)),
-    (99, (1, 10, 99)),
-    (100, (1, 10, 100)),
-    (12_345, (1, 10, 100, 1_000, 10_000, 12_345)),
-    (1_000_000, (1, 10, 100, 1_000, 10_000, 100_000, 1_000_000)),
-])
-def test_joint_action_histogram_checkpoint_policy(horizon, expected):
-    assert joint_action_histogram_checkpoints(horizon) == expected
+@pytest.mark.parametrize("horizon", [1, 20, 21, 300, 1_000_000])
+def test_joint_action_histogram_checkpoint_policy(horizon):
+    points = joint_action_histogram_checkpoints(horizon)
+    assert points == recording_checkpoints(horizon, MAX_EQUILIBRIUM_POINTS)
+    assert points[0] == 1 and points[-1] == horizon
+    assert tuple(sorted(set(points))) == points
+    assert len(points) <= MAX_EQUILIBRIUM_POINTS
+    if horizon <= MAX_EQUILIBRIUM_POINTS:
+        assert points == tuple(range(1, horizon + 1))
 
 
 @pytest.mark.parametrize("mode,name", [*(('full_information', name) for name in FULL), *(('bandit', name) for name in BANDIT)])
@@ -115,7 +118,7 @@ def test_sparse_runner_matches_original_dense_loop(mode, name):
         assert row == reference_rows[t, i]
     assert len(histogram_payloads) == 1
     histograms = json.loads(histogram_payloads[0])
-    assert histograms["horizons"] == [1, 10, horizon]
+    assert histograms["horizons"] == list(joint_action_histogram_checkpoints(horizon))
     for checkpoint, values in zip(histograms["horizons"], histograms["counts"]):
         expected = np.zeros((3, 3), dtype=int)
         np.add.at(expected, tuple(np.asarray(history[:checkpoint]).T), 1)
@@ -149,8 +152,8 @@ def test_tracker_updates_every_round_and_summarizes_only_checkpoints(monkeypatch
 
 
 @pytest.mark.parametrize("runner,names", [
-    (partial(run_cross_play_experiment, feedback_mode="full_information"), ["hedge", "bm"]),
-    (partial(run_cross_play_experiment, feedback_mode="bandit"), ["auer_exp3", "ito"]),
+    (partial(run_cross_play_experiment, feedback_mode="full_information"), ["hedge", "bm_hedge"]),
+    (partial(run_cross_play_experiment, feedback_mode="bandit"), ["auer_exp3", "ito_tsallis"]),
 ])
 def test_regret_recording_budget_does_not_change_histograms_or_joint_distribution(tmp_path, runner, names):
     kwargs = dict(game_name="rps", algorithm_names=names, horizon=101, seed=7)

@@ -69,7 +69,7 @@ Current related invariants are:
 
 - At most 500 regret checkpoints: every round for short horizons and geometric spacing for longer runs, including the first and final rounds.
 - Per-round learner/regret-state updates with checkpoint-only summaries.
-- Cumulative joint-action histograms at decimal checkpoints and the final horizon.
+- Cumulative joint-action histograms using the regret checkpoint sampling rule with a separate 20-point budget.
 - Spawn-based replicate processes, bounded workers/tasks, deterministic output order, cancellation, and no nested pools.
 - Figure Builder artifact caching, including ordinary one-player action-space comparisons.
 - Run identity fields, seed derivation, CSV schemas, and sampling schedules.

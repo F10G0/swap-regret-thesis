@@ -67,7 +67,8 @@ def aggregate_metric_curve(replicate_runs: list[list[dict]], player: int, column
 
 
 @publication_plot
-def plot_regret_curves(curves: list[RegretCurve], y_label: str, output_path: str | Path) -> None:
+def plot_regret_curves(curves: list[RegretCurve], y_label: str, output_path: str | Path,
+                       information_rows: list[tuple[str, str]] | None = None) -> None:
     figure, axes = plt.subplots()
     for curve in curves:
         axes.plot(curve.x, curve.y, label=curve.label, **curve.style)
@@ -76,5 +77,8 @@ def plot_regret_curves(curves: list[RegretCurve], y_label: str, output_path: str
     axes.set_xlabel(r"Round $T$")
     axes.set_ylabel(y_label)
     finish_line_figure(figure, axes)
-    save_figure_pair(figure, output_path)
+    if information_rows is None:
+        save_figure_pair(figure, output_path)
+    else:
+        save_figure_pair(figure, output_path, information_rows=information_rows)
     plt.close(figure)

@@ -4,6 +4,10 @@ const playerCountInput = document.getElementById("custom-player-count");
 const actionCountContainer = document.getElementById("custom-action-counts");
 const payoffStructureSelect = document.getElementById("custom-payoff-structure");
 const payoffStructureHint = document.getElementById("custom-payoff-structure-hint");
+const customGameForm = document.getElementById("custom-game-form");
+const customGameNameInput = document.getElementById("custom-game-name");
+const customGameSeedInput = document.getElementById("custom-game-seed");
+const customGameStorageKey = "swap-regret-custom-game-form";
 
 function renderActionCounts() {
     if (!playerCountInput || !actionCountContainer) {
@@ -59,9 +63,53 @@ function updatePayoffStructure() {
     renderActionCounts();
 }
 
+function saveCustomGameState() {
+    saveLocalJson(customGameStorageKey, {
+        name: customGameNameInput.value,
+        seed: customGameSeedInput.value,
+        payoffStructure: payoffStructureSelect.value,
+        playerCount: playerCountInput.value,
+        actionCounts: [...actionCountContainer.querySelectorAll("input")].map((input) => input.value),
+    }, "custom game parameters");
+}
+
+function restoreCustomGameState() {
+    const saved = customGameForm.dataset.submittedState !== "true"
+        ? restoreLocalJson(customGameStorageKey, "custom game parameters")
+        : null;
+    if (saved) {
+        if (typeof saved.payoffStructure === "string"
+                && [...payoffStructureSelect.options].some((option) => option.value === saved.payoffStructure)) {
+            payoffStructureSelect.value = saved.payoffStructure;
+        }
+        for (const [input, value] of [[playerCountInput, saved.playerCount], [customGameNameInput, saved.name],
+                [customGameSeedInput, saved.seed]]) {
+            if (typeof value !== "string") continue;
+            const fallback = input.value;
+            input.value = value;
+            if (!input.checkValidity()) input.value = fallback;
+        }
+    }
+    updatePayoffStructure();
+    if (saved && Array.isArray(saved.actionCounts)) {
+        [...actionCountContainer.querySelectorAll("input")].forEach((input, index) => {
+            if (typeof saved.actionCounts[index] !== "string") return;
+            const fallback = input.value;
+            input.value = saved.actionCounts[index];
+            if (!input.checkValidity()) input.value = fallback;
+        });
+    }
+    saveCustomGameState();
+}
+
 listen("custom-player-count", "input", renderActionCounts);
 listen("custom-payoff-structure", "change", updatePayoffStructure);
-updatePayoffStructure();
+customGameForm.addEventListener("input", saveCustomGameState);
+customGameForm.addEventListener("change", saveCustomGameState);
+customGameForm.addEventListener("submit", saveCustomGameState);
+listen("custom-game-seed", "input", saveCustomGameState);
+listen("custom-game-seed", "change", saveCustomGameState);
+restoreCustomGameState();
 
 const payoffInspector = document.getElementById("payoff-inspector");
 const payoffPlayerSelect = document.getElementById("payoff-player");

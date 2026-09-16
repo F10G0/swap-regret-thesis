@@ -31,7 +31,7 @@ def make_spec(
     return ExperimentSpec(
         game_name="rps",
         feedback_mode=feedback_mode,
-        algorithm_names=("bm", "bm"),
+        algorithm_names=("bm_hedge", "bm_hedge"),
         horizon=10,
         seed=seed,
         replicate=replicate,
@@ -81,12 +81,12 @@ def test_run_id_changes_with_experiment_configuration() -> None:
     changed_horizon = ExperimentSpec(
         game_name="rps",
         feedback_mode="full_information",
-        algorithm_names=("bm", "bm"),
+        algorithm_names=("bm_hedge", "bm_hedge"),
         horizon=20,
         seed=7,
     )
     assert baseline.run_id != changed_horizon.run_id
-    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, stationary_method="pinv").run_id
+    assert baseline.run_id != ExperimentSpec("rps", "full_information", ("bm_hedge", "bm_hedge"), 10, 7, stationary_method="pinv").run_id
 
 
 def test_runtime_environment_changes_identity_and_is_recorded(tmp_path) -> None:
@@ -94,7 +94,7 @@ def test_runtime_environment_changes_identity_and_is_recorded(tmp_path) -> None:
     changed = ExperimentSpec(
         "rps",
         "full_information",
-        ("bm", "bm"),
+        ("bm_hedge", "bm_hedge"),
         10,
         7,
         runtime_environment='{"packages":{"numpy":"different"},"python":"3.10"}',
@@ -122,7 +122,7 @@ def test_runtime_environment_records_the_dependency_lock() -> None:
 
 
 def test_experiment_spec_preserves_positional_stationary_method_compatibility() -> None:
-    spec = ExperimentSpec("rps", "full_information", ("bm", "bm"), 10, 7, 0, "pinv")
+    spec = ExperimentSpec("rps", "full_information", ("bm_hedge", "bm_hedge"), 10, 7, 0, "pinv")
 
     assert spec.stationary_method == "pinv"
 
@@ -235,4 +235,3 @@ def test_fixed_game_loader_rejects_missing_runtime_identity(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="missing required columns"):
         list(iter_result_rows(result_path))
-
