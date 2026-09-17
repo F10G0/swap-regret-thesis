@@ -18,6 +18,7 @@ import numpy as np
 from config import CUSTOM_GAME_DIR, EQUILIBRIUM_LP_TOLERANCE
 from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
 from experiments.plots import save_figure_pair
+from experiments.plots.pdf_information import ENDPOINT_STATISTICS_DESCRIPTION, format_value_summary
 from experiments.plots.style import publication_plot, finish_line_figure
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, result_game_payoff_digest
@@ -178,8 +179,16 @@ def plot_result_equilibrium_distance(
     distances = aggregate_equilibrium_distance_trajectories(
         replicate_distances
     )
+    rows = list(information_rows) if information_rows is not None else None
+    if rows is not None:
+        rows.extend([
+            ("Final equilibrium distance at T", f"{int(distances.horizons[-1]):,}"),
+            ("Endpoint statistics", ENDPOINT_STATISTICS_DESCRIPTION),
+            ("CE", format_value_summary([trajectory.ce[-1] for trajectory in replicate_distances])),
+            ("CCE", format_value_summary([trajectory.cce[-1] for trajectory in replicate_distances])),
+        ])
     _plot_equilibrium_distance(
         distances,
         output_path,
-        information_rows,
+        rows,
     )

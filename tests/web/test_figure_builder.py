@@ -13,6 +13,7 @@ import pytest
 from werkzeug.datastructures import MultiDict
 
 from experiments.algorithm_labels import algorithm_profile_label
+from experiments.plots.pdf_information import ENDPOINT_STATISTICS_DESCRIPTION, format_value_summary
 from experiments.plots.style import regret_series_style
 from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
 from tests.web.support import create_test_app, csrf_token, record_fixed_runs as result, submit_and_wait
@@ -179,28 +180,32 @@ def test_algorithm_comparison_can_mix_compatible_feedback_modes(tmp_path, monkey
 
     _, service = create_test_app(tmp_path)
     result(service, "hedge_vs_hedge")
+    result(service, "ito_hedge_vs_ito_hedge")
     result(service, "auer_exp3_vs_bm_exp3", mode="bandit")
     context = context_for(service, player=0)
     captured = []
     original_save = plotting.save_figure_pair
 
     def save(figure, path, **kwargs):
-        captured.append([line.get_label() for line in figure.axes[0].lines if not line.get_label().startswith("_")])
+        captured.append((
+            [line.get_label() for line in figure.axes[0].lines if not line.get_label().startswith("_")],
+            figure.legends[0]._ncols,
+        ))
         return original_save(figure, path, **kwargs)
 
     monkeypatch.setattr(plotting, "save_figure_pair", save)
     selection = parse_profile_selection(form(context, [
-        "hedge_vs_hedge", "auer_exp3_vs_bm_exp3",
+        "hedge_vs_hedge", "ito_hedge_vs_ito_hedge", "auer_exp3_vs_bm_exp3",
     ]))
     collection = service.figure_builder.build_collection(selection)
 
     assert len(collection["figures"]) == 6
-    assert collection["profiles"] == ["auer_exp3_vs_bm_exp3", "hedge_vs_hedge"]
-    assert captured == [["EXP3 vs BM-EXP3", "Hedge vs Hedge"]] * 6
+    assert collection["profiles"] == ["auer_exp3_vs_bm_exp3", "hedge_vs_hedge", "ito_hedge_vs_ito_hedge"]
+    assert captured == [(["EXP3 vs BM-EXP3", "Hedge vs Hedge", "Ito-Hedge vs Ito-Hedge"], 2)] * 6
     pages = PdfReader(service.figure_builder.artifact_path(collection["figures"][0]["pdf_filename"])).pages
-    information = pages[0].extract_text()
+    information = " ".join(pages[0].extract_text().split())
     assert len(pages) == 2
-    assert "Feedback:    Both" in information
+    assert "Feedback: Both" in information
     assert "EXP3 vs BM-EXP3 [Bandit feedback]" in information
     assert "Hedge vs Hedge [Full information]" in information
 
@@ -288,6 +293,7 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
         return rows
 
     def save(figure, path, **kwargs):
+        assert not figure.axes[0].texts
         curves.append([line for line in figure.axes[0].lines if not line.get_label().startswith("_")])
         return original_save(figure, path, **kwargs)
 
@@ -329,7 +335,23 @@ def test_collection_reads_once_exports_selected_means_and_reuses_cache(tmp_path,
         assert preview.data.startswith(b"\x89PNG")
         pdf_pages = PdfReader(BytesIO(pdf.data)).pages
         assert len(pdf_pages) == 2
-        assert "Experiment Information" in pdf_pages[0].extract_text()
+        information = " ".join(pdf_pages[0].extract_text().split())
+        assert "Experiment Information" in information
+        assert f"Final endpoints at T: {context['horizons'][0]}" in information
+        assert f"Endpoint statistics: {ENDPOINT_STATISTICS_DESCRIPTION}" in information
+        for profile in profiles:
+            trajectories = source_paths[profile]
+            horizon = int(trajectories[0][0]["horizon"])
+            column = ("average_" if figure["view"] == "average" else "") + figure["metric"] + "_regret"
+            values = []
+            for trajectory in trajectories:
+                final = [row for row in trajectory if int(row["t"]) == horizon
+                         and (mode == "adversarial" or int(row["player"]) == 0)]
+                assert len(final) == 1
+                value = float(final[0][column])
+                values.append(value if figure["view"] == "average" else value / np.sqrt(horizon))
+            label = algorithm_profile_label(profile.split("_vs_"))
+            assert f"{label}: {format_value_summary(values)}" in information
     timestamps = {p: p.stat().st_mtime_ns for p in service.figure_builder.output_dir.iterdir()}
     cached = client.post("/figure-builder/cache", data=data)
     assert cached.json == response.json
@@ -382,7 +404,8 @@ def test_action_space_comparison_uses_compatible_ordinary_trajectories(tmp_path,
     original_save = renderer.save_figure_pair
     def save(figure, path, **kwargs):
         captured.append((figure.axes[0].get_ylabel(), [
-            line for line in figure.axes[0].lines if not line.get_label().startswith("_")]))
+            line for line in figure.axes[0].lines if not line.get_label().startswith("_")],
+            kwargs.get("information_rows"), list(figure.axes[0].texts)))
         return original_save(figure, path, **kwargs)
     monkeypatch.setattr(renderer, "save_figure_pair", save)
     client = app.test_client()
@@ -393,15 +416,22 @@ def test_action_space_comparison_uses_compatible_ordinary_trajectories(tmp_path,
     assert [(figure["metric"], figure["view"]) for figure in figures] == [
         (metric, view) for metric in ("external", "internal", "swap")
         for view in ("average", "sqrt_scaling")]
-    for figure, (_, lines) in zip(figures, captured):
+    for figure, (_, lines, information_rows, texts) in zip(figures, captured):
+        assert not texts
         assert [line.get_label() for line in lines] == ["K=2", "K=4"]
+        information = dict(information_rows)
         for line, n_actions in zip(lines, (2, 4)):
             column = ("average_" if figure["view"] == "average" else "") + figure["metric"] + "_regret"
-            expected = plotting.aggregate_adversarial_regret(
-                [load_adversarial_rows(path) for path in paths[n_actions]], column,
+            trajectories = [load_adversarial_rows(path) for path in paths[n_actions]]
+            expected = plotting.aggregate_adversarial_regret(trajectories, column,
                 scale_by_sqrt_time=figure["view"] == "sqrt_scaling")
             np.testing.assert_array_equal(line.get_xdata(), expected[0])
             np.testing.assert_array_equal(line.get_ydata(), expected[1])
+            values = [float(next(row for row in trajectory if int(row["t"]) == 30)[column])
+                      for trajectory in trajectories]
+            if figure["view"] == "sqrt_scaling":
+                values = np.asarray(values) / np.sqrt(30)
+            assert information[f"K={n_actions}"] == format_value_summary(values)
         assert figure["comparison_mode"] == "actions" and "Action spaces" in figure["title"]
 
 
@@ -413,7 +443,7 @@ def test_horizon_comparison_uses_separately_configured_final_endpoints(tmp_path,
              for horizon in (10, 20, 40)}
     result(service, "hedge_vs_hedge", horizon=80, seed=9, replicates=(0, 1))
     for horizon, horizon_paths in paths.items():
-        for path in horizon_paths:
+        for replicate_index, path in enumerate(horizon_paths):
             rows = read_csv_rows(path)
             for row in rows:
                 if int(row["t"]) != horizon:
@@ -421,7 +451,8 @@ def test_horizon_comparison_uses_separately_configured_final_endpoints(tmp_path,
                         row["external_regret"] = "9999"
                     continue
                 for metric, factor in zip(("external", "internal", "swap"), (2, 3, 4)):
-                    value = factor * horizon ** 0.25 if int(row["player"]) == 0 else 999
+                    replicate_factor = factor + (-0.5 if replicate_index == 0 else 0.5)
+                    value = replicate_factor * horizon ** 0.25 if int(row["player"]) == 0 else 999
                     row[f"{metric}_regret"] = str(value)
                     row[f"average_{metric}_regret"] = str(value / horizon)
             with path.open("w", newline="", encoding="utf-8") as output:
@@ -447,8 +478,11 @@ def test_horizon_comparison_uses_separately_configured_final_endpoints(tmp_path,
 
     assert [(figure["metric"], figure["view"]) for figure in collection["figures"]] == [
         ("all", "horizon_scaling")]
-    axes = captured[0].axes[0]
+    figure = captured[0]
+    assert len(figure.axes) == 1
+    axes = figure.axes[0]
     assert axes.get_xscale() == axes.get_yscale() == "log"
+    assert not axes.texts
     assert len(axes.lines) == 6
     for index, (metric, factor) in enumerate(zip(("external", "internal", "swap"), (2, 3, 4))):
         empirical, fitted = axes.lines[2 * index:2 * index + 2]
@@ -458,11 +492,25 @@ def test_horizon_comparison_uses_separately_configured_final_endpoints(tmp_path,
         style = regret_series_style(metric, index, 3)
         assert (empirical.get_color(), empirical.get_marker()) == (style["color"], style["marker"])
         assert (fitted.get_color(), fitted.get_linestyle()) == (style["color"], style["linestyle"])
-        assert fitted.get_label() == f"{metric.title()}: α = 0.250"
+        assert fitted.get_label() == f"{metric.title()}: α = 0.250, c = {factor:.4g}"
+    legend = figure.legends[0]
+    assert legend._ncols == 1
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "External: α = 0.250, c = 2", "Internal: α = 0.250, c = 3", "Swap: α = 0.250, c = 4"]
     information = " ".join(PdfReader(
         service.figure_builder.artifact_path(collection["figures"][0]["pdf_filename"])).pages[0].extract_text().split())
-    assert all(text in information for text in ("Compare: Horizons", "Horizons: 10, 20, 40",
-                                                  "External: α = 0.250", "Internal: α = 0.250", "Swap: α = 0.250"))
+    endpoint_values = {
+        metric: np.asarray([factor - 0.5, factor + 0.5]) * 40 ** 0.25 / 40
+        for metric, factor in zip(("external", "internal", "swap"), (2, 3, 4))
+    }
+    assert all(text in information for text in (
+        "Compare: Horizons", "Horizons: 10, 20, 40", "Fit model: log R_T = α log T + log c",
+        "Fit points: 3", "Fit range: 10 to 40", "Final endpoint at T: 40",
+        f"Endpoint statistics: {ENDPOINT_STATISTICS_DESCRIPTION}",
+        "External: α = 0.250, c = 2, R² = 1.000", "Internal: α = 0.250, c = 3, R² = 1.000",
+        "Swap: α = 0.250, c = 4, R² = 1.000",
+        *(f"{metric.title()} R/T: {format_value_summary(values)}" for metric, values in endpoint_values.items()),
+    ))
 
     for path in paths[20]:
         rows = read_csv_rows(path)
@@ -481,7 +529,11 @@ def test_horizon_comparison_uses_separately_configured_final_endpoints(tmp_path,
     assert "External: invalid" in [text.get_text() for text in invalid_axes.texts]
     invalid_information = " ".join(PdfReader(
         service.figure_builder.artifact_path(invalid["figures"][0]["pdf_filename"])).pages[0].extract_text().split())
-    assert all(text in invalid_information for text in ("External: invalid", "Internal: α = 0.250", "Swap: α = 0.250"))
+    assert all(text in invalid_information for text in (
+        "External: invalid", "Internal: α = 0.250, c = 3, R² = 1.000",
+        "Swap: α = 0.250, c = 4, R² = 1.000",
+        *(f"{metric.title()} R/T: {format_value_summary(values)}" for metric, values in endpoint_values.items()),
+    ))
 
     for horizon in (10, 20, 40):
         for replicate in (0, 1):
@@ -590,17 +642,32 @@ def test_regret_comparison_combines_three_fixed_series_for_selected_views_and_ex
         ("external", "log_log_fit"), ("internal", "log_log_fit"), ("swap", "log_log_fit")]
     assert len(captured) == 5
     styles = {}
-    for (figure, _), view in zip(captured[:2], ("average", "sqrt_scaling")):
-        y_label = figure.axes[0].get_ylabel()
-        lines = [line for line in figure.axes[0].lines if not line.get_label().startswith("_")]
-        assert y_label == ("$R_T/T$" if view == "average" else "$R_T/\\sqrt{T}$")
+    for (figure, information_rows), view in zip(captured[:2], ("average", "sqrt_scaling")):
+        assert len(figure.axes) == 1
+        axes = figure.axes[0]
+        lines = [line for line in axes.lines if not line.get_label().startswith("_")]
+        assert not axes.texts and axes.get_xscale() == "log"
+        assert axes.get_ylabel() == ("$R_T/T$" if view == "average" else "$R_T/\\sqrt{T}$")
         assert [line.get_label() for line in lines] == ["External regret", "Internal regret", "Swap regret"]
+        legend = figure.legends[0]
+        assert legend._ncols == 1
+        assert [text.get_text() for text in legend.get_texts()] == [
+            "External regret", "Internal regret", "Swap regret"]
+        information = dict(information_rows)
+        assert information["Endpoint statistics"] == ENDPOINT_STATISTICS_DESCRIPTION
         for index, (metric, line) in enumerate(zip(("external", "internal", "swap"), lines)):
             column = ("average_" if view == "average" else "") + metric + "_regret"
             x, y = plotting.aggregate_metric_curve(trajectories, 0, column,
                                                    divide_by_sqrt_time=view == "sqrt_scaling")
             np.testing.assert_array_equal(line.get_xdata(), x)
             np.testing.assert_array_equal(line.get_ydata(), y)
+            horizon = context["horizons"][0]
+            values = [float(next(row for row in trajectory
+                            if int(row["player"]) == 0 and int(row["t"]) == horizon)[column])
+                      for trajectory in trajectories]
+            if view == "sqrt_scaling":
+                values = np.asarray(values) / np.sqrt(horizon)
+            assert information[metric.title()] == format_value_summary(values)
             style = (line.get_color(), line.get_linestyle(), line.get_marker(), line.get_markevery(), line.get_zorder())
             assert style == tuple(regret_series_style(metric, index, 3).values())
             styles.setdefault(metric, style)

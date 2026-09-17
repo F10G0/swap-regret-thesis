@@ -8,6 +8,7 @@ import pytest
 
 from experiments.algorithm_labels import algorithm_profile_label
 from experiments.scenarios.cross_play import run_cross_play_experiment
+from experiments.plots.pdf_information import format_value_summary, summarize_values
 from experiments.plots.style import (
     FIGURE_WIDTH, MARKER_STEP, PROFILE_MARKERS, profile_series_style,
     publication_plot, regret_axis_label, regret_series_style, staggered_markevery,
@@ -43,6 +44,14 @@ def test_regret_styles_use_fixed_contrasting_encodings_and_staggered_phases():
     assert [style["markevery"] for style in styles] == [staggered_markevery(index, 3) for index in range(3)]
     assert styles[2]["zorder"] > styles[0]["zorder"]
     assert styles == [regret_series_style(name, index, len(names)) for index, name in enumerate(names)]
+
+
+def test_value_summaries_use_sample_sd_and_handle_one_replicate():
+    mean, sample_sd, standard_error = summarize_values([2.0, 4.0])
+    assert mean == 3.0
+    assert sample_sd == pytest.approx(np.sqrt(2))
+    assert standard_error == pytest.approx(1.0)
+    assert format_value_summary([2.0]) == "mean = 2, SD = n/a, SE = n/a"
 
 
 def test_publication_style_is_scoped_even_when_rendering_fails():
@@ -225,7 +234,9 @@ def test_horizon_scaling_uses_final_means_log_axes_and_strict_fit_contract(tmp_p
     assert module.horizon_scaling_fit(horizons[:1], curves[0].y[:1]) == (None, module.INSUFFICIENT_HORIZONS)
     assert module.horizon_scaling_fit(horizons[:2], curves[0].y[:2]) == (None, module.INSUFFICIENT_HORIZONS)
 
-    axes = captured[0].axes[0]
+    figure = captured[0]
+    assert len(figure.axes) == 1
+    axes = figure.axes[0]
     assert axes.get_xscale() == axes.get_yscale() == "log"
     data_lines = [line for line in axes.lines if len(line.get_xdata())]
     assert len(data_lines) == 4
@@ -233,8 +244,16 @@ def test_horizon_scaling_uses_final_means_log_axes_and_strict_fit_contract(tmp_p
     assert all(line.get_linestyle() == "None" and line.get_markevery() is None for line in empirical)
     assert all(np.array_equal(line.get_xdata(), horizons) for line in empirical)
     assert [line.get_label() for line in data_lines if line.get_linestyle() != "None"] == [
-        "External: α = 0.250", "Swap: α = 0.500"]
+        "External: α = 0.250, c = 2", "Swap: α = 0.500, c = 3"]
     assert "Internal: invalid" in [text.get_text() for text in axes.texts]
+    legend = figure.legends[0]
+    assert legend._ncols == 1
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "External: α = 0.250, c = 2", "Swap: α = 0.500, c = 3"]
+    assert module._log_log_r_squared(horizons, curves[0].y, module.horizon_scaling_fit(horizons, curves[0].y)[0]) == pytest.approx(1.0)
+    assert module._log_log_r_squared(horizons, np.ones(3), (0.0, 0.0)) == 1.0
+    assert module._log_log_r_squared(horizons, np.ones(3), (0.0, 1.0)) is None
     information = " ".join(PdfReader(tmp_path / "scaling.pdf").pages[0].extract_text().split())
     assert all(text in information for text in (
-        "Compare: Horizons", "External: α = 0.250", "Internal: invalid", "Swap: α = 0.500"))
+        "Compare: Horizons", "External: α = 0.250, c = 2, R² = 1.000", "Internal: invalid",
+        "Swap: α = 0.500, c = 3, R² = 1.000"))

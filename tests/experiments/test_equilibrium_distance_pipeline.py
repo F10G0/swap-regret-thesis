@@ -2,12 +2,14 @@ from collections import Counter
 import os
 
 import numpy as np
+from pypdf import PdfReader
 import pytest
 
 import experiments.plots.plot_equilibrium_convergence as plotting
 import metrics.equilibrium_distance as metric
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.game_catalog import load_game_payoffs
+from experiments.plots.pdf_information import ENDPOINT_STATISTICS_DESCRIPTION, format_value_summary
 from experiments.recording import joint_action_histogram_checkpoints
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 
@@ -21,6 +23,45 @@ def create_result(directory, replicate=0):
 
 
 DISTANCE_POINT_COUNT = len(joint_action_histogram_checkpoints(300))
+
+
+def test_distance_information_reports_final_replicate_statistics_without_changing_plot(tmp_path, monkeypatch):
+    horizons = np.asarray([1, 10])
+    trajectories = {
+        "first.csv": metric.EquilibriumDistanceTrajectory(horizons, np.asarray([0.5, 0.2]), np.asarray([0.4, 0.2])),
+        "second.csv": metric.EquilibriumDistanceTrajectory(horizons, np.asarray([0.7, 0.4]), np.asarray([0.8, 0.6])),
+    }
+    monkeypatch.setattr(plotting, "_load_equilibrium_game",
+                        lambda paths, custom_game_dir: ("fixture", np.zeros((2, 2, 2)), []))
+    monkeypatch.setattr(plotting, "_load_result_distances",
+                        lambda path, payoff_tensor, cache_dir: trajectories[path.name])
+    captured = []
+    original_save = plotting.save_figure_pair
+
+    def save(figure, path, **kwargs):
+        captured.append(figure)
+        return original_save(figure, path, **kwargs)
+
+    monkeypatch.setattr(plotting, "save_figure_pair", save)
+    output = tmp_path / "distance-summary.png"
+    plotting.plot_result_equilibrium_distance(
+        [tmp_path / "first.csv", tmp_path / "second.csv"], output,
+        information_rows=[("Figure", "Equilibrium-distance convergence")],
+    )
+
+    axes = captured[0].axes[0]
+    assert not axes.texts
+    np.testing.assert_allclose(axes.lines[0].get_ydata(), [0.6, 0.3])
+    np.testing.assert_allclose(axes.lines[1].get_ydata(), [0.6, 0.4])
+    pages = PdfReader(output.with_suffix(".pdf")).pages
+    information = " ".join(pages[0].extract_text().split())
+    assert len(pages) == 2
+    assert all(text in information for text in (
+        "Final equilibrium distance at T: 10",
+        f"Endpoint statistics: {ENDPOINT_STATISTICS_DESCRIPTION}",
+        f"CE: {format_value_summary([0.2, 0.4])}",
+        f"CCE: {format_value_summary([0.2, 0.6])}",
+    ))
 
 
 @pytest.mark.parametrize("replicate_count", [1, 2])

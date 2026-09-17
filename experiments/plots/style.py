@@ -83,14 +83,14 @@ def regret_comparison_axis_label(view: str) -> str:
     return "$R_T" + suffix + "$"
 
 
-def finish_line_figure(figure, axes) -> None:
-    """Reserve a compact one/two-column legend below, at fixed physical width."""
+def finish_line_figure(figure, axes, legend_ncol=None) -> None:
+    """Reserve a compact figure-level legend below the axes, at fixed physical width."""
     axes.grid(True)
     handles, labels = axes.get_legend_handles_labels()
     if not handles:
         figure.tight_layout(pad=0.7)
         return
-    columns = 1 if len(handles) <= 2 else 2
+    columns = legend_ncol or (1 if len(handles) <= 2 else 2)
     wrapped = [fill(label, width=72 if columns == 1 else 34) for label in labels]
     rows = (len(handles) + columns - 1) // columns
     extra_lines = sum(max(label.count("\n") for label in wrapped[i:i + columns])

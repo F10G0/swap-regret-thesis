@@ -162,8 +162,9 @@ def test_dashboard_group_details_downloads_and_figures(tmp_path):
                              (distance, "Equilibrium-distance convergence")):
         pages = PdfReader(BytesIO(response.data)).pages
         assert len(pages) == 2
-        assert figure in pages[0].extract_text()
-        assert "Aggregation:  Replicate mean" in pages[0].extract_text()
+        information = " ".join(pages[0].extract_text().split())
+        assert figure in information
+        assert "Aggregation: Replicate mean" in information
 
 
 def test_custom_game_generator_uses_header_seed_and_zero_sum_default(tmp_path):

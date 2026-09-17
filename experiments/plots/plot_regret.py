@@ -110,9 +110,24 @@ def horizon_scaling_fit(horizons: np.ndarray, mean_regret: np.ndarray) -> tuple[
     return tuple(np.polyfit(np.log(horizons), np.log(mean_regret), 1)), None
 
 
+def _log_log_r_squared(horizons: np.ndarray, mean_regret: np.ndarray,
+                       fit: tuple[float, float]) -> float | None:
+    x = np.log(horizons)
+    y = np.log(mean_regret)
+    slope, intercept = fit
+    residuals = y - (slope * x + intercept)
+    sse = float(np.sum(residuals ** 2))
+    centered = y - np.mean(y)
+    sst = float(np.sum(centered ** 2))
+    tolerance = np.finfo(float).eps * max(1.0, float(np.sum(y ** 2))) * len(y) * 16
+    if sst <= tolerance:
+        return 1.0 if sse <= tolerance else None
+    return 1.0 - sse / sst
+
+
 @publication_plot
 def plot_regret_curves(curves: list[RegretCurve], y_label: str, output_path: str | Path,
-                       information_rows: list[tuple[str, str]] | None = None) -> None:
+                       information_rows: list[tuple[str, str]] | None = None, legend_ncol=None) -> None:
     figure, axes = plt.subplots()
     for curve in curves:
         axes.plot(curve.x, curve.y, label=curve.label, **curve.style)
@@ -120,7 +135,7 @@ def plot_regret_curves(curves: list[RegretCurve], y_label: str, output_path: str
     axes.axhline(0.0, color="#7b8580", linewidth=0.8, linestyle="--")
     axes.set_xlabel(r"Round $T$")
     axes.set_ylabel(y_label)
-    finish_line_figure(figure, axes)
+    finish_line_figure(figure, axes, legend_ncol=legend_ncol)
     if information_rows is None:
         save_figure_pair(figure, output_path)
     else:
@@ -172,13 +187,16 @@ def plot_horizon_scaling(curves: list[RegretCurve], output_path: str | Path,
             continue
         valid = True
         slope, intercept = fit
+        coefficient = np.exp(intercept)
+        r_squared = _log_log_r_squared(curve.x, curve.y, fit)
         axes.plot(curve.x, curve.y, color=curve.style["color"], marker=curve.style["marker"],
                   linestyle="None", zorder=curve.style["zorder"])
-        axes.plot(curve.x, np.exp(intercept) * curve.x ** slope, color=curve.style["color"],
+        axes.plot(curve.x, coefficient * curve.x ** slope, color=curve.style["color"],
                   linestyle=curve.style["linestyle"], zorder=curve.style["zorder"],
-                  label=f"{notion}: α = {slope:.3f}")
+                  label=f"{notion}: α = {slope:.3f}, c = {coefficient:.4g}")
         if rows is not None:
-            rows.append((notion, f"α = {slope:.3f}"))
+            r_squared_text = "unavailable" if r_squared is None else f"{r_squared:.3f}"
+            rows.append((notion, f"α = {slope:.3f}, c = {coefficient:.4g}, R² = {r_squared_text}"))
     if not valid:
         axes.set_axis_off()
         axes.text(0.5, 0.5, "Horizon scaling unavailable: no regret notion has a valid fit.",
@@ -190,7 +208,7 @@ def plot_horizon_scaling(curves: list[RegretCurve], output_path: str | Path,
         axes.set_ylabel("Replicate-mean final cumulative action regret")
     if invalid:
         axes.text(0.5, -0.18, " · ".join(invalid), ha="center", va="top", transform=axes.transAxes)
-    finish_line_figure(figure, axes)
+    finish_line_figure(figure, axes, legend_ncol=1)
     if rows is None:
         save_figure_pair(figure, output_path)
     else:

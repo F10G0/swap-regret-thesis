@@ -12,6 +12,7 @@ import numpy as np
 
 from experiments.algorithm_labels import algorithm_profile_label
 from experiments.plots import figure_paths, publish_figure_pair
+from experiments.plots.pdf_information import ENDPOINT_STATISTICS_DESCRIPTION, format_value_summary
 from experiments.plots.style import profile_series_style, regret_axis_label, regret_comparison_axis_label, regret_series_style
 from experiments.results import average_regret_column, regret_column
 from experiments.result_schema import REGRET_NAMES
@@ -246,6 +247,9 @@ class FigureBuilder:
                 ("Seed", str(context["base_seed"])),
                 ("Regrets", "External, Internal, Swap"),
                 ("Aggregation", "Mean final cumulative action regret across replicates"),
+                ("Fit model", "log R_T = α log T + log c"),
+                ("Fit points", str(len(horizons))),
+                ("Fit range", f"{int(horizons[0]):,} to {int(horizons[-1]):,}"),
             ])
             return rows
         rows.extend([("Horizon", f"{int(selection.horizon):,}"),
@@ -345,10 +349,26 @@ class FigureBuilder:
         average = selection.view == "average"
         sqrt_scaling = selection.view == "sqrt_scaling"
 
+        def selected_runs(profile, action=selection.action, horizon=selection.horizon):
+            profile_paths = (context["_paths"][str(horizon)][profile] if selection.mode == "fixed"
+                             else context["_paths"][str(action)][str(horizon)][profile])
+            return [load(path) for path in profile_paths]
+
+        def final_values(profile, metric, action=selection.action, horizon=selection.horizon,
+                         normalization=selection.view):
+            runs = selected_runs(profile, action, horizon)
+            column = average_regret_column(metric) if normalization == "average" else regret_column(metric)
+            values = np.asarray([
+                fixed.aggregate_final_metric([run], context["player"], column)
+                if selection.mode == "fixed" else adversarial.aggregate_final_adversarial_regret([run], column)
+                for run in runs
+            ])
+            if normalization == "sqrt_scaling":
+                values /= np.sqrt(int(horizon))
+            return values
+
         def curve(profile, metric, label, style, action=selection.action):
-            profile_paths = (context["_paths"][selection.horizon][profile] if selection.mode == "fixed"
-                             else context["_paths"][action][selection.horizon][profile])
-            runs = [load(path) for path in profile_paths]
+            runs = selected_runs(profile, action)
             column = average_regret_column(metric) if average else regret_column(metric)
             if selection.mode == "fixed":
                 x, y = fixed.aggregate_metric_curve(runs, context["player"], column,
@@ -378,23 +398,32 @@ class FigureBuilder:
                     curves.append(fixed.RegretCurve(np.asarray(horizon_values), np.asarray(means),
                                   f"{metric.title()} regret", regret_series_style(metric, index, len(REGRET_NAMES))))
                 return curves
+            endpoint_horizon = horizon_values[-1]
+            endpoint_series = [(f"{metric.title()} R/T",
+                                final_values(profiles[0], metric, horizon=endpoint_horizon, normalization="average"))
+                               for metric in REGRET_NAMES]
             y_label = None
         elif selection.comparison_mode == "profiles":
             def make_curves():
                 return [curve(profile, selection.metric, labels[profile], profile_series_style(index, len(profiles)))
                         for index, profile in enumerate(profiles)]
+            endpoint_horizon = int(selection.horizon)
+            endpoint_series = [(labels[profile], final_values(profile, selection.metric)) for profile in profiles]
             y_label = regret_axis_label(selection.metric, selection.view)
         elif selection.comparison_mode == "regrets":
             if selection.view == LOG_LOG_FIT_VIEW:
                 def make_curves():
                     return [curve(profiles[0], selection.metric, f"Replicate-mean cumulative {selection.metric} action regret",
                                   regret_series_style(selection.metric))]
+                endpoint_series = None
                 y_label = None
             else:
                 def make_curves():
                     return [curve(profiles[0], metric, f"{metric.title()} regret",
                                   regret_series_style(metric, index, len(REGRET_NAMES)))
                             for index, metric in enumerate(REGRET_NAMES)]
+                endpoint_horizon = int(selection.horizon)
+                endpoint_series = [(metric.title(), final_values(profiles[0], metric)) for metric in REGRET_NAMES]
                 y_label = regret_comparison_axis_label(selection.view)
         else:
             actions = [action for action in sorted(context["_paths"], key=int)
@@ -403,6 +432,9 @@ class FigureBuilder:
                 return [curve(profiles[0], selection.metric, f"K={action}",
                               profile_series_style(index, len(actions)), action)
                         for index, action in enumerate(actions)]
+            endpoint_horizon = int(selection.horizon)
+            endpoint_series = [(f"K={action}", final_values(profiles[0], selection.metric, action))
+                               for action in actions]
             y_label = regret_axis_label(selection.metric, selection.view)
 
         with self._lock:
@@ -411,14 +443,25 @@ class FigureBuilder:
                 with tempfile.TemporaryDirectory(prefix=".selection-", dir=self.output_dir) as directory:
                     source_path = Path(directory) / filename
                     information_rows = self._information_rows(selection, context, profiles)
+                    curves = make_curves()
+                    if endpoint_series is not None:
+                        information_rows.extend([
+                            ("Final endpoint at T" if selection.view == HORIZON_SCALING_VIEW else "Final endpoints at T",
+                             f"{endpoint_horizon:,}"),
+                            ("Endpoint statistics", ENDPOINT_STATISTICS_DESCRIPTION),
+                            *((label, format_value_summary(values)) for label, values in endpoint_series),
+                        ])
                     if selection.view == LOG_LOG_FIT_VIEW:
-                        fixed.plot_regret_log_log(make_curves()[0], selection.metric, int(selection.horizon), source_path,
+                        fixed.plot_regret_log_log(curves[0], selection.metric, int(selection.horizon), source_path,
                                                   information_rows=information_rows)
                     elif selection.view == HORIZON_SCALING_VIEW:
-                        fixed.plot_horizon_scaling(make_curves(), source_path,
+                        fixed.plot_horizon_scaling(curves, source_path,
                                                    information_rows=information_rows)
+                    elif selection.comparison_mode == "regrets":
+                        fixed.plot_regret_curves(curves, y_label, source_path,
+                                                 information_rows=information_rows, legend_ncol=1)
                     else:
-                        fixed.plot_regret_curves(make_curves(), y_label, source_path, information_rows=information_rows)
+                        fixed.plot_regret_curves(curves, y_label, source_path, information_rows=information_rows)
                     if self._sources(paths) != sources:
                         raise ValueError("Results changed during rendering. Refresh and try again.")
                     publish_figure_pair(source_path, output_path)
