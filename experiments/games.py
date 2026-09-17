@@ -39,6 +39,12 @@ def create_rock_paper_scissors_payoffs() -> np.ndarray:
     return _normalized_game_payoffs((payoff_player_0, -payoff_player_0))
 
 
+def create_matching_pennies_payoffs() -> np.ndarray:
+    """Create Matching Pennies with actions ordered Heads, Tails."""
+    payoff_player_0 = np.array([[1, -1], [-1, 1]])
+    return _normalized_game_payoffs((payoff_player_0, -payoff_player_0))
+
+
 def create_rock_paper_scissors_lizard_spock_payoffs() -> np.ndarray:
     """Create the five-action symmetric zero-sum game used by Leme et al. (2024).
 
@@ -59,6 +65,7 @@ def create_rock_paper_scissors_lizard_spock_payoffs() -> np.ndarray:
 
 
 PAYOFF_FACTORIES = {
+    "matching_pennies": create_matching_pennies_payoffs,
     "rps": create_rock_paper_scissors_payoffs,
     "rpsls": create_rock_paper_scissors_lizard_spock_payoffs,
 }

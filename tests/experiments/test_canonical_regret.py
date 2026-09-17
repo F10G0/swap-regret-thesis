@@ -65,7 +65,7 @@ def test_fixed_game_feedback_boundary_and_counterfactual_evaluation(monkeypatch,
     else:
         np.testing.assert_array_equal(players[0].feedbacks, [[0.0, 1.0]] * 4)
     final = next(row for row in rows if row["t"] == 4 and row["player"] == 0)
-    # The sampled action always loses, so its realized replacement gain is four.
+    # The sampled action always loses, so its action-regret replacement gain is four.
     for name in ("external", "internal", "swap"):
         assert final[f"{name}_regret"] == 4.0
         assert final[f"average_{name}_regret"] == 1.0

@@ -25,7 +25,7 @@ def test_core_packages_import_from_the_current_project():
 def test_dashboard_entry_points_and_retired_static_subsystem(tmp_path):
     app, service = create_test_app(tmp_path)
     client = app.test_client()
-    assert set(dashboard_data(client.get("/"))["gameDefinitions"]) == {"rps", "rpsls"}
+    assert set(dashboard_data(client.get("/"))["gameDefinitions"]) == {"matching_pennies", "rps", "rpsls"}
     assert client.get("/?mode=adversarial").status_code == 200
     assert client.get("/custom-games").status_code == 200
     custom = service.create_custom_game("Local", 2, [2, 2], 42, "zero_sum")
@@ -57,7 +57,7 @@ for name in ('algorithms', 'environments', 'experiments', 'metrics', 'web'):
 import numpy as np
 from experiments.game_catalog import load_game_payoffs
 from metrics.equilibrium_distance import equilibrium_l1_distance
-for game, size in [('rps', 3), ('rpsls', 5)]:
+for game, size in [('matching_pennies', 2), ('rps', 3), ('rpsls', 5)]:
     for concept in ('ce', 'cce'):
         result = equilibrium_l1_distance(load_game_payoffs(game), np.full((size, size), 1 / size**2), concept)
         assert abs(result.distance) < 1e-9

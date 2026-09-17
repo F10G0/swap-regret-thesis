@@ -8,9 +8,6 @@ from config import EQUILIBRIUM_LP_TOLERANCE
 from metrics.empirical_distribution import EmpiricalDistributionTrajectory
 
 
-EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION = 1
-
-
 @dataclass(frozen=True)
 class EquilibriumDistanceResult:
     distance: float

@@ -10,6 +10,7 @@ from experiments.runner import ExperimentCancelled
 MIN_PARALLEL_ROUNDS = 20_000
 MAX_PARALLEL_WORKERS = 12
 _worker_cancel = None
+_worker_progress = None
 
 
 def _available_cpu_count() -> int:
@@ -32,19 +33,27 @@ def _replicate_worker_count(tasks: list[dict], workers: int | None) -> int:
     return count
 
 
-def _initialize_worker(cancel_event) -> None:
-    global _worker_cancel
+def _initialize_worker(cancel_event, progress_counter) -> None:
+    global _worker_cancel, _worker_progress
     _worker_cancel = cancel_event
+    _worker_progress = progress_counter
+
+
+def _report_rounds(delta_rounds: int) -> None:
+    with _worker_progress.get_lock():
+        _worker_progress.value += delta_rounds
 
 
 def _execute(function, kwargs):
     if _worker_cancel.is_set():
         raise ExperimentCancelled("experiment cancelled")
+    if _worker_progress is not None:
+        return function(**kwargs, should_cancel=_worker_cancel.is_set, report_rounds=_report_rounds)
     return function(**kwargs, should_cancel=_worker_cancel.is_set)
 
 
 def run_replicates(function, tasks: list[dict], *, workers: int | None = None,
-                   should_cancel=None, completed=None) -> list:
+                   should_cancel=None, completed=None, round_progress=None) -> list:
     """Run keyword-argument tasks; return results in input order, not finish order.
 
     Only top-level callables and serializable task arguments enter workers. UI
@@ -66,9 +75,17 @@ def run_replicates(function, tasks: list[dict], *, workers: int | None = None,
 
     if count == 1:
         results = []
+        rounds_completed = 0
+
+        def report_rounds(delta_rounds):
+            nonlocal rounds_completed
+            rounds_completed += delta_rounds
+            round_progress(rounds_completed)
+
         for task in tasks:
             check_cancelled()
-            results.append(function(**task, should_cancel=should_cancel))
+            progress_kwargs = {"report_rounds": report_rounds} if round_progress is not None else {}
+            results.append(function(**task, should_cancel=should_cancel, **progress_kwargs))
             if completed is not None:
                 completed()
         check_cancelled()
@@ -77,10 +94,20 @@ def run_replicates(function, tasks: list[dict], *, workers: int | None = None,
     check_cancelled()
     context = multiprocessing.get_context("spawn")
     cancel_event = context.Event()
+    progress_counter = context.Value("q", 0) if round_progress is not None else None
     results = [None] * len(tasks)
+    reported_rounds = 0
+
+    def sample_round_progress():
+        nonlocal reported_rounds
+        current = progress_counter.value if progress_counter is not None else reported_rounds
+        if current != reported_rounds:
+            reported_rounds = current
+            round_progress(reported_rounds)
+
     # No unbounded submission queue: at most one in-flight task per worker.
     with ProcessPoolExecutor(max_workers=count, mp_context=context,
-                             initializer=_initialize_worker, initargs=(cancel_event,)) as pool:
+                             initializer=_initialize_worker, initargs=(cancel_event, progress_counter)) as pool:
         pending = {}
         next_index = 0
         try:
@@ -91,13 +118,16 @@ def run_replicates(function, tasks: list[dict], *, workers: int | None = None,
                     pending[future] = next_index
                     next_index += 1
                 done, _ = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+                sample_round_progress()
                 for future in done:
                     index = pending.pop(future)
                     results[index] = future.result()
                     if completed is not None:
                         completed()
             check_cancelled()
+            sample_round_progress()
         except BaseException:
+            sample_round_progress()
             cancel_event.set()
             for future in pending:
                 future.cancel()

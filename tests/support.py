@@ -11,9 +11,3 @@ def read_csv_rows(path) -> list[dict[str, str]]:
 def coordination_game_payoffs() -> np.ndarray:
     payoffs = np.array([[1.0, 0.0], [0.0, 1.0]])
     return np.stack((payoffs, payoffs))
-
-
-def matching_pennies_payoffs() -> np.ndarray:
-    """Small two-action zero-sum fixture, not a production benchmark."""
-    payoffs = np.array([[1.0, 0.0], [0.0, 1.0]])
-    return np.stack((payoffs, 1.0 - payoffs))

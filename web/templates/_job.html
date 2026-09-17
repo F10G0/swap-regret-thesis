@@ -2,6 +2,15 @@
     <div>
         <strong>{{ job.description }}</strong>
         <p data-job-message>{{ job.message }}</p>
+        {% if job.rounds_total > 0 %}
+            {% set round_percent = (100 * job.rounds_completed / job.rounds_total) | round | int %}
+            <div class="job-round-progress" data-job-round-progress>
+                <progress data-job-round-bar max="{{ job.rounds_total }}" value="{{ job.rounds_completed }}"></progress>
+                <p>Round progress: <span data-job-round-percent>{{ round_percent }}%</span> · Estimated remaining:
+                    <span data-job-eta>{% if job.status == "succeeded" %}Complete{% elif job.eta_seconds is none %}Estimating…{% elif job.eta_seconds < 60 %}&lt; 1 min{% elif job.eta_seconds < 3600 %}~{{ (job.eta_seconds / 60) | round | int }} min{% else %}~{{ (job.eta_seconds / 3600) | int }} h {{ ((job.eta_seconds % 3600) / 60) | int }} min{% endif %}</span>
+                </p>
+            </div>
+        {% endif %}
     </div>
     <div class="job-actions">
         <span class="status" data-job-status>{{ job.status }}</span>

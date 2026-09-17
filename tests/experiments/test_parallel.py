@@ -23,18 +23,39 @@ from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adver
 ])
 def test_serial_and_process_replicates_produce_identical_csv_bytes(tmp_path, runner, options):
     results = []
+    reported_rounds = []
     for workers in (1, 2):
         completions = []
         tasks = [dict(**options, horizon=31, seed=7, replicate=r,
                       max_recorded_points=6, output_dir=tmp_path / str(workers)) for r in (2, 0, 1)]
-        paths = run_replicates(runner, tasks, workers=workers, completed=lambda: completions.append(True))
+        paths = run_replicates(runner, tasks, workers=workers, completed=lambda: completions.append(True),
+                               round_progress=reported_rounds.append if workers == 2 else None)
         assert len(completions) == 3
         results.append([(path.name, path.read_bytes()) for path in paths])
     assert results[0] == results[1]
+    assert reported_rounds[-1] == 93
 
 
 def identify_worker(value, horizon=0, should_cancel=None):
     return value, os.getpid()
+
+
+def reporting_worker(horizon, should_cancel=None, report_rounds=None):
+    first = horizon // 2
+    for delta in (first, horizon - first):
+        report_rounds(delta)
+        time.sleep(0.02)
+    return horizon
+
+
+@pytest.mark.parametrize("workers,tasks", [(1, 3), (2, 5)])
+def test_aggregate_round_progress_is_monotone_across_all_tasks(workers, tasks):
+    progress = []
+    horizons = [10] * tasks
+    assert run_replicates(reporting_worker, [dict(horizon=value) for value in horizons], workers=workers,
+                          round_progress=progress.append) == horizons
+    assert progress == sorted(set(progress))
+    assert progress[-1] == sum(horizons)
 
 
 def nested_worker(value, should_cancel=None):
@@ -56,8 +77,10 @@ def test_automatic_execution_parallelizes_large_batches_but_not_small_ones():
     assert all(pid != os.getpid() for _, pid in large)
 
 
-def cancellable_worker(output_dir, value, should_cancel=None):
+def cancellable_worker(output_dir, value, should_cancel=None, report_rounds=None):
     with CsvRecorder(["value"], Path(output_dir) / f"{value}.csv") as recorder:
+        if report_rounds is not None:
+            report_rounds(1)
         # Marker lets the parent cancel only after a worker has started writing.
         (Path(output_dir) / f"{value}.started").touch()
         for _ in range(1000):
@@ -68,13 +91,22 @@ def cancellable_worker(output_dir, value, should_cancel=None):
 
 
 def test_parallel_cancellation_cleans_unfinished_csvs(tmp_path):
+    progress = []
     with pytest.raises(ExperimentCancelled):
         run_replicates(cancellable_worker,
                        [dict(output_dir=tmp_path, value=i) for i in range(4)], workers=2,
-                       should_cancel=lambda: any(tmp_path.glob("*.started")))
+                       should_cancel=lambda: any(tmp_path.glob("*.started")), round_progress=progress.append)
     assert not list(tmp_path.glob("*.csv"))
     assert not list(tmp_path.glob("*.tmp"))
     assert len(list(tmp_path.glob("*.started"))) <= 2
+    assert 0 < progress[-1] < 4_000
+
+
+def test_runner_reports_rounds_sparsely_and_includes_the_final_remainder(tmp_path):
+    deltas = []
+    run_adversarial_experiment("hedge", n_actions=2, horizon=10_001, output_dir=tmp_path,
+                               report_rounds=deltas.append)
+    assert deltas == [10_000, 1]
 
 
 def failing_worker(output_dir, value, should_cancel=None):

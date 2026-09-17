@@ -15,6 +15,8 @@ class ProfileSelection:
     view: str
     profiles: tuple[str, ...]
     action: str
+    horizon: str
+    feedback: str
 
 
 @dataclass(frozen=True)
@@ -26,24 +28,34 @@ class FigureSelection:
     view: str
     profiles: tuple[str, ...]
     action: str
+    horizon: str
 
 
 def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
     mode = values.get("mode", "")
     context_id = values.get("context_id", "")
     comparison_mode = values.get("comparison_mode", "profiles")
+    view = values.get("view", "horizon_scaling" if comparison_mode == "horizons" else "all")
     metric = values.get("metric", "all")
-    view = values.get("view", "all")
+    feedback = values.get("feedback", "both")
     if mode not in {"fixed", "adversarial"}:
         raise ValueError("Unknown experiment mode")
     if not re.fullmatch(r"[0-9a-f]{24}", context_id):
         raise ValueError("Choose an available result set")
-    if comparison_mode not in {"profiles", "regrets", "actions"}:
+    if comparison_mode not in {"profiles", "regrets", "actions", "horizons"}:
         raise ValueError("Unknown comparison mode")
+    if feedback not in {"full_information", "bandit", "both"}:
+        raise ValueError("Unknown feedback mode")
     if comparison_mode == "actions" and mode != "adversarial":
         raise ValueError("Action-space comparison is available only for one-player results")
-    if metric not in {*REGRET_NAMES, "all"} or view not in {"average", "sqrt_scaling", "all"}:
+    if metric not in {*REGRET_NAMES, "all"} or view not in {"average", "sqrt_scaling", "log_log_fit", "horizon_scaling", "all"}:
         raise ValueError("Unknown regret metric or view")
+    if comparison_mode == "horizons" and view != "horizon_scaling":
+        raise ValueError("Horizon comparison requires the horizon-scaling view")
+    if comparison_mode != "horizons" and view == "horizon_scaling":
+        raise ValueError("The horizon-scaling view is available only for horizon comparison")
+    if view == "log_log_fit" and comparison_mode != "regrets":
+        raise ValueError("The log-log fit view is available only for regret-notion comparison")
     if hasattr(values, "getlist"):
         profiles = values.getlist("profiles")
     else:
@@ -54,14 +66,22 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
     if len(profiles) > 256 or any(not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9_]+", profile) for profile in profiles):
         raise ValueError("Invalid algorithm profile selection")
     profiles = tuple(sorted(set(profiles)))
-    if comparison_mode in {"regrets", "actions"} and len(profiles) != 1:
+    if "all" in profiles and (profiles != ("all",) or comparison_mode not in {"regrets", "horizons"}):
+        raise ValueError("All algorithm profiles is available only for regret or horizon comparison")
+    if comparison_mode in {"regrets", "actions", "horizons"} and len(profiles) != 1:
         raise ValueError("Select exactly one algorithm profile for this comparison")
-    if comparison_mode == "regrets" and metric != "all":
+    valid_regret_metric = metric in {*REGRET_NAMES, "all"} if view == "log_log_fit" else metric == "all"
+    if comparison_mode == "regrets" and not valid_regret_metric:
         raise ValueError("Regret-notion comparison includes all regret notions")
+    if comparison_mode == "horizons" and metric != "all":
+        raise ValueError("Horizon comparison includes all regret notions")
     action = "all" if comparison_mode == "actions" else values.get("action", "")
     if mode == "adversarial" and comparison_mode != "actions" and not re.fullmatch(r"[1-9][0-9]*", action):
         raise ValueError("Choose an available action count")
-    return ProfileSelection(mode, context_id, comparison_mode, metric, view, profiles, action)
+    horizon = "all" if comparison_mode == "horizons" else values.get("horizon", "")
+    if comparison_mode != "horizons" and not re.fullmatch(r"[1-9][0-9]*", horizon):
+        raise ValueError("Choose an available horizon")
+    return ProfileSelection(mode, context_id, comparison_mode, metric, view, profiles, action, horizon, feedback)
 
 
 @dataclass(frozen=True)
@@ -72,6 +92,11 @@ class ExperimentForm:
     horizon: int
     seed: int
     replicates: int
+    horizons: tuple[int, ...] = ()
+
+    @property
+    def horizon_values(self) -> tuple[int, ...]:
+        return self.horizons or (self.horizon,)
 
 
 @dataclass(frozen=True)
@@ -83,6 +108,11 @@ class AdversarialExperimentForm:
     horizon: int
     seed: int
     replicates: int
+    horizons: tuple[int, ...] = ()
+
+    @property
+    def horizon_values(self) -> tuple[int, ...]:
+        return self.horizons or (self.horizon,)
 
 
 def _parse_integer(value: str, field_name: str) -> int:
@@ -108,16 +138,17 @@ def parse_non_negative_integer(value: str, field_name: str) -> int:
     return number
 
 
-def parse_action_counts(
-    value: str,
-    max_actions: int,
-    max_values: int = 20,
-) -> tuple[int, ...]:
+def _integer_list_tokens(value: str, name: str, max_values: int | None = None) -> list[str]:
     tokens = [token for token in re.split(r"[\s,]+", value.strip()) if token]
     if not tokens:
-        raise ValueError("provide at least one action count")
-    if len(tokens) > max_values:
-        raise ValueError(f"provide at most {max_values} action counts")
+        raise ValueError(f"provide at least one {name}")
+    if max_values is not None and len(tokens) > max_values:
+        raise ValueError(f"provide at most {max_values} {name}s")
+    return tokens
+
+
+def parse_action_counts(value: str, max_actions: int, max_values: int = 20) -> tuple[int, ...]:
+    tokens = _integer_list_tokens(value, "action count", max_values)
     action_counts = tuple(
         parse_positive_integer(token, "action count", max_actions)
         for token in tokens
@@ -127,6 +158,11 @@ def parse_action_counts(
     if len(set(action_counts)) != len(action_counts):
         raise ValueError("action counts must be unique")
     return action_counts
+
+
+def parse_horizons(value: str, max_horizon: int, max_values: int | None = None) -> tuple[int, ...]:
+    tokens = _integer_list_tokens(value, "horizon", max_values)
+    return tuple(sorted({parse_positive_integer(token, "horizon", max_horizon) for token in tokens}))
 
 
 def validate_leaf_filename(filename: str, suffix: str) -> str:
@@ -201,13 +237,15 @@ def parse_experiment_form(
         "replicates",
         max_replicates,
     )
+    horizons = parse_horizons(horizon_value, max_horizon)
     return ExperimentForm(
         game=game,
         feedback_mode=feedback_mode,
         algorithm_names=algorithm_names,
-        horizon=parse_positive_integer(horizon_value, "horizon", max_horizon),
+        horizon=horizons[0],
         seed=parse_non_negative_integer(seed_value, "seed"),
         replicates=replicates,
+        horizons=horizons,
     )
 
 
@@ -238,16 +276,18 @@ def parse_adversarial_experiment_form(
     if environment not in environments:
         raise ValueError(f"unknown adversarial environment: {environment}")
     action_counts = parse_action_counts(actions, max_actions)
+    horizons = parse_horizons(horizon, max_horizon)
     return AdversarialExperimentForm(
         environment=environment,
         feedback_mode=feedback_mode,
         algorithm_name=algorithm_name,
         action_counts=action_counts,
-        horizon=parse_positive_integer(horizon, "horizon", max_horizon),
+        horizon=horizons[0],
         seed=parse_non_negative_integer(seed, "seed"),
         replicates=parse_positive_integer(
             values.get("replicates", ""),
             "replicates",
             max_replicates,
         ),
+        horizons=horizons,
     )

@@ -211,6 +211,7 @@ function matchesResultFilters(record, state = resultFilters) {
     if (!state) return false;
     return record.dataset.scope === state.scope
         && (state.feedback === "both" || record.dataset.feedback === state.feedback)
+        && (state.horizon === "all" || record.dataset.horizon === state.horizon)
         && (onePlayerMode ? state.action === "all" || record.dataset.action === state.action
             : record.dataset.player === state.player)
         && state.profiles.includes(record.dataset.profile);
@@ -223,7 +224,7 @@ function updateSummaryRows() {
     document.querySelectorAll("#summary-table [data-regret]").forEach((cell) => {
         cell.hidden = !resultFilters
             || (resultFilters.metric !== "all" && cell.dataset.regret !== resultFilters.metric)
-            || (resultFilters.view !== "all" && cell.dataset.view !== resultFilters.view);
+            || (!["all", "horizon_scaling"].includes(resultFilters.view) && cell.dataset.view !== resultFilters.view);
     });
     const detail = element("experiment-detail");
     if (detail && selectedSummary) {
@@ -234,9 +235,29 @@ function updateSummaryRows() {
     document.querySelectorAll("#detail-regrets [data-regret]").forEach((cell) => {
         cell.hidden = !resultFilters
             || (resultFilters.metric !== "all" && cell.dataset.regret !== resultFilters.metric)
-            || (resultFilters.view !== "all" && cell.dataset.view !== resultFilters.view);
+            || (!["all", "horizon_scaling"].includes(resultFilters.view) && cell.dataset.view !== resultFilters.view);
     });
+    updateFilteredDeletion();
     highlightBestValues();
+}
+
+function updateFilteredDeletion() {
+    const form = element("delete-filtered-experiments");
+    if (!form) return;
+    const groupIds = [...new Set([...document.querySelectorAll(".summary-row:not([hidden])")].map(row => row.dataset.resultKey))];
+    const inputs = form.querySelector("[data-filtered-group-inputs]");
+    inputs.replaceChildren(...groupIds.map(groupId => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "group_id";
+        input.value = groupId;
+        return input;
+    }));
+    form.querySelector("[data-filtered-group-count]").textContent = groupIds.length;
+    const busy = document.querySelector('[data-job-id][data-status="queued"], [data-job-id][data-status="running"]');
+    form.querySelector("button").disabled = Boolean(busy) || groupIds.length === 0;
+    const noun = groupIds.length === 1 ? "experiment" : "experiments";
+    form.dataset.confirm = `Delete ${groupIds.length} filtered ${noun} and all of their replicates? Generated figures and caches will also be cleared. This cannot be undone.`;
 }
 
 function highlightBestValues() {
@@ -419,6 +440,7 @@ function setBusy(busy) {
     document.querySelectorAll("[data-busy-control]").forEach((control) => {
         control.disabled = busy;
     });
+    updateFilteredDeletion();
 }
 
 async function pollActiveJobs() {
@@ -474,10 +496,13 @@ document.querySelectorAll(".summary-row").forEach((row) => {
     if (row.dataset.summaryIndex === undefined) {
         return;
     }
+    const interactive = event => event.target.closest("a, button, form, input, select, textarea, label");
     const showDetail = () => showExperimentDetail(Number(row.dataset.summaryIndex));
-    row.addEventListener("click", showDetail);
+    row.addEventListener("click", event => {
+        if (!interactive(event)) showDetail();
+    });
     row.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (!interactive(event) && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             showDetail();
         }

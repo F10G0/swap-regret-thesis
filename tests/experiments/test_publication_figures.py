@@ -1,6 +1,7 @@
 import importlib
 
 import matplotlib as mpl
+import numpy as np
 from PIL import Image
 from pypdf import PdfReader
 import pytest
@@ -130,3 +131,110 @@ def test_publication_figure_families(tmp_path, monkeypatch, family):
     with Image.open(output) as preview:
         assert preview.width == round(FIGURE_WIDTH * 150)
         assert abs(preview.height - figure.get_figheight() * 150) <= 1
+
+
+def test_regret_log_log_plot_uses_mean_tail_and_handles_insufficient_external_points(tmp_path, monkeypatch):
+    from experiments.plots import plot_regret as module
+
+    times = np.array([1, 5, 10, 20, 40, 80, 100])
+    target = 3 * times.astype(float) ** 0.25
+    runs = []
+    for factor in (0.5, 1.5):
+        values = target * factor
+        runs.append([{"player": 0, "t": time, "external_regret": value} for time, value in zip(times, values)])
+    mean_times, mean_regret = module.aggregate_metric_curve(runs, 0, "external_regret")
+    x, y, fit, message = module.regret_log_log_fit(mean_times, mean_regret, 100)
+    retained = np.array([10, 20, 40, 80, 100])
+    np.testing.assert_array_equal(x, np.log(retained))
+    np.testing.assert_allclose(y, np.log(3 * retained ** 0.25))
+    assert fit[0] == pytest.approx(0.25) and message is None
+
+    captured = []
+    original_save = module.save_figure_pair
+
+    def save(figure, output_path, **kwargs):
+        captured.append(figure)
+        return original_save(figure, output_path, **kwargs)
+
+    monkeypatch.setattr(module, "save_figure_pair", save)
+    style = regret_series_style("external")
+    module.plot_regret_log_log(module.RegretCurve(mean_times, mean_regret,
+                               "Replicate-mean cumulative external action regret", style),
+                               "external", 100, tmp_path / "fit.png", information_rows=[("View", "Log-log fit")])
+    non_positive = module.RegretCurve(np.array([1, 9, 10, 20, 40]), np.array([2, 3, 1, 0, 4]), "", style)
+    invalid_x, invalid_y, invalid_fit, invalid_message = module.regret_log_log_fit(
+        non_positive.x, non_positive.y, 100)
+    assert len(invalid_x) == len(invalid_y) == 0 and invalid_fit is None
+    assert invalid_message == module.NON_POSITIVE_LOG_LOG_REGRET
+    for metric in ("external", "internal", "swap"):
+        curve = module.RegretCurve(non_positive.x, non_positive.y,
+                                   f"Replicate-mean cumulative {metric} action regret",
+                                   regret_series_style(metric))
+        module.plot_regret_log_log(curve, metric, 100, tmp_path / f"non-positive-{metric}.png",
+                                   information_rows=[("View", "Log-log fit")])
+    insufficient = module.RegretCurve(np.array([1, 20, 40]), np.array([2, 3, 4]),
+                                      "Replicate-mean cumulative external action regret", style)
+    module.plot_regret_log_log(insufficient, "external", 100, tmp_path / "insufficient.png")
+
+    axes = captured[0].axes[0]
+    assert axes.get_xscale() == axes.get_yscale() == "linear"
+    assert axes.get_xlabel() == "$\\log t$"
+    assert axes.get_ylabel() == "log replicate-mean cumulative external action regret"
+    assert "OLS fit (slope = 0.250)" in [line.get_label() for line in axes.lines]
+    information = " ".join(PdfReader(tmp_path / "fit.pdf").pages[0].extract_text().split())
+    assert "View: Log-log fit" in information and "Fitted slope: 0.250" in information
+    for metric, figure in zip(("external", "internal", "swap"), captured[1:4]):
+        unavailable_axes = figure.axes[0]
+        assert not unavailable_axes.axison
+        assert not unavailable_axes.lines
+        assert unavailable_axes.get_xlabel() == unavailable_axes.get_ylabel() == ""
+        assert [text.get_text() for text in unavailable_axes.texts] == [module.NON_POSITIVE_LOG_LOG_REGRET]
+        unavailable = " ".join(PdfReader(tmp_path / f"non-positive-{metric}.pdf").pages[0].extract_text().split())
+        assert "Fit: Unavailable" in unavailable and "Fitted slope" not in unavailable
+    insufficient_axes = captured[4].axes[0]
+    assert not insufficient_axes.axison
+    assert not insufficient_axes.lines
+    assert insufficient_axes.get_xlabel() == insufficient_axes.get_ylabel() == ""
+    assert [text.get_text() for text in insufficient_axes.texts] == [module.INSUFFICIENT_LOG_LOG_POINTS]
+    assert (tmp_path / "insufficient.png").is_file() and (tmp_path / "insufficient.pdf").is_file()
+
+
+def test_horizon_scaling_uses_final_means_log_axes_and_strict_fit_contract(tmp_path, monkeypatch):
+    from experiments.plots import plot_regret as module
+
+    runs = [
+        [{"horizon": "10", "player": "0", "t": "5", "external_regret": "999"},
+         {"horizon": "10", "player": "0", "t": "10", "external_regret": value}]
+        for value in ("2", "4")
+    ]
+    assert module.aggregate_final_metric(runs, 0, "external_regret") == 3
+
+    captured = []
+    original_save = module.save_figure_pair
+    def save(figure, path, **kwargs):
+        captured.append(figure)
+        return original_save(figure, path, **kwargs)
+    monkeypatch.setattr(module, "save_figure_pair", save)
+    horizons = np.array([100, 1_000, 10_000])
+    curves = [
+        module.RegretCurve(horizons, 2 * horizons ** 0.25, "External regret", regret_series_style("external", 0, 3)),
+        module.RegretCurve(horizons, np.array([2.0, 0.0, 4.0]), "Internal regret", regret_series_style("internal", 1, 3)),
+        module.RegretCurve(horizons, 3 * horizons ** 0.5, "Swap regret", regret_series_style("swap", 2, 3)),
+    ]
+    module.plot_horizon_scaling(curves, tmp_path / "scaling.png", information_rows=[("Compare", "Horizons")])
+    assert module.horizon_scaling_fit(horizons[:1], curves[0].y[:1]) == (None, module.INSUFFICIENT_HORIZONS)
+    assert module.horizon_scaling_fit(horizons[:2], curves[0].y[:2]) == (None, module.INSUFFICIENT_HORIZONS)
+
+    axes = captured[0].axes[0]
+    assert axes.get_xscale() == axes.get_yscale() == "log"
+    data_lines = [line for line in axes.lines if len(line.get_xdata())]
+    assert len(data_lines) == 4
+    empirical = [line for line in data_lines if line.get_linestyle() == "None"]
+    assert all(line.get_linestyle() == "None" and line.get_markevery() is None for line in empirical)
+    assert all(np.array_equal(line.get_xdata(), horizons) for line in empirical)
+    assert [line.get_label() for line in data_lines if line.get_linestyle() != "None"] == [
+        "External: α = 0.250", "Swap: α = 0.500"]
+    assert "Internal: invalid" in [text.get_text() for text in axes.texts]
+    information = " ".join(PdfReader(tmp_path / "scaling.pdf").pages[0].extract_text().split())
+    assert all(text in information for text in (
+        "Compare: Horizons", "External: α = 0.250", "Internal: invalid", "Swap: α = 0.500"))

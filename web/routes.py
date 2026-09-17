@@ -127,7 +127,8 @@ def index():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("fixed", get_service().default_form_state(), error)
 
-    return _queued_experiment_response(job, "fixed", f"Queued experiment job {job.id[:8]}.")
+    kind = "horizon batch" if len(form.horizon_values) > 1 else "experiment"
+    return _queued_experiment_response(job, "fixed", f"Queued {kind} job {job.id[:8]}.")
 
 
 def _submit_one_player():
@@ -138,7 +139,7 @@ def _submit_one_player():
     except (FileExistsError, ServiceBusyError, ValueError) as error:
         return _form_error("adversarial", service.default_adversarial_form_state(), error)
 
-    kind = "one-player batch" if len(form.action_counts) > 1 else "one-player experiment"
+    kind = "one-player batch" if len(form.action_counts) > 1 or len(form.horizon_values) > 1 else "one-player experiment"
     return _queued_experiment_response(job, "adversarial", f"Queued {kind} job {job.id[:8]}.")
 
 
@@ -251,6 +252,30 @@ def cancel_job(job_id: str):
             mode="adversarial" if return_to == "adversarial" else "fixed",
         )
     )
+
+
+@dashboard.post("/experiment-groups/<kind>/<group_id>/delete")
+def delete_result_group(kind: str, group_id: str):
+    redirect_arguments = {"mode": "adversarial"} if kind == "adversarial" else {}
+    try:
+        deleted = get_service().delete_result_group(kind, group_id)
+    except (FileNotFoundError, KeyError, OSError, ServiceBusyError, ValueError) as error:
+        flash(str(error), "error")
+    else:
+        flash(f"Deleted experiment group with {deleted} replicate file(s) and cleared generated artifacts.", "success")
+    return redirect(url_for("dashboard.index", **redirect_arguments))
+
+
+@dashboard.post("/experiment-groups/<kind>/delete-filtered")
+def delete_filtered_result_groups(kind: str):
+    redirect_arguments = {"mode": "adversarial"} if kind == "adversarial" else {}
+    try:
+        deleted = get_service().delete_result_groups(kind, request.form.getlist("group_id"))
+    except (FileNotFoundError, KeyError, OSError, ServiceBusyError, ValueError) as error:
+        flash(str(error), "error")
+    else:
+        flash(f"Deleted {deleted} filtered experiment(s) and cleared generated artifacts.", "success")
+    return redirect(url_for("dashboard.index", **redirect_arguments))
 
 
 @dashboard.get("/figure-builder/options")

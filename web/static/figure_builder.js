@@ -6,20 +6,23 @@
     const filter = name => document.getElementById(`filter-${name}`);
     const builder = name => document.getElementById(`builder-${name}`);
     const onePlayer = form.elements.mode.value === "adversarial";
-    const storageKey = `swap-regret-shared-filters-${form.elements.mode.value}`;
+    const storageKey = `swap-regret-profile-batch-filters-${form.elements.mode.value}`;
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(storageKey)) || {}; } catch (_) {}
     const selections = new Map(Object.entries(saved.selections || {}));
     const feedbackLabels = {full_information: "Full information", bandit: "Bandit feedback", both: "Both"};
     let catalog = {contexts: [], metrics: [], views: []};
     let currentContext = null, selectionKey = "";
+    let compatibleProfileIds = [];
     let selectionRevision = 0, displayRevision = 0;
     let probingRevision = null, generatingRevision = null;
     let exporting = false, figures = [];
     let profileMetric = saved.profileMetric || "external";
     let selectedView = saved.view || "all";
+    let standardView = selectedView === "log_log_fit" ? "all" : selectedView;
     let selectedAction = saved.selectedAction || "";
-    const comparisonModes = onePlayer ? ["regrets", "profiles", "actions"] : ["regrets", "profiles"];
+    let selectedHorizon = saved.selectedHorizon || "";
+    const comparisonModes = onePlayer ? ["regrets", "profiles", "actions", "horizons"] : ["regrets", "profiles", "horizons"];
 
     if (comparisonModes.includes(saved.comparisonMode)) {
         filter(`compare-${saved.comparisonMode}`).checked = true;
@@ -29,14 +32,20 @@
     const profiles = () => [...filter("profiles").selectedOptions].map(option => option.value);
     const selectionValid = () => currentContext && profiles().length > 0
         && (comparisonMode() === "profiles" || profiles().length === 1)
+        && (comparisonMode() === "horizons" || filter("horizon").value !== "all")
         && (!onePlayer || comparisonMode() === "actions" || filter("action").value !== "all");
-    const selected = () => ({
-        scope: filter("scope").value, feedback: filter("feedback").value,
-        player: onePlayer ? "0" : filter("player").value,
-        action: onePlayer ? filter("action").value : null,
-        metric: filter("metric").value, view: filter("view").value, profiles: profiles(),
-        comparisonMode: comparisonMode(), resultKeys: currentContext ? currentContext.result_keys : [],
-    });
+    const selected = () => {
+        const selectedProfiles = profiles();
+        return {
+            scope: filter("scope").value, feedback: filter("feedback").value,
+            player: onePlayer ? "0" : filter("player").value,
+            action: onePlayer ? filter("action").value : null,
+            horizon: filter("horizon").value,
+            metric: filter("metric").value, view: filter("view").value,
+            profiles: selectedProfiles.includes("all") ? compatibleProfileIds : selectedProfiles,
+            comparisonMode: comparisonMode(), resultKeys: currentContext ? currentContext.result_keys : [],
+        };
+    };
 
     function setOptions(select, entries, preferred = "", enabled = true) {
         select.disabled = true;
@@ -63,7 +72,7 @@
         document.dispatchEvent(new CustomEvent("results-filter-change", {detail: state}));
         try {
             localStorage.setItem(storageKey, JSON.stringify({...state, context: filter("context").value,
-                profileMetric, selectedAction, selections: Object.fromEntries(selections)}));
+                profileMetric, selectedAction, selectedHorizon, selections: Object.fromEntries(selections)}));
         } catch (_) {}
     }
 
@@ -71,7 +80,7 @@
         const pending = probingRevision === selectionRevision || generatingRevision !== null;
         builder("generate").disabled = pending || !selectionValid() || figures.length > 0;
         builder("download").disabled = exporting || visibleFigures().length === 0;
-        const count = profiles().length;
+        const count = selected().profiles.length;
         filter("selection-status").textContent = `${count} profile${count === 1 ? "" : "s"} selected.`;
         announceSelection();
     }
@@ -90,15 +99,24 @@
         displayRevision += 1;
     }
 
-    const visibleFigures = () => figures.filter(figure =>
-        (filter("metric").value === "all" || figure.metric === filter("metric").value)
-        && (filter("view").value === "all" || figure.view === filter("view").value));
+    const figureVisible = figure => (filter("metric").value === "all" || figure.metric === filter("metric").value)
+        && (comparisonMode() === "horizons"
+            || (filter("view").value === "all" ? figure.view !== "log_log_fit" : figure.view === filter("view").value));
+    const visibleFigures = () => figures.filter(figureVisible);
 
     function filterFigureCards() {
         for (const card of builder("figure").children) {
-            card.hidden = (filter("metric").value !== "all" && card.dataset.metric !== filter("metric").value)
-                || (filter("view").value !== "all" && card.dataset.view !== filter("view").value);
+            card.hidden = !figureVisible(card.dataset);
         }
+    }
+
+    function updateMetricControl() {
+        const logLogFit = comparisonMode() === "regrets" && filter("view").value === "log_log_fit";
+        const allRegrets = comparisonMode() === "horizons" || (comparisonMode() === "regrets" && !logLogFit);
+        const entries = allRegrets ? [["all", "All regrets"]]
+            : [["all", "All regrets"], ...catalog.metrics.map(metric => [metric.id, metric.label])];
+        setOptions(filter("metric"), entries, allRegrets ? "all" : profileMetric, Boolean(currentContext));
+        if (allRegrets) filter("metric").disabled = true;
     }
 
     function updateComparisonControls() {
@@ -110,12 +128,10 @@
         profileSelect.size = single ? 1 : Math.min(Math.max(profileSelect.options.length, 2), 8);
         filter("profiles-label").textContent = single ? "Algorithm profile" : "Algorithm profiles";
         if (single) [...profileSelect.options].forEach(option => option.selected = option.value === chosen);
-        const comparisonEnabled = profileSelect.options.length > 0;
-        comparisonModes.forEach(value => filter(`compare-${value}`).disabled = !comparisonEnabled);
-        filter("metric").disabled = !filter("metric").options.length || mode === "regrets";
-        if (mode === "regrets" && filter("metric").options.length) {
-            filter("metric").value = "all";
-        } else {
+        comparisonModes.forEach(value => {
+            filter(`compare-${value}`).disabled = !catalog.contexts.some(context => context.comparison_modes.includes(value));
+        });
+        if (!["regrets", "horizons"].includes(mode)) {
             const metric = [...filter("metric").options].find(option => option.value === profileMetric)
                 || [...filter("metric").options].find(option => option.value !== "all");
             if (metric) filter("metric").value = profileMetric = metric.value;
@@ -173,23 +189,62 @@
             }
         }
         const action = onePlayer ? filter("action").value : "";
-        const entries = feedbackProfiles.filter(profile => !onePlayer
-            || action === "all" || profile.actions.map(String).includes(action));
+        if (comparisonMode() === "horizons") {
+            if (filter("horizon").value && filter("horizon").value !== "all") selectedHorizon = filter("horizon").value;
+            setOptions(filter("horizon"), [["all", "All horizons"]], "all", false);
+        } else {
+            const horizons = [...new Set(feedbackProfiles.flatMap(profile => {
+                if (!onePlayer) return profile.horizons;
+                if (action === "all") return Object.values(profile.availability).flat();
+                return profile.availability[action] || [];
+            }))].sort((left, right) => left - right).map(horizon => [String(horizon), `T=${horizon}`]);
+            setOptions(filter("horizon"), horizons, selectedHorizon, Boolean(currentContext));
+            selectedHorizon = filter("horizon").value;
+        }
+        const horizon = filter("horizon").value;
+        const entries = feedbackProfiles.filter(profile => {
+            if (["regrets", "horizons"].includes(comparisonMode())
+                    && !catalog.metrics.every(metric => profile.metrics.includes(metric.id))) return false;
+            if (!onePlayer) return horizon === "all" ? profile.horizons.length >= 2 : profile.horizons.map(String).includes(horizon);
+            if (comparisonMode() === "actions") {
+                return Object.values(profile.availability).some(values => values.map(String).includes(horizon));
+            }
+            const values = profile.availability[action] || [];
+            return horizon === "all" ? values.length >= 2 : values.map(String).includes(horizon);
+        });
         const unique = new Map(entries.map(profile => [profile.id, profile.label]));
-        selectionKey = currentContext ? `${currentContext.id}:${feedback}${onePlayer ? `:${action}` : ""}` : "";
+        compatibleProfileIds = [...unique.keys()];
+        selectionKey = currentContext ? `${currentContext.id}:${feedback}:${comparisonMode()}:${action}:${horizon}` : "";
         const remembered = Array.isArray(selections.get(selectionKey)) ? selections.get(selectionKey) : [];
+        const profileEntries = [...unique].sort(([left], [right]) => left.localeCompare(right));
+        if (["regrets", "horizons"].includes(comparisonMode()) && profileEntries.length) {
+            profileEntries.unshift(["all", "All algorithm profiles"]);
+        }
         filter("profiles").disabled = true;
-        filter("profiles").replaceChildren(...[...unique].sort(([left], [right]) => left.localeCompare(right))
-            .map(([value, label]) => new Option(label, value)));
-        [...filter("profiles").options].forEach(option => option.selected = remembered.includes(option.value));
+        filter("profiles").replaceChildren(...profileEntries.map(([value, label]) => new Option(label, value)));
+        const profileOptions = [...filter("profiles").options];
+        if (comparisonMode() === "profiles") {
+            profileOptions.forEach(option => option.selected = remembered.includes(option.value));
+            if (!filter("profiles").selectedOptions.length && compatibleProfileIds.length) {
+                filter("profiles").value = compatibleProfileIds[0];
+            }
+        } else {
+            filter("profiles").value = remembered.find(value => profileOptions.some(option => option.value === value))
+                || compatibleProfileIds[0] || "";
+        }
         filter("profiles").disabled = filter("profiles").options.length === 0;
 
         const hasFilterContext = Boolean(currentContext);
-        const metrics = comparisonMode() === "regrets" ? [["all", "All regrets"]]
-            : [["all", "All regrets"], ...catalog.metrics.map(metric => [metric.id, metric.label])];
-        setOptions(filter("metric"), metrics, comparisonMode() === "regrets" ? "all" : profileMetric, hasFilterContext);
-        setOptions(filter("view"), [["all", "Both views"], ...catalog.views.map(view => [view.id, view.label])],
-            selectedView, hasFilterContext);
+        const horizonComparison = comparisonMode() === "horizons";
+        const views = catalog.views.filter(view => view.id !== "horizon_scaling"
+            && (comparisonMode() === "regrets" || view.id !== "log_log_fit"));
+        const viewEntries = horizonComparison ? [["horizon_scaling", "Horizon scaling"]]
+            : [["all", "Both views"], ...views.map(view => [view.id, view.label])];
+        setOptions(filter("view"), viewEntries,
+            horizonComparison ? "horizon_scaling" : comparisonMode() === "regrets" ? selectedView : standardView,
+            hasFilterContext && !horizonComparison);
+        selectedView = filter("view").value;
+        updateMetricControl();
         updateComparisonControls();
         remember();
         selectionChanged();
@@ -200,12 +255,13 @@
         const wantedPlayer = onePlayer ? "0" : preferred.player || filter("player").value;
         const wantedContext = preferred.context || filter("context").value;
         currentContext = null;
-        clearOptions(filter("feedback"), onePlayer ? filter("action") : filter("player"), filter("context"),
+        clearOptions(filter("feedback"), onePlayer ? filter("action") : filter("player"), filter("horizon"), filter("context"),
             filter("profiles"), filter("metric"), filter("view"));
         filter("profiles").size = 1;
         comparisonModes.forEach(value => filter(`compare-${value}`).disabled = true);
 
-        let available = catalog.contexts.filter(context => context.scope === filter("scope").value);
+        let available = catalog.contexts.filter(context => context.scope === filter("scope").value
+            && context.comparison_modes.includes(comparisonMode()));
         const feedbacks = ["full_information", "bandit"].filter(value =>
             available.some(context => context.feedback_modes.includes(value)));
         setOptions(filter("feedback"), [...feedbacks.map(value => [value, feedbackLabels[value]]), ["both", "Both"]],
@@ -217,6 +273,7 @@
             setOptions(filter("player"), players.map(value => [String(value), `Player ${value}`]), wantedPlayer);
         }
         const contexts = catalog.contexts.filter(context => context.scope === filter("scope").value
+            && context.comparison_modes.includes(comparisonMode())
             && (filter("feedback").value === "both" || context.feedback_modes.includes(filter("feedback").value))
             && (onePlayer || String(context.player) === filter("player").value));
         const entries = contexts.map(context => [context.id, context.batch_label]);
@@ -319,6 +376,11 @@
     } else {
         filter("player").addEventListener("change", () => { remember(); updateContexts(); });
     }
+    filter("horizon").addEventListener("change", () => {
+        remember();
+        selectedHorizon = filter("horizon").value;
+        updateProfiles();
+    });
     filter("context").addEventListener("change", () => { remember(); updateProfiles(); });
     filter("metric").addEventListener("change", () => {
         profileMetric = filter("metric").value;
@@ -328,6 +390,8 @@
     });
     filter("view").addEventListener("change", () => {
         selectedView = filter("view").value;
+        if (selectedView !== "log_log_fit") standardView = selectedView;
+        updateMetricControl();
         filterFigureCards();
         displayRevision += 1;
         updateButtons();
@@ -337,7 +401,7 @@
             if (!filter(`compare-${mode}`).checked) return;
             remember();
             if (mode === "regrets" && !filter("metric").disabled) profileMetric = filter("metric").value;
-            updateProfiles();
+            updateContexts();
         });
     }
     filter("profiles").addEventListener("change", () => { remember(); selectionChanged(); });

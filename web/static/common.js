@@ -78,6 +78,24 @@ function updateJobElement(element, job) {
     if (message) {
         message.textContent = job.message;
     }
+    const progress = element.querySelector("[data-job-round-bar]");
+    if (progress) {
+        progress.max = job.rounds_total;
+        progress.value = job.rounds_completed;
+        const percent = Math.round(100 * job.rounds_completed / job.rounds_total);
+        element.querySelector("[data-job-round-percent]").textContent = `${percent}%`;
+        let eta = "Estimating…";
+        if (job.status === "succeeded") {
+            eta = "Complete";
+        } else if (job.eta_seconds !== null && job.eta_seconds < 60) {
+            eta = "< 1 min";
+        } else if (job.eta_seconds !== null && job.eta_seconds < 3600) {
+            eta = `~${Math.round(job.eta_seconds / 60)} min`;
+        } else if (job.eta_seconds !== null) {
+            eta = `~${Math.floor(job.eta_seconds / 3600)} h ${Math.floor((job.eta_seconds % 3600) / 60)} min`;
+        }
+        element.querySelector("[data-job-eta]").textContent = eta;
+    }
     if (!["queued", "running"].includes(job.status)) {
         const form = element.querySelector(".job-actions form");
         if (form) {
@@ -179,4 +197,7 @@ function setHeatmapSource(image, source, loadingMessage = "Loading heatmap…") 
 }
 
 installConfirmations();
+document.querySelectorAll(".flash-stack .notice-success").forEach((notice) => {
+    window.setTimeout(() => notice.remove(), 4000);
+});
 listen("experiment-mode", "change", (event) => event.currentTarget.form.submit());

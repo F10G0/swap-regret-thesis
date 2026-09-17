@@ -50,14 +50,13 @@ def test_distance_figures_use_caption_free_publication_layout(tmp_path, monkeypa
     assert "CE" in pdf_text and "CCE" in pdf_text
 
 
-def test_style_redraw_reuses_cached_distance_values(tmp_path, monkeypatch):
+def test_redraw_reuses_cached_distance_values(tmp_path, monkeypatch):
     path = create_result(tmp_path / "raw")
     calls = count_solves(monkeypatch)
     kwargs = dict(cache_dir=tmp_path / "cache")
     plotting.plot_result_equilibrium_distance(path, tmp_path / "first.png", **kwargs)
     assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
     monkeypatch.setattr(plotting, "load_result_empirical_distribution_trajectory", lambda *args: pytest.fail("redraw loaded histograms"))
-    monkeypatch.setattr(plotting, "EQUILIBRIUM_DISTANCE_FIGURE_VERSION", plotting.EQUILIBRIUM_DISTANCE_FIGURE_VERSION + 1)
     plotting.plot_result_equilibrium_distance(path, tmp_path / "redrawn.png", **kwargs)
     assert calls == Counter(ce=DISTANCE_POINT_COUNT, cce=DISTANCE_POINT_COUNT)
 
@@ -89,7 +88,7 @@ def test_first_request_caches_and_unchanged_request_skips_lp_and_histograms(tmp_
     np.testing.assert_array_equal(first.horizons, second.horizons)
 
 
-@pytest.mark.parametrize("change", ["mtime", "size", "payoff", "metric", "format", "corrupt"])
+@pytest.mark.parametrize("change", ["mtime", "size", "payoff", "corrupt"])
 def test_distance_cache_invalidates_only_when_its_inputs_change(tmp_path, monkeypatch, change):
     path = create_result(tmp_path / "raw")
     payoffs = load_game_payoffs("rps")
@@ -105,9 +104,6 @@ def test_distance_cache_invalidates_only_when_its_inputs_change(tmp_path, monkey
     elif change == "payoff":
         payoffs = payoffs.copy()
         payoffs[0, 0, 0] += .1
-    elif change in {"metric", "format"}:
-        key = {"metric": "EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION", "format": "DISTANCE_CACHE_VERSION"}[change]
-        monkeypatch.setattr(plotting, key, 3)
     else:
         next(cache.glob("*.json")).write_text("broken json")
     plotting._load_result_distances(path, payoffs, cache)

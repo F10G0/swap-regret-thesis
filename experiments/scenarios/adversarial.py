@@ -28,7 +28,7 @@ from experiments.runtime_environment import (
     runtime_environment_json,
     validate_runtime_environment,
 )
-from experiments.runner import ExperimentCancelled
+from experiments.runner import ExperimentCancelled, round_progress_interval
 from experiments.seeding import (
     ENVIRONMENT_SEED_DOMAIN,
     LEARNER_SEED_DOMAIN,
@@ -190,6 +190,7 @@ def run_adversarial_experiment(
     replicate: int = 0,
     runtime_environment: str | None = None,
     max_recorded_points: int = MAX_RECORDED_POINTS,
+    report_rounds: Callable[[int], None] | None = None,
 ) -> Path:
     spec = AdversarialExperimentSpec(
         algorithm_name=algorithm_name,
@@ -228,6 +229,8 @@ def run_adversarial_experiment(
     regrets = RegretBundle(spec.n_actions)
     checkpoints = set(recording_checkpoints(spec.horizon, max_recorded_points))
     metadata = spec.configuration() | {"run_id": spec.run_id}
+    progress_interval = round_progress_interval(spec.horizon)
+    reported_rounds = 0
 
     with CsvRecorder(
         adversarial_result_fieldnames(),
@@ -247,22 +250,25 @@ def run_adversarial_experiment(
             feedback = payoffs if spec.feedback_mode == "full_information" else float(payoffs[action])
             learner.update(feedback)
 
-            if time not in checkpoints:
-                continue
-            punished_actions = " ".join(map(str, experiment_environment.punished_actions)) if historical else ""
-            regret_summary = regrets.summary(time)
-            recorder.record(
-                {
-                    **metadata,
-                    "t": time,
-                    "action": action,
-                    "punished_actions": punished_actions,
-                    "payoff": float(payoffs[action]),
-                    "current_best_action": int(np.argmax(payoffs)),
-                    "current_best_reward": float(np.max(payoffs)),
-                    **regret_summary,
-                }
-            )
+            if time in checkpoints:
+                punished_actions = " ".join(map(str, experiment_environment.punished_actions)) if historical else ""
+                regret_summary = regrets.summary(time)
+                recorder.record(
+                    {
+                        **metadata,
+                        "t": time,
+                        "action": action,
+                        "punished_actions": punished_actions,
+                        "payoff": float(payoffs[action]),
+                        "current_best_action": int(np.argmax(payoffs)),
+                        "current_best_reward": float(np.max(payoffs)),
+                        **regret_summary,
+                    }
+                )
+
+            if report_rounds is not None and (time - reported_rounds >= progress_interval or time == spec.horizon):
+                report_rounds(time - reported_rounds)
+                reported_rounds = time
 
     return output_path
 

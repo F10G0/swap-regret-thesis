@@ -551,6 +551,18 @@ fieldset {
     font-weight: 750;
 }
 
+.summary-heading-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.summary-heading-actions form {
+    margin: 0;
+}
+
 .figure-status,
 .empty-state {
     margin: 0;
@@ -657,6 +669,10 @@ fieldset {
     font-size: 0.86rem;
 }
 
+.job-round-progress progress {
+    width: min(360px, 100%);
+}
+
 .job-succeeded .status {
     color: var(--success);
 }
@@ -684,7 +700,7 @@ fieldset {
 
 .figure-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
     margin-top: 18px;
 }
@@ -923,6 +939,25 @@ th {
     cursor: pointer;
 }
 
+#summary-table .sticky-actions {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    width: 1%;
+    padding-inline: 7px;
+    background: var(--surface);
+    box-shadow: -1px 0 var(--border);
+}
+
+#summary-table thead .sticky-actions {
+    z-index: 3;
+    background: var(--surface-muted);
+}
+
+#summary-table tbody tr:hover .sticky-actions {
+    background: #f7faf8;
+}
+
 td {
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-variant-numeric: tabular-nums;
@@ -1057,9 +1092,6 @@ tbody tr:hover {
         border-bottom: 1px solid var(--border);
     }
 
-    .figure-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
 }
 
 @media (max-width: 720px) {

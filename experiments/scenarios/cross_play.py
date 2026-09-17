@@ -81,7 +81,7 @@ def replicate_player_seeds(
 def run_cross_play_experiment(game_name: str, algorithm_names: list[str], horizon: int = HORIZON, seed: int = SEED, replicate: int = 0,
                               output_dir: str | Path | None = None, should_cancel: Callable[[], bool] | None = None,
                               custom_game_dir: str | Path = CUSTOM_GAME_DIR, max_recorded_points: int = MAX_RECORDED_POINTS,
-                              *, feedback_mode: str) -> Path:
+                              report_rounds: Callable[[int], None] | None = None, *, feedback_mode: str) -> Path:
     if feedback_mode not in ALGORITHMS_BY_FEEDBACK_MODE:
         raise ValueError(f"unknown feedback mode: {feedback_mode}")
     algorithm_registry = ALGORITHMS_BY_FEEDBACK_MODE[feedback_mode]
@@ -116,7 +116,7 @@ def run_cross_play_experiment(game_name: str, algorithm_names: list[str], horizo
         run_game(
             game_name=spec.game_name, feedback_mode=spec.feedback_mode, algorithm_name=spec.algorithm_profile_name, game=game, players=players, recorder=recorder, horizon=spec.horizon,
             metadata=spec.metadata(), should_cancel=should_cancel,
-            max_recorded_points=max_recorded_points,
+            max_recorded_points=max_recorded_points, report_rounds=report_rounds,
         )
 
     return output_path

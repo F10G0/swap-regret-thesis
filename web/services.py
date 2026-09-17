@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import tempfile
 from threading import Lock
+import time
 
 import numpy as np
 
@@ -46,6 +47,7 @@ from web.validation import (
 
 
 logger = logging.getLogger(__name__)
+ROUND_PROGRESS_THRESHOLD = 100_000
 
 
 def _validate_result_file(directory: Path, filename: str, suffix: str) -> str:
@@ -87,10 +89,10 @@ class DashboardService:
         self._convergence_future_lock = Lock()
         self._convergence_futures: dict[str, Future[Path]] = {}
 
-    def _clear_generated_artifacts(self, roots: tuple[Path, ...]) -> tuple[Path, ...]:
+    def _clear_generated_artifacts(self, roots: tuple[Path, ...], preserve: tuple[Path, ...] = ()) -> tuple[Path, ...]:
         return clear_experiment_artifacts(
             roots,
-            preserve=(self.game_catalog.custom_game_dir,),
+            preserve=(self.game_catalog.custom_game_dir, *preserve),
         )
 
     @property
@@ -279,12 +281,24 @@ class DashboardService:
         ]
         if not missing:
             raise FileExistsError(duplicate_message)
+        aggregate_rounds = sum(spec.horizon for spec in missing)
+        rounds_total = aggregate_rounds if aggregate_rounds >= ROUND_PROGRESS_THRESHOLD else 0
 
         def operation(job: JobContext) -> str:
+            progress_start = time.monotonic()
+
+            def report_round_progress(rounds_completed: int) -> None:
+                elapsed = time.monotonic() - progress_start
+                eta_seconds = None
+                if elapsed >= 2 and rounds_completed > 0:
+                    eta_seconds = (rounds_total - rounds_completed) / (rounds_completed / elapsed)
+                job.update_round_progress(rounds_completed, eta_seconds)
+
             run_replicates(
                 run, [task_kwargs(spec) for spec in missing],
                 workers=self.replicate_workers,
                 should_cancel=lambda: job.cancelled, completed=job.advance,
+                round_progress=report_round_progress if rounds_total else None,
             )
             job.check_cancelled()
             return f"Completed {len(missing)} run(s); skipped {len(specs) - len(missing)} existing or queued"
@@ -293,6 +307,7 @@ class DashboardService:
             description,
             operation,
             total=len(missing),
+            rounds_total=rounds_total,
             resource_keys={resource_key(spec) for spec in missing},
         )
 
@@ -306,10 +321,11 @@ class DashboardService:
                 feedback_mode=form.feedback_mode,
                 algorithm_name=form.algorithm_name,
                 n_actions=n_actions,
-                horizon=form.horizon,
+                horizon=horizon,
                 seed=form.seed,
                 replicate=replicate,
             )
+            for horizon in form.horizon_values
             for n_actions in form.action_counts
             for replicate in range(form.replicates)
         ]
@@ -334,7 +350,8 @@ class DashboardService:
                 f"{ENVIRONMENT_LABELS[form.environment]} · "
                 f"{FEEDBACK_MODE_LABELS[form.feedback_mode]} · "
                 f"actions {','.join(map(str, form.action_counts))} · "
-                f"{form.replicates} replicates each · base seed {form.seed}"
+                + (f"horizons {','.join(map(str, form.horizon_values))} · " if len(form.horizon_values) > 1 else "")
+                + f"{form.replicates} replicates each · base seed {form.seed}"
             ),
             run_adversarial_experiment,
             task_kwargs,
@@ -344,19 +361,20 @@ class DashboardService:
     def validate_adversarial_csv_filename(self, filename: str) -> str:
         return _validate_result_file(self.adversarial_raw_dir, filename, ".csv")
 
-    def _spec(self, form: ExperimentForm, replicate: int) -> ExperimentSpec:
+    def _spec(self, form: ExperimentForm, replicate: int, horizon: int | None = None) -> ExperimentSpec:
         return ExperimentSpec(
             game_name=form.game,
             feedback_mode=form.feedback_mode,
             algorithm_names=form.algorithm_names,
-            horizon=form.horizon,
+            horizon=form.horizon if horizon is None else horizon,
             seed=form.seed,
             replicate=replicate,
             game_payoff_digest=payoff_tensor_digest(self.game_catalog.load(form.game)),
         )
 
     def submit_experiment(self, form: ExperimentForm) -> Job:
-        specs = [self._spec(form, replicate=replicate) for replicate in range(form.replicates)]
+        specs = [self._spec(form, replicate, horizon) for horizon in form.horizon_values
+                 for replicate in range(form.replicates)]
 
         def task_kwargs(spec):
             return dict(
@@ -385,10 +403,10 @@ class DashboardService:
     def detail_figure_dir(self) -> Path:
         return self.figure_dir / "details"
 
-    def _result_group_paths(self, group_id: str) -> list[Path]:
+    def _result_group_paths(self, group_id: str, kind: ResultKind = "fixed", results: ResultSet | None = None) -> list[Path]:
         if re.fullmatch(r"[0-9a-f]{16}", group_id) is None:
             raise ValueError("invalid result group")
-        paths = self.result_snapshot().detail_paths(group_id)
+        paths = (results or self.result_snapshot(kind)).detail_paths(group_id)
         for path in paths:
             validate_leaf_filename(path.name, ".csv")
         if any(not path.is_file() for path in paths):
@@ -459,8 +477,6 @@ class DashboardService:
         self,
         filename: str,
     ) -> tuple[Path, Path]:
-        from experiments.plots.plot_equilibrium_convergence import EQUILIBRIUM_DISTANCE_FIGURE_VERSION
-
         filename = validate_leaf_filename(filename, ".csv")
         input_path = self.raw_dir / filename
         if not input_path.is_file():
@@ -471,15 +487,13 @@ class DashboardService:
         return (
             input_path,
             self.detail_figure_dir
-            / f"{input_path.stem}_v{EQUILIBRIUM_DISTANCE_FIGURE_VERSION}_equilibrium_distance.png",
+            / f"{input_path.stem}_equilibrium_distance.png",
         )
 
     def _group_convergence_figure_path(
         self,
         group_id: str,
     ) -> tuple[list[Path], Path, str]:
-        from experiments.plots.plot_equilibrium_convergence import EQUILIBRIUM_DISTANCE_FIGURE_VERSION
-
         input_paths = self._result_group_paths(group_id)
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_equilibrium_distance(game_name):
@@ -488,7 +502,7 @@ class DashboardService:
         return (
             input_paths,
             self.detail_figure_dir
-            / f"{cache_stem}_v{EQUILIBRIUM_DISTANCE_FIGURE_VERSION}_replicate_mean_equilibrium_distance.png",
+            / f"{cache_stem}_replicate_mean_equilibrium_distance.png",
             cache_stem,
         )
 
@@ -615,15 +629,40 @@ class DashboardService:
             self._detail_figure_generation += 1
             self._clear_generated_artifacts((self.detail_figure_dir,))
 
+    def _clear_derived_artifacts(self) -> None:
+        self._invalidate_detail_figures()
+        self._clear_generated_artifacts(
+            (self.figure_dir, self.adversarial_dir, self.results_dir / "cache"),
+            preserve=(self.adversarial_raw_dir,),
+        )
+
+    def _delete_result_groups(self, kind: ResultKind, group_ids: list[str]) -> tuple[int, int]:
+        if kind not in {"fixed", "adversarial"}:
+            raise ValueError("invalid result kind")
+        unique_ids = list(dict.fromkeys(group_ids))
+        if not unique_ids:
+            raise ValueError("select at least one experiment group")
+
+        def operation() -> tuple[int, int]:
+            results = self.result_snapshot(kind)
+            paths = [path for group_id in unique_ids for path in self._result_group_paths(group_id, kind, results)]
+            for path in paths:
+                path.unlink()
+            self._clear_derived_artifacts()
+            return len(unique_ids), len(paths)
+
+        return self.jobs.run_maintenance(operation)
+
+    def delete_result_group(self, kind: ResultKind, group_id: str) -> int:
+        return self._delete_result_groups(kind, [group_id])[1]
+
+    def delete_result_groups(self, kind: ResultKind, group_ids: list[str]) -> int:
+        return self._delete_result_groups(kind, group_ids)[0]
+
     def clear_results(self) -> None:
         def operation() -> None:
-            self._invalidate_detail_figures()
-            self._clear_generated_artifacts((
-                self.raw_dir,
-                self.figure_dir,
-                self.adversarial_dir,
-                self.results_dir / "cache",
-            ))
+            self._clear_derived_artifacts()
+            self._clear_generated_artifacts((self.raw_dir, self.adversarial_raw_dir))
 
         self.jobs.run_maintenance(operation)
 

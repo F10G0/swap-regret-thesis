@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import logging
+import math
 from threading import Event, Lock
 from typing import Any
 from uuid import uuid4
@@ -29,6 +30,9 @@ class Job:
     cancel_requested: bool = False
     started_at: str | None = None
     finished_at: str | None = None
+    rounds_completed: int = 0
+    rounds_total: int = 0
+    eta_seconds: float | None = None
 
     def public_data(self) -> dict:
         return asdict(self)
@@ -49,6 +53,9 @@ class JobContext:
 
     def advance(self, message: str | None = None) -> None:
         self.manager._advance(self.job_id, message)
+
+    def update_round_progress(self, completed: int, eta_seconds: float | None) -> None:
+        self.manager._update_round_progress(self.job_id, completed, eta_seconds)
 
 
 class JobManager:
@@ -73,6 +80,7 @@ class JobManager:
         description: str,
         operation: Callable[[JobContext], str | None],
         total: int = 1,
+        rounds_total: int = 0,
         resource_keys: set[str] | None = None,
     ) -> Job:
         with self._lock:
@@ -90,6 +98,7 @@ class JobManager:
                 message="Waiting to start",
                 created_at=self._now(),
                 total=total,
+                rounds_total=max(0, rounds_total),
             )
             self._jobs[job.id] = job
             self._cancel_events[job.id] = Event()
@@ -109,7 +118,7 @@ class JobManager:
                 self._release_resources_unlocked(job_id)
                 return
             job.status = "running"
-            job.message = f"0 / {job.total} completed"
+            job.message = f"0 / {job.total} runs completed"
             job.started_at = self._now()
 
         try:
@@ -134,13 +143,16 @@ class JobManager:
                 else:
                     job.status = "succeeded"
                     job.completed = job.total
+                    if job.rounds_total:
+                        job.rounds_completed = job.rounds_total
+                        job.eta_seconds = 0
                     job.message = message or "Operation completed"
                     job.finished_at = self._now()
                 self._release_resources_unlocked(job_id)
 
     def _finish_cancelled_unlocked(self, job: Job) -> None:
         job.status = "cancelled"
-        job.message = f"Cancelled after {job.completed} / {job.total}"
+        job.message = f"Cancelled after {job.completed} / {job.total} runs"
         job.finished_at = self._now()
 
     def _cancel_requested(self, job_id: str) -> bool:
@@ -155,7 +167,17 @@ class JobManager:
         with self._lock:
             job = self._jobs[job_id]
             job.completed = min(job.completed + 1, job.total)
-            job.message = message or f"{job.completed} / {job.total} completed"
+            job.message = message or f"{job.completed} / {job.total} runs completed"
+
+    def _update_round_progress(self, job_id: str, completed: int, eta_seconds: float | None) -> None:
+        with self._lock:
+            job = self._jobs[job_id]
+            if not job.rounds_total:
+                return
+            job.rounds_completed = min(job.rounds_total, max(job.rounds_completed, int(completed)))
+            job.eta_seconds = eta_seconds if eta_seconds is not None and math.isfinite(eta_seconds) else None
+            if job.eta_seconds is not None:
+                job.eta_seconds = max(0, job.eta_seconds)
 
     def cancel(self, job_id: str) -> Job:
         with self._lock:

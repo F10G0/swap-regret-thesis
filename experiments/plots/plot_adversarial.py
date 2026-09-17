@@ -18,3 +18,14 @@ def aggregate_adversarial_regret(
         times,
         np.mean(values, axis=0),
     )
+
+
+def aggregate_final_adversarial_regret(trajectories: list[list[dict[str, str]]], column: str) -> float:
+    values = []
+    for rows in trajectories:
+        horizon = int(rows[0]["horizon"])
+        final = [row for row in rows if int(row["t"]) == horizon]
+        if len(final) != 1:
+            raise ValueError("replicate run has no unique final observation")
+        values.append(float(final[0][column]))
+    return float(np.mean(values))

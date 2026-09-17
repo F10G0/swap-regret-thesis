@@ -22,7 +22,6 @@ from experiments.plots.style import publication_plot, finish_line_figure
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
 from experiments.results import iter_result_rows, result_game_payoff_digest
 from metrics.equilibrium_distance import (
-    EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION,
     EquilibriumDistanceTrajectory,
     ReplicateEquilibriumDistanceTrajectory,
     aggregate_equilibrium_distance_trajectories,
@@ -30,19 +29,15 @@ from metrics.equilibrium_distance import (
 )
 
 
-DISTANCE_CACHE_VERSION = 2
-EQUILIBRIUM_DISTANCE_FIGURE_VERSION = 5
 logger = logging.getLogger(__name__)
 
 
 def _distance_cache_identity(path: Path, payoff_digest: str) -> dict:
     stat = path.stat()
     return {
-        "version": DISTANCE_CACHE_VERSION,
         "source": str(path.resolve()), "mtime_ns": stat.st_mtime_ns,
         "ctime_ns": stat.st_ctime_ns, "size": stat.st_size,
         "payoff_digest": payoff_digest,
-        "metric_version": EQUILIBRIUM_DISTANCE_IMPLEMENTATION_VERSION,
     }
 
 

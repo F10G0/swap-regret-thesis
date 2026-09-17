@@ -8,6 +8,7 @@ from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
 from tests.web.support import block_job_queue, create_test_app, csrf_token, dashboard_data, wait_for_http_response, wait_for_job
 from web.validation import (
+    parse_adversarial_experiment_form,
     parse_experiment_form,
     validate_leaf_filename,
 )
@@ -29,6 +30,18 @@ def test_experiment_form_accepts_feedback_and_boundary_values(mode, names):
                                    "horizon": "100", "seed": "0", "replicates": "10"})
     assert (parsed.feedback_mode, parsed.algorithm_names) == (mode, tuple(names))
     assert (parsed.horizon, parsed.seed, parsed.replicates) == (100, 0, 10)
+    assert parsed.horizon_values == (100,)
+
+
+def test_horizon_lists_are_sorted_deduplicated_for_both_experiment_modes():
+    fixed = parse_form(VALID_FORM | {"horizon": "100, 3, 10, 3"})
+    one_player = parse_adversarial_experiment_form({
+        "environment": "historical_frequency_v3", "feedback_mode": "full_information",
+        "algorithm_names": ["hedge"], "actions": "3", "horizon": "10 3, 10",
+        "seed": "42", "replicates": "1",
+    }, {"full_information": ["hedge"]}, {"historical_frequency_v3"}, 100, 100)
+    assert fixed.horizon_values == (3, 10, 100)
+    assert one_player.horizon_values == (3, 10)
 
 
 def parse_form(values):
@@ -39,6 +52,7 @@ def parse_form(values):
 @pytest.mark.parametrize("field,value", [
     ("game", None), ("horizon", None), ("seed", None), ("feedback_mode", None), ("algorithm_names", None),
     ("horizon", "0"), ("horizon", "101"), ("horizon", "invalid"), ("seed", "-1"),
+    ("horizon", "1,0"), ("horizon", "1,invalid"), ("horizon", "1,101"),
     ("replicates", None), ("replicates", "0"), ("replicates", "11"),
     ("game", "unknown"), ("feedback_mode", "unknown"), ("feedback_mode", "bandit"),
     ("algorithm_names", ["hedge"]), ("algorithm_names", ["unknown", "hedge"]),
@@ -94,6 +108,8 @@ def test_dashboard_queues_valid_experiment_and_exposes_job_status(
     status_response = client.get(f"/jobs/{job.id}")
     assert status_response.status_code == 200
     assert status_response.json["status"] == "succeeded"
+    assert status_response.json["rounds_completed"] == status_response.json["rounds_total"] == 0
+    assert status_response.json["eta_seconds"] is None
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 1
 
 

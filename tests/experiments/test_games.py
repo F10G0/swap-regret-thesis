@@ -3,6 +3,7 @@ import pytest
 
 from experiments.games import (
     PAYOFF_FACTORIES,
+    create_matching_pennies_payoffs,
     create_rock_paper_scissors_payoffs,
     create_rock_paper_scissors_lizard_spock_payoffs,
     normalize_payoffs,
@@ -60,6 +61,7 @@ def test_rpsls_exact_payoff_tensor_and_digest_regression() -> None:
 
 def test_literature_benchmark_suite_has_only_role_driven_games() -> None:
     assert set(PAYOFF_FACTORIES) == {
+        "matching_pennies",
         "rps",
         "rpsls",
     }
@@ -78,20 +80,19 @@ def test_rpsls_is_balanced_symmetric_zero_sum_equivalent() -> None:
     assert payoffs[0, 4, 1] == 0.0
 
 
-def test_matching_pennies_is_not_a_production_benchmark() -> None:
+def test_matching_pennies_exact_payoff_tensor_and_registry() -> None:
     from experiments.game_catalog import load_game_payoffs, payoff_tensor_digest
     from web.presentations import GAME_PRESENTATIONS
-    from tests.support import matching_pennies_payoffs
 
-    assert "matching_pennies" not in PAYOFF_FACTORIES
-    assert "matching_pennies" not in GAME_PRESENTATIONS
-    with pytest.raises(ValueError, match="unknown game"):
-        load_game_payoffs("matching_pennies")
-    payoffs = matching_pennies_payoffs()
-
+    raw_player_0 = np.array([[1.0, -1.0], [-1.0, 1.0]])
     expected = np.array([[[1.0, 0.0], [0.0, 1.0]], [[0.0, 1.0], [1.0, 0.0]]])
+    payoffs = create_matching_pennies_payoffs()
     assert payoffs.dtype == expected.dtype == np.dtype("float64")
     np.testing.assert_array_equal(payoffs, expected)
+    np.testing.assert_array_equal(2 * payoffs[0] - 1, raw_player_0)
+    np.testing.assert_array_equal(2 * payoffs[1] - 1, -raw_player_0)
+    np.testing.assert_array_equal(load_game_payoffs("matching_pennies"), expected)
+    assert GAME_PRESENTATIONS["matching_pennies"]["label"] == "Matching Pennies"
     assert payoff_tensor_digest(payoffs) == "a4bd8e91cb26bb481ea53925b8c545895b027d61ea21e43c4bd55225d4e9c803"
 
 
@@ -109,7 +110,7 @@ def test_retired_game_identifiers_are_not_supported(tmp_path, game_name) -> None
     from web.presentations import GAME_PRESENTATIONS
 
     catalog = GameCatalog(tmp_path)
-    assert set(catalog.definitions()) == {"rps", "rpsls"}
+    assert set(catalog.definitions()) == {"matching_pennies", "rps", "rpsls"}
     assert game_name not in PAYOFF_FACTORIES
     assert game_name not in GAME_PRESENTATIONS
     with pytest.raises(ValueError, match="unknown game"):

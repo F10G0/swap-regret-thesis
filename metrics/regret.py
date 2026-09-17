@@ -2,7 +2,7 @@ import numpy as np
 
 
 class RegretBundle:
-    """Realized gains G[i, j] = sum_t 1{I_t=i}(r_t[j] - r_t[i])."""
+    """Action-regret replacement gains G[i, j] = sum_t 1{I_t=i}(r_t[j] - r_t[i])."""
 
     def __init__(self, n_actions: int):
         if n_actions <= 0:

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_experiment_ui.html" import feedback_control, figure_dialog, jobs_panel, warning_panel, learning_configuration, queue_experiment_button, result_controls, regret_headers, regret_cells with context %}
+{% from "_experiment_ui.html" import delete_filtered_results_form, delete_result_form, feedback_control, figure_dialog, jobs_panel, warning_panel, learning_configuration, queue_experiment_button, result_controls, regret_headers, regret_cells with context %}
 {% from "_one_player_experiment.html" import one_player_main, one_player_sidebar with context %}
 
 {% set sidebar_label = "Experiment configuration" %}
@@ -100,7 +100,10 @@
                             <p class="eyebrow">Data</p>
                             <h2 id="summary-heading">Recorded output</h2>
                         </div>
-                        <span>{{ summaries | length }} replicate-group player records</span>
+                        <div class="summary-heading-actions">
+                            <span>{{ summaries | length }} replicate-group player records</span>
+                            {{ delete_filtered_results_form("fixed") }}
+                        </div>
                     </div>
 
                         <div class="table-scroll">
@@ -114,6 +117,7 @@
                                         <th>Profile</th>
                                         <th>Horizon</th>
                                         {{ regret_headers() }}
+                                        <th class="sticky-actions">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -138,6 +142,7 @@
                                             <td>{{ row.profile_label }}</td>
                                             <td>{{ row.horizon }}</td>
                                             {{ regret_cells(row) }}
+                                            <td class="sticky-actions">{{ delete_result_form("fixed", row.group_id) }}</td>
                                         </tr>
                                     {% endfor %}
                                 </tbody>

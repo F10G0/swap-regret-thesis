@@ -1,6 +1,6 @@
 # Performance cleanup report — 2026-09-08
 
-Historical benchmark evidence: this report describes the implementation measured at that time, not the current API. Current runs use a single realized-regret tracker and replicate-mean figures. References below to former evaluation modes and probability floors describe the old benchmark baseline, not supported configuration options today.
+Historical benchmark evidence: this report describes the implementation measured at that time, not the current API. Current runs use a single action-regret tracker and replicate-mean figures. References below to former evaluation modes and probability floors describe the old benchmark baseline, not supported configuration options today.
 
 ## Scope and working-tree preservation
 
@@ -92,11 +92,11 @@ After comparison:
 
 **Long adaptive Ito trajectories are not guaranteed to remain close to the old implementation.** The T=20,000 historical-frequency benchmarks with base seed 23 diverged in sampled actions at round 3,650 for K=3 and 18,688 for K=9. A paired replay using the old root solver inside the otherwise cleaned-up implementation found that same-input probability differences remained at most `1.00e-15` and `2.34e-15`, respectively, before the first differing sample. These tiny differences accumulate through importance-weighted loss updates, eventually changing action choices and the adaptive adversary's subsequent history.
 
-Consequently, final realized swap regret in those particular old/new Ito benchmark runs was 175/614 at K=3 and 830/801 at K=9. It would be incorrect to describe the complete long-run trajectory differences as tiny, or to claim byte-identical old/new Ito results. The tiny-difference guarantee is for the numerical KKT solution on the same input; long adaptive pathwise identity is a separate property. This is the only observed old/new execution exception. Serial/parallel execution of the **new** implementation remains byte-identical in the tested configurations, including Ito.
+Consequently, final swap action regret in those particular old/new Ito benchmark runs was 175/614 at K=3 and 830/801 at K=9. It would be incorrect to describe the complete long-run trajectory differences as tiny, or to claim byte-identical old/new Ito results. The tiny-difference guarantee is for the numerical KKT solution on the same input; long adaptive pathwise identity is a separate property. This is the only observed old/new execution exception. Serial/parallel execution of the **new** implementation remains byte-identical in the tested configurations, including Ito.
 
 ## Timings and final profiles
 
-Same machine and process configuration on both sides: Python 3.10.12, NumPy 2.2.6, CPU affinity 0–15, and OMP/OpenBLAS/MKL/NumExpr thread counts all one. Each cell is the mean of two serial single-replicate passes, T=20,000, historical-frequency adversary, bandit feedback, realized regret, base seed 23, and the benchmark's sparse recording policy. Timings include simulation and CSV output, not plotting or a process pool.
+Same machine and process configuration on both sides: Python 3.10.12, NumPy 2.2.6, CPU affinity 0–15, and OMP/OpenBLAS/MKL/NumExpr thread counts all one. Each cell is the mean of two serial single-replicate passes, T=20,000, historical-frequency adversary, bandit feedback, action regret, base seed 23, and the benchmark's sparse recording policy. Timings include simulation and CSV output, not plotting or a process pool.
 
 | Learner | K | Before (s) | After (s) | Speedup |
 |---|---:|---:|---:|---:|

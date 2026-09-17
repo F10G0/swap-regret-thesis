@@ -40,12 +40,13 @@
         </div>
         <div class="shared-result-filters">
             <div class="field"><label for="filter-scope">{{ "Environment" if experiment_mode == "adversarial" else "Game" }}</label><select id="filter-scope" disabled></select></div>
-            <div class="field"><label for="filter-feedback">Feedback</label><select id="filter-feedback" disabled></select></div>
+            <div class="field"><label for="filter-feedback">Feedback</label><select id="filter-feedback" name="feedback" form="figure-builder" disabled></select></div>
             {% if experiment_mode == "adversarial" %}
                 <div class="field"><label for="filter-action">Action</label><select id="filter-action" name="action" form="figure-builder" disabled></select></div>
             {% else %}
                 <div class="field"><label for="filter-player">Player</label><select id="filter-player" disabled></select></div>
             {% endif %}
+            <div class="field"><label for="filter-horizon">Horizon</label><select id="filter-horizon" name="horizon" form="figure-builder" disabled></select></div>
             <div class="field"><label for="filter-metric">Regret</label><select id="filter-metric" name="metric" form="figure-builder" disabled></select></div>
             <div class="field"><label for="filter-view">View</label><select id="filter-view" name="view" form="figure-builder" disabled></select></div>
         </div>
@@ -55,11 +56,12 @@
                 <label><input id="filter-compare-regrets" type="radio" name="comparison_mode" value="regrets" form="figure-builder" checked disabled><span>Regret notions</span></label>
                 <label><input id="filter-compare-profiles" type="radio" name="comparison_mode" value="profiles" form="figure-builder" disabled><span>Algorithm profiles</span></label>
                 {% if experiment_mode == "adversarial" %}<label><input id="filter-compare-actions" type="radio" name="comparison_mode" value="actions" form="figure-builder" disabled><span>Action spaces</span></label>{% endif %}
+                <label><input id="filter-compare-horizons" type="radio" name="comparison_mode" value="horizons" form="figure-builder" disabled><span>Horizons</span></label>
             </div>
         </fieldset>
         <details id="filter-batches" hidden>
             <summary>Compatible result set</summary>
-            <p class="hint">Keep runs with different horizons, seeds, or replicate sets separate.</p>
+            <p class="hint">Keep runs with different seeds or internal compatibility metadata separate.</p>
             <div class="field"><label for="filter-context">Result set</label><select id="filter-context" name="context_id" form="figure-builder" disabled></select></div>
         </details>
         <div class="field">
@@ -100,6 +102,21 @@
     {% endfor %}
 {% endmacro %}
 
+{% macro delete_result_form(kind, group_id) %}
+    <form method="post" action="{{ url_for('dashboard.delete_result_group', kind=kind, group_id=group_id) }}" data-confirm="Delete this experiment and all of its replicates{% if kind == 'fixed' %} for all players{% endif %}? Generated figures and caches will also be cleared. This cannot be undone.">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <button class="button-link button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>Delete experiment</button>
+    </form>
+{% endmacro %}
+
+{% macro delete_filtered_results_form(kind) %}
+    <form id="delete-filtered-experiments" method="post" action="{{ url_for('dashboard.delete_filtered_result_groups', kind=kind) }}" data-confirm="Delete the filtered experiments and all of their replicates? Generated figures and caches will also be cleared. This cannot be undone.">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <span data-filtered-group-inputs></span>
+        <button id="delete-filtered-experiments-button" class="button-link button-danger" type="submit" data-busy-control disabled>Delete filtered experiments (<span data-filtered-group-count>0</span>)</button>
+    </form>
+{% endmacro %}
+
 {% macro figure_dialog() %}
     <dialog id="figure-dialog" class="figure-dialog">
         <div class="dialog-heading">
@@ -112,9 +129,11 @@
 {% endmacro %}
 
 {% macro learning_configuration(form_state, current_algorithms, algorithm_labels, selected_algorithms, algorithm_count, max_horizon, max_replicates) %}
-    <div class="field-grid field-grid-two execution-size-grid">
+    <div class="field-grid execution-size-grid">
         <div class="field">
-            {{ number_input("horizon", "horizon", "Horizon", form_state.horizon, 1, max_horizon) }}
+            <label for="horizon">Horizon</label>
+            <input id="horizon" name="horizon" type="text" inputmode="numeric" value="{{ form_state.horizon }}" required>
+            <span class="hint">Enter one or more values up to {{ max_horizon }}; each horizon queues separately initialized experiments.</span>
         </div>
         <div class="field">
             {{ number_input("replicates", "replicates", "Replicates", form_state.replicates, 1, max_replicates) }}

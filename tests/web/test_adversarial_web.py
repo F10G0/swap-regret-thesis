@@ -107,7 +107,7 @@ def test_experiments_page_switches_to_one_player_controls(tmp_path):
         assert rendered.count('name="seed"') == 1
         assert 'id="experiment-seed" name="seed" form="experiment-form"' in rendered
         assert rendered.index('class="brand section-heading sidebar-heading"') < rendered.index('id="experiment-seed"') < rendered.index('id="experiment-mode"')
-        assert 'class="field-grid field-grid-two execution-size-grid"' in rendered
+        assert 'class="field-grid execution-size-grid"' in rendered
         assert rendered.index('id="horizon"') < rendered.index('id="replicates"') < rendered.index('id="players"')
         assert rendered.count("Reset all experiment results") == 1
         assert rendered.count('action="/reset"') == 1
@@ -176,8 +176,10 @@ def test_algorithm_options_follow_feedback_mode(tmp_path, mode) -> None:
     initial_html = initial_page.get_data(as_text=True)
     assert "Full information" in initial_html and "Bandit feedback" in initial_html
     if mode == "fixed":
+        assert data["gamePresentations"]["matching_pennies"]["label"] == "Matching Pennies"
         assert data["gamePresentations"]["rps"]["label"] == "Rock–Paper–Scissors"
         assert data["gamePresentations"]["rpsls"]["label"] == "Rock–Paper–Scissors–Lizard–Spock"
+        assert '<option value="matching_pennies"' in initial_html and ">Matching Pennies</option>" in initial_html
     else:
         assert "Historical-frequency" in initial_html and "Lazy random walk" in initial_html
     response = client.post(

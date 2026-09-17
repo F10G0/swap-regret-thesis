@@ -2,7 +2,7 @@
 
 Utilities for regret, empirical play, and equilibrium convergence.
 
-`RegretBundle(n_actions)` maintains one cumulative realized replacement-gain matrix. Runners update it every round and extract summaries at every round through horizon 500, or at most 500 geometric checkpoints for longer runs.
+`RegretBundle(n_actions)` maintains one cumulative action-regret replacement-gain matrix. Runners update it every round and extract summaries at every round through horizon 500, or at most 500 geometric checkpoints for longer runs.
 
 Regret updates trust sampled action indices and environment payoff vectors; they perform only the replacement-gain arithmetic. Fixed-game result loaders validate stored cumulative histogram trajectories before equilibrium analysis.
 
@@ -17,7 +17,7 @@ internal regret = max_{i,j} G[i,j]
 swap regret     = sum_i max_j G[i,j]
 ```
 
-Each round therefore updates only `G[I_t, :]`. The evaluator uses the full payoff vector offline, while bandit learners still observe only their sampled reward. Regret and empirical-play analyses refer to the same realized trajectory. Replicate curves and final summaries report sample means, without confidence bands.
+Each round therefore updates only `G[I_t, :]`. The evaluator uses the full payoff vector offline, while bandit learners still observe only their sampled reward. Regret and empirical-play analyses refer to the same sampled-action trajectory. Replicate curves and final summaries report replicate-mean action regret, a Monte Carlo estimate of expected action regret, without confidence bands.
 
 ## Empirical Play and Equilibria
 

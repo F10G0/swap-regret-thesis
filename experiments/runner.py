@@ -19,9 +19,13 @@ class ExperimentCancelled(RuntimeError):
     pass
 
 
+def round_progress_interval(horizon: int) -> int:
+    return max(10_000, horizon // 100)
+
+
 def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, algorithm_name: str, players: list[Algorithm], recorder: CsvRecorder, horizon: int,
              metadata: dict | None = None, should_cancel: Callable[[], bool] | None = None,
-             max_recorded_points: int = MAX_RECORDED_POINTS) -> None:
+             max_recorded_points: int = MAX_RECORDED_POINTS, report_rounds: Callable[[int], None] | None = None) -> None:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
     if feedback_mode not in {"full_information", "bandit"}:
@@ -39,6 +43,8 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
     joint_action_counts = np.zeros(game.n_actions, dtype=np.int64)
     histogram_horizons = []
     histogram_counts = []
+    progress_interval = round_progress_interval(horizon)
+    reported_rounds = 0
 
     for t in range(1, horizon + 1):
         if should_cancel is not None and should_cancel():
@@ -83,3 +89,7 @@ def run_game(game_name: str, feedback_mode: str, game: FixedGameEnvironment, alg
                 **histograms,
                 **regret_summary,
             })
+
+        if report_rounds is not None and (t - reported_rounds >= progress_interval or t == horizon):
+            report_rounds(t - reported_rounds)
+            reported_rounds = t

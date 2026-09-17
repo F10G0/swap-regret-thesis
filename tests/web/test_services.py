@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import shutil
 from threading import Event
 import time
 
@@ -7,9 +8,10 @@ import pytest
 from pypdf import PdfReader
 
 from web.jobs import Job, JobManager, ServiceBusyError
+from experiments.scenarios.adversarial import run_adversarial_experiment
 from experiments.scenarios.cross_play import run_cross_play_experiment
-from tests.web.support import block_job_queue, create_service, create_test_app, wait_for_async_result, wait_for_job
-from web.validation import ExperimentForm
+from tests.web.support import block_job_queue, create_service, create_test_app, csrf_token, wait_for_async_result, wait_for_job
+from web.validation import AdversarialExperimentForm, ExperimentForm
 
 
 def write_figure_pair(output_path, content: bytes) -> None:
@@ -130,12 +132,13 @@ def test_job_manager_reports_progress_and_cancels() -> None:
 
     def operation(job) -> None:
         job.advance()
+        job.update_round_progress(25, 120)
         started.set()
         while not job.cancelled:
             time.sleep(0.001)
         job.check_cancelled()
 
-    submitted = manager.submit("cancellable", operation, total=4)
+    submitted = manager.submit("cancellable", operation, total=4, rounds_total=100)
     assert started.wait(timeout=1)
     manager.cancel(submitted.id)
 
@@ -144,6 +147,73 @@ def test_job_manager_reports_progress_and_cancels() -> None:
 
     assert job.completed == 1
     assert job.total == 4
+    assert (job.rounds_completed, job.rounds_total, job.eta_seconds) == (25, 100, 120)
+
+
+def test_detailed_progress_threshold_counts_only_missing_runs(tmp_path, monkeypatch) -> None:
+    service = create_service(tmp_path)
+    callbacks = []
+
+    def run_replicates_without_work(function, tasks, *, completed, round_progress, **kwargs):
+        callbacks.append(round_progress is not None)
+        if round_progress is not None:
+            round_progress(sum(task["horizon"] for task in tasks))
+        for _ in tasks:
+            completed()
+        return []
+
+    monkeypatch.setattr("web.services.run_replicates", run_replicates_without_work)
+    below = service.submit_experiment(ExperimentForm("rps", "full_information", ("hedge", "hedge"), 99_999, 1, 1))
+    assert below.rounds_total == 0
+    assert wait_for_job(service, below.id) == "succeeded"
+
+    threshold = service.submit_experiment(ExperimentForm("rps", "full_information", ("hedge", "hedge"), 50_000, 2, 2))
+    assert threshold.rounds_total == 100_000
+    assert wait_for_job(service, threshold.id) == "succeeded"
+    completed = service.jobs.get(threshold.id)
+    assert (completed.rounds_completed, completed.eta_seconds) == (100_000, 0)
+
+    skipped_form = ExperimentForm("rps", "full_information", ("hedge", "hedge"), 100_000, 3, 2)
+    existing = service._spec(skipped_form, 0)
+    service.raw_dir.mkdir(parents=True, exist_ok=True)
+    (service.raw_dir / f"{existing.run_id}.csv").touch()
+    skipped = service.submit_experiment(skipped_form)
+    assert (skipped.total, skipped.rounds_total) == (1, 100_000)
+    assert wait_for_job(service, skipped.id) == "succeeded"
+    assert callbacks == [False, True, True]
+
+
+def test_horizon_sweeps_expand_to_ordinary_tasks_with_shared_seed_and_replicates(tmp_path, monkeypatch) -> None:
+    service = create_service(tmp_path)
+    captured = []
+    monkeypatch.setattr("web.services.ROUND_PROGRESS_THRESHOLD", 1)
+
+    def record_tasks(function, tasks, *, completed, **kwargs):
+        captured.append((function, tasks))
+        for _ in tasks:
+            completed()
+        return []
+
+    monkeypatch.setattr("web.services.run_replicates", record_tasks)
+    fixed = ExperimentForm("rps", "full_information", ("hedge", "hedge"), 2, 17, 2, (2, 5))
+    existing = service._spec(fixed, 0, 2)
+    service.raw_dir.mkdir(parents=True, exist_ok=True)
+    (service.raw_dir / f"{existing.run_id}.csv").touch()
+    fixed_job = service.submit_experiment(fixed)
+    assert wait_for_job(service, fixed_job.id) == "succeeded"
+
+    one_player = AdversarialExperimentForm(
+        "historical_frequency_v3", "full_information", "hedge", (2, 4), 3, 17, 2, (3, 6))
+    one_player_job = service.submit_adversarial_experiment(one_player)
+    assert wait_for_job(service, one_player_job.id) == "succeeded"
+
+    fixed_tasks, one_player_tasks = captured[0][1], captured[1][1]
+    assert [(task["horizon"], task["replicate"]) for task in fixed_tasks] == [(2, 1), (5, 0), (5, 1)]
+    assert {(task["horizon"], task["n_actions"], task["replicate"]) for task in one_player_tasks} == {
+        (horizon, actions, replicate) for horizon in (3, 6) for actions in (2, 4) for replicate in (0, 1)}
+    assert {task["seed"] for _, tasks in captured for task in tasks} == {17}
+    assert (fixed_job.total, fixed_job.rounds_total) == (3, 12)
+    assert (one_player_job.total, one_player_job.rounds_total) == (8, 36)
 
 
 def test_clear_results_removes_derived_tree_and_preserves_inputs(tmp_path: Path) -> None:
@@ -169,6 +239,165 @@ def test_clear_results_removes_derived_tree_and_preserves_inputs(tmp_path: Path)
     assert input_path.is_file()
     remaining_files = {path for path in tmp_path.rglob("*") if path.is_file()}
     assert remaining_files == placeholders | {input_path}
+
+
+def test_delete_fixed_group_removes_all_replicates_and_clears_only_derived_artifacts(tmp_path: Path) -> None:
+    service = create_service(tmp_path)
+    custom_game = service.create_custom_game("temporary experiment", 2, [2, 2], 7)
+    custom_path = service.game_catalog.custom_path(custom_game.id)
+    target_paths = [run_cross_play_experiment(custom_game.id, ["hedge", "hedge"], horizon=3, seed=11,
+        replicate=replicate, output_dir=service.raw_dir, custom_game_dir=service.game_catalog.custom_game_dir,
+        feedback_mode="full_information") for replicate in (0, 1)]
+    duplicate = service.raw_dir / "duplicate.csv"
+    shutil.copyfile(target_paths[0], duplicate)
+    unrelated_fixed = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=3, seed=12,
+        output_dir=service.raw_dir, feedback_mode="full_information")
+    unrelated_adversarial = run_adversarial_experiment("hedge", horizon=3, seed=13,
+        output_dir=service.adversarial_raw_dir)
+    summaries = [row for row in service.result_snapshot().summaries(grouped=True) if row["game"] == custom_game.id]
+    assert [row["player"] for row in summaries] == [0, 1]
+    assert len({row["group_id"] for row in summaries}) == 1
+    group_id = summaries[0]["group_id"]
+    assert set(service.result_snapshot().detail_paths(group_id)) == {*target_paths, duplicate}
+
+    artifacts = (
+        service.figure_dir / "generated.png",
+        service.adversarial_dir / "cache" / "rows.json",
+        service.results_dir / "cache" / "figure_builder" / "figure.pdf",
+        service.results_dir / "cache" / "equilibrium_distance" / "distance.json",
+    )
+    for path in artifacts:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"derived")
+
+    assert service.delete_result_group("fixed", group_id) == 3
+
+    assert not any(path.exists() for path in (*target_paths, duplicate, *artifacts))
+    assert unrelated_fixed.is_file() and unrelated_adversarial.is_file() and custom_path.is_file()
+    assert all(row["game"] != custom_game.id for row in service.result_snapshot().summaries(grouped=True))
+
+
+@pytest.mark.parametrize("kind", ["fixed", "adversarial"])
+def test_delete_result_group_route_removes_one_visible_group_and_redirects(tmp_path: Path, kind: str) -> None:
+    app, service = create_test_app(tmp_path)
+    client = app.test_client()
+    if kind == "fixed":
+        target_paths = [run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=3, seed=21,
+            replicate=replicate, output_dir=service.raw_dir, feedback_mode="full_information") for replicate in (0, 1)]
+        unrelated = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=3, seed=22,
+            output_dir=service.raw_dir, feedback_mode="full_information")
+        group_id = next(row["group_id"] for row in service.result_snapshot().summaries(grouped=True) if row["seed"] == 21)
+        location = "/"
+    else:
+        target_paths = [run_adversarial_experiment("hedge", horizon=3, seed=21, replicate=replicate,
+            output_dir=service.adversarial_raw_dir) for replicate in (0, 1)]
+        unrelated = run_adversarial_experiment("hedge", horizon=3, seed=22,
+            output_dir=service.adversarial_raw_dir)
+        group_id = next(row["group_id"] for row in service.result_snapshot("adversarial").summaries(grouped=True)
+                        if row["base_learner_seed"] == 21)
+        location = "/?mode=adversarial"
+
+    page = client.get(location).get_data(as_text=True)
+    action = f'/experiment-groups/{kind}/{group_id}/delete'
+    expected_rows = 2 if kind == "fixed" else 1
+    expected_delete_controls = 4 if kind == "fixed" else 2
+    assert page.count(f'action="{action}"') == expected_rows
+    assert page.count(">Delete experiment</button>") == expected_delete_controls
+    confirmation = "Delete this experiment and all of its replicates"
+    expected_confirmation = f"{confirmation} for all players?" if kind == "fixed" else f"{confirmation}?"
+    assert expected_confirmation in page
+    assert page.count('<th class="sticky-actions">Actions</th>') == 1
+    assert page.count('<td class="sticky-actions">') == (4 if kind == "fixed" else 2)
+    assert f'action="/experiment-groups/{kind}/delete-filtered"' in page
+    response = client.post(action, data={"_csrf_token": csrf_token(client)})
+    assert response.status_code == 302 and response.headers["Location"] == location
+    assert not any(path.exists() for path in target_paths)
+    assert unrelated.is_file()
+
+
+@pytest.mark.parametrize("kind", ["fixed", "adversarial"])
+def test_bulk_group_deletion_is_atomic_deduplicated_and_cleans_once(tmp_path: Path, monkeypatch, kind: str) -> None:
+    service = create_service(tmp_path)
+    if kind == "fixed":
+        run = lambda seed, replicate: run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2,
+            seed=seed, replicate=replicate, output_dir=service.raw_dir, feedback_mode="full_information")
+        snapshot = lambda: service.result_snapshot()
+        seed_field = "seed"
+    else:
+        run = lambda seed, replicate: run_adversarial_experiment("hedge", horizon=2, seed=seed,
+            replicate=replicate, output_dir=service.adversarial_raw_dir)
+        snapshot = lambda: service.result_snapshot("adversarial")
+        seed_field = "base_learner_seed"
+    selected = {seed: [run(seed, replicate) for replicate in (0, 1)] for seed in (31, 32)}
+    unrelated = run(33, 0)
+    groups = {row[seed_field]: row["group_id"] for row in snapshot().summaries(grouped=True)}
+    artifact = service.results_dir / "cache" / "figure_builder" / "generated.png"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"derived")
+    cleanup = service._clear_derived_artifacts
+    cleanup_calls = 0
+
+    def counted_cleanup():
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        cleanup()
+
+    monkeypatch.setattr(service, "_clear_derived_artifacts", counted_cleanup)
+    with pytest.raises(KeyError):
+        service.delete_result_groups(kind, [groups[31], "0" * 16])
+    assert all(path.is_file() for paths in selected.values() for path in paths)
+    assert cleanup_calls == 0
+
+    assert service.delete_result_groups(kind, [groups[31], groups[31], groups[32]]) == 2
+    assert not any(path.exists() for paths in selected.values() for path in paths)
+    assert unrelated.is_file() and not artifact.exists() and cleanup_calls == 1
+
+
+@pytest.mark.parametrize("kind,location", [("fixed", "/"), ("adversarial", "/?mode=adversarial")])
+def test_filtered_deletion_route_submits_repeated_group_ids(tmp_path: Path, monkeypatch, kind: str, location: str) -> None:
+    app, service = create_test_app(tmp_path)
+    submitted = []
+
+    def delete(submitted_kind, group_ids):
+        submitted.append((submitted_kind, group_ids))
+        return len(group_ids)
+
+    monkeypatch.setattr(service, "delete_result_groups", delete)
+    client = app.test_client()
+    response = client.post(f"/experiment-groups/{kind}/delete-filtered", data={
+        "_csrf_token": csrf_token(client), "group_id": ["a" * 16, "b" * 16],
+    })
+    assert response.status_code == 302 and response.headers["Location"] == location
+    assert submitted == [(kind, ["a" * 16, "b" * 16])]
+
+
+def test_delete_result_group_rejects_busy_and_invalid_requests(tmp_path: Path) -> None:
+    app, service = create_test_app(tmp_path)
+    target = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=3,
+        output_dir=service.raw_dir, feedback_mode="full_information")
+    group_id = service.result_snapshot().records[0].group_id
+    outside = tmp_path / "outside.csv"
+    outside.write_text("preserve", encoding="utf-8")
+    blocker, release = block_job_queue(service.jobs)
+    client = app.test_client()
+    page = client.get("/").get_data(as_text=True)
+    action = f'/experiment-groups/fixed/{group_id}/delete'
+    form = page.split(f'action="{action}"', 1)[1].split("</form>", 1)[0]
+    assert "data-busy-control" in form and "disabled" in form
+    response = client.post(action, data={"_csrf_token": csrf_token(client)})
+    assert response.status_code == 302 and target.is_file()
+    with pytest.raises(ServiceBusyError):
+        service.delete_result_groups("fixed", [group_id])
+    release.set()
+    assert wait_for_job(service, blocker.id) == "succeeded"
+
+    with pytest.raises(ValueError, match="kind"):
+        service.delete_result_group("unknown", group_id)
+    with pytest.raises(ValueError, match="group"):
+        service.delete_result_group("fixed", "../../outside")
+    with pytest.raises(KeyError):
+        service.delete_result_group("fixed", "0" * 16)
+    assert target.is_file() and outside.read_text(encoding="utf-8") == "preserve"
 
 
 def test_custom_game_deletion_requires_its_experiments_to_be_deleted_first(tmp_path: Path) -> None:
@@ -377,43 +606,6 @@ def test_equilibrium_distance_reuses_paired_cache_and_clears_it(tmp_path, monkey
     assert first.read_bytes() == first.with_suffix(".pdf").read_bytes() == b"distance"
     service.clear_results()
     assert not first.exists() and not first.with_suffix(".pdf").exists()
-
-
-@pytest.mark.parametrize("grouped", [False, True])
-def test_annotated_equilibrium_figures_bypass_old_render_cache_without_deleting_it(tmp_path, monkeypatch, grouped):
-    from experiments.plots import plot_equilibrium_convergence
-
-    service = create_service(tmp_path)
-    result_path = run_cross_play_experiment(
-        "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
-        feedback_mode="full_information",
-    )
-    if grouped:
-        group_id = service.result_snapshot().summaries(grouped=True)[0]["group_id"]
-        _, output_path, stem = service._group_convergence_figure_path(group_id)
-        legacy_path = service.detail_figure_dir / f"{stem}_replicate_mean_equilibrium_distance.png"
-        request_figure = lambda: service.request_group_equilibrium_convergence_figure(group_id)
-    else:
-        _, output_path = service._convergence_figure_path(result_path.name)
-        legacy_path = service.detail_figure_dir / f"{result_path.stem}_equilibrium_distance.png"
-        request_figure = lambda: service.request_equilibrium_convergence_figure(result_path.name)
-    service.detail_figure_dir.mkdir(parents=True, exist_ok=True)
-    write_figure_pair(legacy_path, b"old unannotated figure")
-    calls = []
-
-    def fake_plot(input_paths, path, **kwargs):
-        calls.append(input_paths)
-        write_figure_pair(path, b"annotated figure")
-
-    monkeypatch.setattr(plot_equilibrium_convergence, "plot_result_equilibrium_distance", fake_plot)
-    generated, error = wait_for_equilibrium_figure(request_figure)
-    assert error is None and generated == output_path
-    assert generated != legacy_path
-    assert generated.read_bytes() == b"annotated figure"
-    assert generated.with_suffix(".pdf").read_bytes() == b"annotated figure"
-    assert legacy_path.read_bytes() == legacy_path.with_suffix(".pdf").read_bytes() == b"old unannotated figure"
-    assert wait_for_equilibrium_figure(request_figure) == (generated, None)
-    assert len(calls) == 1
 
 
 def test_dashboard_keeps_active_jobs_outside_display_limit(tmp_path, monkeypatch):

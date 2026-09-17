@@ -5,7 +5,7 @@ import pytest
 from metrics.regret import RegretBundle
 
 
-def test_realized_replacement_regret_matches_one_round_hand_calculation() -> None:
+def test_action_replacement_regret_matches_one_round_hand_calculation() -> None:
     bundle = RegretBundle(n_actions=2)
 
     bundle.update(0, np.array([0.0, 1.0]))
@@ -25,7 +25,7 @@ def test_regret_definitions_are_distinct() -> None:
     assert bundle.swap_regret == 9.0
 
 
-def test_realized_replacement_gains_accumulate_by_sampled_source_action() -> None:
+def test_action_replacement_gains_accumulate_by_sampled_source_action() -> None:
     bundle = RegretBundle(n_actions=2)
 
     bundle.update(0, np.array([0.0, 1.0]))
@@ -50,7 +50,7 @@ def test_summary_reports_cumulative_and_average_regret() -> None:
     }
 
 
-def test_matrix_update_matches_randomized_realized_reference() -> None:
+def test_matrix_update_matches_randomized_action_regret_reference() -> None:
     rng = np.random.default_rng(42)
     bundle = RegretBundle(9)
     matrix = np.zeros((9, 9))
