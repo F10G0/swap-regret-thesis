@@ -15,6 +15,9 @@ venv/
 .venv/
 .env
 
+# frontend test dependencies
+node_modules/
+
 # =========================
 # OS junk
 # =========================

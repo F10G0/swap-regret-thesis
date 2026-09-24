@@ -1,0 +1,11 @@
+{
+  "name": "swap-regret-thesis-frontend-tests",
+  "private": true,
+  "description": "Local Node.js dependencies for frontend tests only",
+  "engines": {
+    "node": ">=12.22.0"
+  },
+  "devDependencies": {
+    "jsdom": "19.0.0"
+  }
+}

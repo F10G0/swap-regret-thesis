@@ -1,12 +1,12 @@
-import json
 from io import BytesIO
 from pathlib import Path
 import pytest
 from pypdf import PdfReader
 
+from experiments.game_catalog import MAX_CUSTOM_ACTIONS_PER_PLAYER
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.spec import MAX_RUN_ID_BYTES
-from tests.web.support import block_job_queue, create_test_app, csrf_token, dashboard_data, wait_for_http_response, wait_for_job
+from tests.web.support import block_job_queue, browse_url, create_test_app, csrf_token, dashboard_data, wait_for_http_response, wait_for_job
 from web.validation import (
     parse_adversarial_experiment_form,
     parse_experiment_form,
@@ -146,11 +146,42 @@ def test_dashboard_group_details_downloads_and_figures(tmp_path):
         "rps", ["hedge", "hedge"], horizon=2, replicate=r, output_dir=service.raw_dir,
      feedback_mode="full_information") for r in (0, 1)]
     client = app.test_client()
-    summaries = dashboard_data(client.get("/"))["summaries"]
-    assert len(summaries) == 2
-    summary = summaries[0]
-    assert summary["replicates"] == [0, 1]
+    builder_catalog = client.get("/figure-builder/options?mode=fixed").get_json()
+    page = client.get(browse_url(service))
+    assert "summaries" not in dashboard_data(page)
+    source_summaries = service.result_snapshot().summaries(grouped=True)
+    assert page.data.count(b'class="summary-row"') == len(source_summaries)
+    for source in source_summaries:
+        detail_url = f'/experiment-groups/fixed/{source["group_id"]}/players/{source["player"]}'
+        assert detail_url.encode() in page.data
+        for metric in ("external", "internal", "swap"):
+            for view in ("average", "sqrt_scaling"):
+                key = f"{view}_{metric}"
+                expected = source[f"average_{metric}_regret"] * (
+                    1 if view == "average" else source["horizon"] ** 0.5)
+                assert f'{expected:.6f}'.encode() in page.data
+    assert len(source_summaries) == 2
+    response = client.get(f'/experiment-groups/fixed/{source_summaries[0]["group_id"]}/players/0')
+    assert response.status_code == 200
+    assert response.cache_control.no_store
+    summary = response.get_json()
+    source = source_summaries[0]
+    assert {key: summary[key] for key in (
+        "group_id", "player", "game", "feedback_mode", "horizon", "seed",
+        "replicate_label", "replicate_count", "stationary_method", "algorithm_profile",
+    )} == {key: source[key] for key in (
+        "group_id", "player", "game", "feedback_mode", "horizon", "seed",
+        "replicate_label", "replicate_count", "stationary_method", "algorithm_profile",
+    )}
+    for metric in ("external", "internal", "swap"):
+        for view in ("average", "sqrt_scaling"):
+            expected = source[f"average_{metric}_regret"] * (
+                1 if view == "average" else source["horizon"] ** 0.5)
+            assert summary["display_regrets"][f"{view}_{metric}"] == expected
     assert {run["experiment"] for run in summary["runs"]} == {p.name for p in paths}
+    assert [run["replicate"] for run in summary["runs"]] == [0, 1]
+    assert all(set(run) == {"experiment", "replicate", "download_url"} for run in summary["runs"])
+    assert client.get("/figure-builder/options?mode=fixed").get_json() == builder_catalog
     for run in summary["runs"]:
         assert client.get(run["download_url"]).data == (service.raw_dir / run["experiment"]).read_bytes()
     heatmap = client.get(summary["joint_actions_url"])
@@ -165,6 +196,55 @@ def test_dashboard_group_details_downloads_and_figures(tmp_path):
         information = " ".join(pages[0].extract_text().split())
         assert figure in information
         assert "Aggregation: Replicate mean" in information
+
+
+def test_fixed_detail_endpoint_rejects_invalid_and_stale_requests(tmp_path):
+    app, service = create_test_app(tmp_path)
+    run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=2, output_dir=service.raw_dir,
+        feedback_mode="full_information",
+    )
+    client = app.test_client()
+    group_id = service.result_snapshot().groups("dashboard")[0].records[0].group_id
+    base = f"/experiment-groups/fixed/{group_id}/players"
+    for url in (f"/experiment-groups/fixed/not-a-group/players/0",
+                f"{base}/invalid", f"{base}/-1", f"{base}/2"):
+        response = client.get(url)
+        assert response.status_code == 400
+        assert "error" in response.get_json()
+    absent = client.get("/experiment-groups/fixed/0000000000000000/players/0")
+    assert absent.status_code == 404
+    assert "Refresh results" in absent.get_json()["error"]
+    assert service.delete_result_group("fixed", group_id) == 1
+    stale = client.get(f"{base}/0")
+    assert stale.status_code == 404
+    assert "Refresh results" in stale.get_json()["error"]
+
+
+def test_dashboard_run_projection_preserves_duplicate_membership(tmp_path):
+    app, service = create_test_app(tmp_path)
+    paths = [run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=2, replicate=replicate, output_dir=service.raw_dir,
+        feedback_mode="full_information") for replicate in (0, 1)]
+    duplicate = service.raw_dir / "zz_duplicate.csv"
+    duplicate.write_bytes(paths[0].read_bytes())
+    snapshot = service.result_snapshot()
+    group = snapshot.groups("dashboard")[0]
+    group_id = group.records[0].group_id
+    assert group.paths == paths
+    assert set(snapshot.detail_paths(group_id)) == {*paths, duplicate}
+    client = app.test_client()
+    builder_catalog = client.get("/figure-builder/options?mode=fixed").get_json()
+    page = client.get(browse_url(service))
+    assert "summaries" not in dashboard_data(page)
+    assert page.data.count(b'class="summary-row"') == 2
+    for player in (0, 1):
+        row = client.get(f"/experiment-groups/fixed/{group_id}/players/{player}").get_json()
+        assert [run["experiment"] for run in row["runs"]] == [path.name for path in paths]
+        assert [run["replicate"] for run in row["runs"]] == [0, 1]
+    assert client.get("/figure-builder/options?mode=fixed").get_json() == builder_catalog
+    assert service.delete_result_group("fixed", group_id) == 3
+    assert not any(path.is_file() for path in (*paths, duplicate))
 
 
 def test_custom_game_generator_uses_header_seed_and_zero_sum_default(tmp_path):
@@ -184,6 +264,83 @@ def test_custom_game_generator_uses_header_seed_and_zero_sum_default(tmp_path):
     })
     assert response.status_code == 400
     assert '<option value="general_sum" selected>General-sum</option>' in response.get_data(as_text=True)
+
+
+def test_corrupt_custom_archive_warns_on_page_without_hiding_valid_game(tmp_path):
+    app, service = create_test_app(tmp_path)
+    valid = service.create_custom_game("Usable Game", 2, [2, 2], 7)
+    (service.game_catalog.custom_game_dir / "broken.npz").write_bytes(b"PK\x03\x04truncated")
+    client = app.test_client()
+
+    page = client.get("/custom-games")
+    dashboard = client.get("/")
+
+    assert page.status_code == dashboard.status_code == 200
+    assert b"Game file warnings" in page.data
+    assert b"Skipped broken.npz:" in page.data
+    assert valid.id.encode() in page.data
+    assert valid.id.encode() in dashboard.data
+
+
+def test_custom_game_action_limit_is_rendered_from_backend_and_enforced(tmp_path):
+    app, service = create_test_app(tmp_path)
+    client = app.test_client()
+    page = client.get("/custom-games").get_data(as_text=True)
+    assert f'data-max-actions="{MAX_CUSTOM_ACTIONS_PER_PLAYER}"' in page
+    token = csrf_token(client)
+    form = {"_csrf_token": token, "payoff_structure": "general_sum",
+            "n_players": "2", "seed": "7"}
+
+    accepted = client.post("/custom-games", data=form | {
+        "name": "Limit 100", "action_counts": ["100", "1"],
+    })
+    rejected = client.post("/custom-games", data=form | {
+        "name": "Limit 101", "action_counts": ["101", "1"],
+    })
+
+    assert accepted.status_code == 302
+    assert rejected.status_code == 400
+    assert b"must not exceed 100" in rejected.data
+    assert service.game_definitions["custom__limit-100"].action_counts == (100, 1)
+    assert "custom__limit-101" not in service.game_definitions
+
+
+@pytest.mark.parametrize("counts,algorithms,bad_player", [
+    ([1, 2], ["bm_optimistic_hedge", "regret_matching"], 0),
+    ([2, 1], ["regret_matching", "bm_optimistic_hedge"], 1),
+])
+def test_bm_optimistic_hedge_rejects_one_action_player_before_queueing(
+    tmp_path, counts, algorithms, bad_player,
+):
+    app, service = create_test_app(tmp_path)
+    definition = service.create_custom_game("Mixed Game", 2, counts, 7)
+    client = app.test_client()
+    response = client.post("/", headers={"Accept": "application/json"}, data=VALID_FORM | {
+        "_csrf_token": csrf_token(client), "game": definition.id, "algorithm_names": algorithms,
+    })
+
+    assert response.status_code == 400
+    assert "BM-OptHedge" in response.json["error"]
+    assert "at least 2 actions" in response.json["error"]
+    assert f"player {bad_player}" in response.json["error"]
+    assert service.jobs.recent() == []
+    assert list(service.raw_dir.glob("*.csv")) == []
+
+
+@pytest.mark.parametrize("counts,algorithms", [
+    ([1, 2], ["regret_matching", "bm_optimistic_hedge"]),
+    ([2, 2], ["bm_optimistic_hedge", "bm_optimistic_hedge"]),
+])
+def test_compatible_one_action_or_k2_bm_experiment_still_runs(tmp_path, counts, algorithms):
+    app, service = create_test_app(tmp_path)
+    definition = service.create_custom_game("Allowed Game", 2, counts, 7)
+    client = app.test_client()
+    response = client.post("/", data=VALID_FORM | {
+        "_csrf_token": csrf_token(client), "game": definition.id, "algorithm_names": algorithms,
+    })
+
+    assert response.status_code == 302
+    assert wait_for_job(service, service.jobs.recent()[0].id) == "succeeded"
 
 
 @pytest.mark.parametrize("players,counts,structure", [(3, [2, 3, 2], "general_sum"), (2, [3], "zero_sum")])
@@ -307,14 +464,16 @@ def test_custom_three_player_dashboard_experiment_includes_equilibrium_convergen
     job = service.jobs.recent()[0]
     assert wait_for_job(service, job.id) == "succeeded"
     result_path = next(service.raw_dir.glob("*.csv"))
-    page = client.get("/").get_data(as_text=True)
-    payload = page.split('<script id="dashboard-data" type="application/json">', 1)[1].split("</script>", 1)[0]
-    dashboard_data = json.loads(payload)
-    summary = next(summary for summary in dashboard_data["summaries"] if summary["game"] == definition.id)
+    page = client.get("/")
+    assert "summaries" not in dashboard_data(page)
+    group_id = next(row["group_id"] for row in service.result_snapshot().summaries(grouped=True)
+                    if row["game"] == definition.id)
+    summary = client.get(f"/experiment-groups/fixed/{group_id}/players/0").get_json()
     distance_response, _ = wait_for_http_response(client, summary["equilibrium_distance_url"])
-    assert summary["n_players"] == 3
+    assert len(summary["algorithm_profile"]) == 3
     assert summary["algorithm_profile"] == ["hedge", "hedge", "hedge"]
     assert summary["equilibrium_distance_url"].startswith("/experiment-groups/")
+    assert summary["equilibrium_distance_unavailable"] is None
     assert summary["joint_actions_url"] is None
     assert distance_response.status_code == 200
     assert distance_response.content_type == "image/png"
@@ -348,3 +507,44 @@ def test_eight_player_srm_experiment_uses_length_safe_filename(tmp_path: Path) -
     assert wait_for_job(service, job.id) == "succeeded"
     result_path = next(service.raw_dir.glob("*.csv"))
     assert len(result_path.name.encode("utf-8")) <= MAX_RUN_ID_BYTES + len(".csv")
+
+
+def test_large_custom_game_keeps_results_but_equilibrium_analysis_is_unavailable(tmp_path: Path) -> None:
+    app, service = create_test_app(tmp_path)
+    definition = service.create_custom_game("Large Analysis", 2, [100, 100], 7, "zero_sum")
+    result_path = run_cross_play_experiment(
+        definition.id, ["hedge", "hedge"], horizon=2, seed=42, replicate=0,
+        output_dir=service.raw_dir, custom_game_dir=service.game_catalog.custom_game_dir,
+        feedback_mode="full_information",
+    )
+    client = app.test_client()
+
+    page = client.get("/")
+    assert "summaries" not in dashboard_data(page)
+    group_id = next(row["group_id"] for row in service.result_snapshot().summaries(grouped=True)
+                    if row["game"] == definition.id)
+    summary = client.get(f"/experiment-groups/fixed/{group_id}/players/0").get_json()
+    reason = summary["equilibrium_distance_unavailable"]
+
+    assert page.status_code == 200
+    assert definition.id in service.game_definitions
+    assert definition.id.encode() in client.get("/custom-games").data
+    assert result_path.is_file()
+    assert summary["equilibrium_distance_url"] is None
+    assert summary["equilibrium_distance_pdf_url"] is None
+    assert "CE equilibrium-distance analysis is unavailable" in reason
+    assert "analysis budget" in reason
+    assert "game and regret results remain available" in reason
+    assert summary["joint_actions_url"] is not None
+    assert client.get(summary["joint_actions_url"]).status_code == 200
+    assert client.get(summary["runs"][0]["download_url"]).status_code == 200
+
+    for url in (
+        f"/experiments/{result_path.name}/equilibrium-distance.png",
+        f"/experiment-groups/{summary['group_id']}/equilibrium-distance.png",
+    ):
+        response = client.get(url)
+        assert response.status_code == 422
+        assert response.json["status"] == "unavailable"
+        assert "analysis budget" in response.json["error"]
+    assert service._convergence_futures == {}

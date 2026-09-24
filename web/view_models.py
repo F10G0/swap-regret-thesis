@@ -16,6 +16,7 @@ from experiments.game_catalog import (
     MAX_CUSTOM_PAYOFF_VALUES,
     MAX_CUSTOM_PLAYERS,
 )
+from metrics.equilibrium_distance import EquilibriumAnalysisUnavailable
 from web.services import DashboardService
 
 
@@ -72,48 +73,36 @@ def dashboard_context(
     service: DashboardService,
     form_state: dict | None = None,
     inline_error: str | None = None,
+    *,
+    results=None,
+    browse_page=None,
+    browsing=None,
 ) -> dict:
     game_definitions = service.game_definitions
     games = list(game_definitions)
     game_presentations = service.game_presentations
-    results = service.result_snapshot()
+    results = service.result_snapshot() if results is None else results
     summaries = []
-    for summary in results.summaries(grouped=True):
-        matrix_figures_available = service.supports_matrix_figures(summary["game"])
-        equilibrium_distance_available = service.supports_equilibrium_distance(summary["game"])
-        summaries.append({
-            **summary,
+    selected_rows = (() if browsing and browsing["bootstrap"] else
+                     browse_page.rows if browse_page is not None else results.summaries(grouped=True))
+    for projected in selected_rows:
+        summary = projected.summary if browse_page is not None else projected
+        row = {key: summary[key] for key in (
+            "game", "feedback_mode", "seed", "replicate_label", "replicate_count",
+            "player", "algorithm_profile", "group_id", "horizon", "stationary_method",
+        )}
+        row.update({
             "profile_label": algorithm_profile_label(summary["algorithm_profile"]),
             "feedback_label": FEEDBACK_MODE_LABELS[summary["feedback_mode"]],
-            "display_regrets": _display_regrets(summary),
-            "runs": [
-                {
-                    **run,
-                    "download_url": url_for("dashboard.download_experiment", filename=run["experiment"]),
-                }
-                for run in summary["runs"]
-            ],
-            "joint_actions_url": (
-                url_for("dashboard.group_joint_actions", group_id=summary["group_id"], figure_format="png")
-                if matrix_figures_available
-                else None
-            ),
-            "joint_actions_pdf_url": (
-                url_for("dashboard.group_joint_actions", group_id=summary["group_id"], figure_format="pdf")
-                if matrix_figures_available
-                else None
-            ),
-            "equilibrium_distance_url": (
-                url_for("dashboard.group_equilibrium_distance", group_id=summary["group_id"], figure_format="png")
-                if equilibrium_distance_available
-                else None
-            ),
-            "equilibrium_distance_pdf_url": (
-                url_for("dashboard.group_equilibrium_distance", group_id=summary["group_id"], figure_format="pdf")
-                if equilibrium_distance_available
-                else None
-            ),
+            "display_regrets": (projected.display_regrets if browse_page is not None
+                                else _display_regrets(summary)),
+            "best_regret_columns": {
+                column["key"] for column in REGRET_COLUMNS
+                if browse_page is not None and
+                (summary["group_id"], summary["player"], column["key"]) in browse_page.best_cells
+            },
         })
+        summaries.append(row)
 
     return {
         **_experiment_page_context(
@@ -125,6 +114,7 @@ def dashboard_context(
             service.default_form_state(),
         ),
         "experiment_mode": "fixed",
+        "browsing": browsing,
         "games": games,
         "game_definitions": {game_id: definition.public_data() for game_id, definition in game_definitions.items()},
         "built_in_games": [game_id for game_id, definition in game_definitions.items() if definition.source == "builtin"],
@@ -135,15 +125,90 @@ def dashboard_context(
     }
 
 
+def fixed_group_detail_context(service: DashboardService, group_id: str, player: int) -> dict:
+    """Project one current dashboard group/player without changing its membership policy."""
+    results = service.result_snapshot()
+    group = next((group for group in results.groups("dashboard")
+                  if group.records[0].group_id == group_id), None)
+    if group is None:
+        raise KeyError(group_id)
+    if not 0 <= player < len(group.records[0].profile):
+        raise ValueError("invalid player")
+    if any(not path.is_file() for path in group.paths):
+        raise KeyError(group_id)
+    summary = group.summaries(grouped=True)[player]
+    matrix_figures_available = service.supports_matrix_figures(summary["game"])
+    equilibrium_distance_available = service.supports_equilibrium_distance(summary["game"])
+    equilibrium_distance_unavailable = None
+    if equilibrium_distance_available:
+        try:
+            service.preflight_equilibrium_distance(summary["game"])
+        except EquilibriumAnalysisUnavailable as error:
+            equilibrium_distance_available = False
+            equilibrium_distance_unavailable = str(error)
+    return {
+        **{key: summary[key] for key in (
+            "group_id", "player", "game", "feedback_mode", "horizon", "seed",
+            "replicate_label", "replicate_count", "stationary_method", "algorithm_profile",
+        )},
+        "profile_label": algorithm_profile_label(summary["algorithm_profile"]),
+        "feedback_label": FEEDBACK_MODE_LABELS[summary["feedback_mode"]],
+        "display_regrets": _display_regrets(summary),
+        "runs": [
+            {
+                "experiment": run["experiment"],
+                "replicate": run["replicate"],
+                "download_url": url_for("dashboard.download_experiment", filename=run["experiment"]),
+            }
+            for run in summary["runs"]
+        ],
+        "joint_actions_url": (
+            url_for("dashboard.group_joint_actions", group_id=group_id, figure_format="png")
+            if matrix_figures_available else None
+        ),
+        "joint_actions_pdf_url": (
+            url_for("dashboard.group_joint_actions", group_id=group_id, figure_format="pdf")
+            if matrix_figures_available else None
+        ),
+        "equilibrium_distance_unavailable": equilibrium_distance_unavailable,
+        "equilibrium_distance_url": (
+            url_for("dashboard.group_equilibrium_distance", group_id=group_id, figure_format="png")
+            if equilibrium_distance_available else None
+        ),
+        "equilibrium_distance_pdf_url": (
+            url_for("dashboard.group_equilibrium_distance", group_id=group_id, figure_format="pdf")
+            if equilibrium_distance_available else None
+        ),
+    }
+
+
 def one_player_context(
     service: DashboardService,
     form_state: dict | None = None,
     inline_error: str | None = None,
+    *,
+    results=None,
+    browse_page=None,
+    browsing=None,
 ) -> dict:
-    results = service.result_snapshot("adversarial")
-    summaries = results.summaries(grouped=True)
-    for summary in summaries:
-        summary["display_regrets"] = _display_regrets(summary)
+    results = service.result_snapshot("adversarial") if results is None else results
+    if browsing and browsing["bootstrap"]:
+        summaries = []
+    elif browse_page is not None:
+        summaries = [
+            dict(projected.summary,
+                 display_regrets=projected.display_regrets,
+                 best_regret_columns={
+                     column["key"] for column in REGRET_COLUMNS
+                     if (projected.group_id, 0, column["key"]) in browse_page.best_cells
+                 })
+            for projected in browse_page.rows
+        ]
+    else:
+        summaries = results.summaries(grouped=True)
+        for summary in summaries:
+            summary["display_regrets"] = _display_regrets(summary)
+            summary["best_regret_columns"] = set()
     return {
         **_experiment_page_context(
             service,
@@ -154,6 +219,7 @@ def one_player_context(
             service.default_adversarial_form_state(),
         ),
         "experiment_mode": "adversarial",
+        "browsing": browsing,
         "adversarial_environments": ENVIRONMENT_LABELS,
         "adversarial_environment_descriptions": ADVERSARIAL_ENVIRONMENT_DESCRIPTIONS,
         "summaries": summaries,

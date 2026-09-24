@@ -33,7 +33,7 @@ function renderActionCounts() {
         input.name = "action_counts";
         input.type = "number";
         input.min = "1";
-        input.max = "100";
+        input.max = actionCountContainer.dataset.maxActions;
         input.required = true;
         input.value = previous[player] || initial[player] || "2";
         label.htmlFor = input.id;

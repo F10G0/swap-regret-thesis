@@ -3,7 +3,7 @@ import csv
 
 import pytest
 
-from tests.web.support import ADVERSARIAL_FORM as VALID_FORM, create_test_app, csrf_token as _csrf_token, dashboard_data, submit_and_wait
+from tests.web.support import ADVERSARIAL_FORM as VALID_FORM, browse_url, create_test_app, csrf_token as _csrf_token, dashboard_data, submit_and_wait
 from web.validation import (
     parse_action_counts,
     parse_adversarial_experiment_form,
@@ -221,10 +221,19 @@ def test_multiple_action_counts_queue_ordinary_one_player_results(tmp_path):
     assert len(catalog["contexts"]) == 1
     assert catalog["contexts"][0]["actions"] == [2, 4]
     assert catalog["contexts"][0]["profiles"][0]["actions"] == [2, 4]
-    page = client.get("/?mode=adversarial").get_data(as_text=True)
+    page_response = client.get(browse_url(service, "adversarial", comparison_mode="actions"))
+    page = page_response.get_data(as_text=True)
+    assert "summaries" not in dashboard_data(page_response)
     assert page.count('class="summary-row"') == 2
+    for row in results.summaries(grouped=True):
+        assert f'data-result-key="{row["group_id"]}"' in page
+        for metric in ("external", "internal", "swap"):
+            mean = row[f"average_{metric}_regret"]
+            assert f'{mean:.6f}' in page
+            assert f'{mean * row["horizon"] ** 0.5:.6f}' in page
     assert '<label for="filter-action">Action</label>' in page
     assert '<span>Action spaces</span>' in page
+    assert client.get("/figure-builder/options?mode=adversarial").get_json() == catalog
     assert not list(tmp_path.rglob("*.png")) and not list(tmp_path.rglob("*.pdf"))
     assert client.get(f"/adversarial/experiments/{paths[0].name}").data == paths[0].read_bytes()
 
@@ -250,13 +259,19 @@ def test_adversarial_page_queues_replicates_with_common_seed_schedule(tmp_path, 
     assert len(grouped) == 1 and grouped[0]["replicate_label"] == "0–2" and grouped[0]["replicate_count"] == 3
     for field in ("average_external_regret", "average_internal_regret", "average_swap_regret"):
         assert grouped[0][field] == pytest.approx(sum(row[field] for row in summaries) / 3)
-    page = app.test_client().get("/?mode=adversarial")
-    assert len(dashboard_data(page)["summaries"]) == 1
-    assert b"1 replicate group" in page.data
+    page = app.test_client().get(browse_url(service, "adversarial"))
+    assert "summaries" not in dashboard_data(page)
+    assert page.data.count(b'class="summary-row"') == 1
+    assert f'data-result-key="{grouped[0]["group_id"]}"'.encode() in page.data
+    assert b"1 filtered scientific group" in page.data
     assert b"Seed / replicates" in page.data and b"<th>Replicate</th>" not in page.data
     submit_and_wait(app.test_client(), service, VALID_FORM | {
         "environment": RANDOM_WALK_ENVIRONMENT, "replicates": "1", "seed": "8"})
-    assert len(dashboard_data(app.test_client().get("/?mode=adversarial"))["summaries"]) == 2
+    updated_page = app.test_client().get(browse_url(service, "adversarial"))
+    assert "summaries" not in dashboard_data(updated_page)
+    assert updated_page.data.count(b'class="summary-row"') == 1
+    assert b"1 filtered scientific group" in updated_page.data
+    assert len(service.figure_builder.catalog("adversarial")["contexts"]) == 2
 
 
 @pytest.mark.parametrize("environment,feedback,algorithm", [

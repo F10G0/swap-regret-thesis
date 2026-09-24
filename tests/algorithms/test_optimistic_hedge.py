@@ -85,6 +85,12 @@ def test_bm_optimistic_hedge_uses_theorem_rate_and_inner_learners() -> None:
     assert expected != pytest.approx((np.log(3.0)) ** (1.0 / 6.0))
 
 
+@pytest.mark.parametrize("n_actions", [-1, 0, 1])
+def test_bm_optimistic_hedge_requires_at_least_two_actions(n_actions) -> None:
+    with pytest.raises(ValueError, match="n_actions must be at least 2"):
+        BMOptimisticHedge(n_actions, horizon=100)
+
+
 def test_bm_optimistic_hedge_uses_current_and_previous_weighted_rewards() -> None:
     learner = BMOptimisticHedge(3, horizon=100, n_players=2, seed=0)
     r1 = np.array([0.2, 0.5, 0.9])

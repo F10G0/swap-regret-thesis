@@ -26,8 +26,8 @@ class BMOptimisticHedge(FullBM):
     """Chen-Peng BM reduction with optimistic Hedge inner learners."""
 
     def __init__(self, n_actions: int, horizon: int, n_players: int = 2, seed: int | None = None) -> None:
-        if n_actions <= 0:
-            raise ValueError("n_actions must be positive.")
+        if n_actions < 2:
+            raise ValueError("n_actions must be at least 2")
         if not isinstance(horizon, (int, np.integer)) or isinstance(horizon, bool) or horizon <= 0:
             raise ValueError("horizon must be a positive integer")
         if not isinstance(n_players, (int, np.integer)) or isinstance(n_players, bool) or n_players <= 0:

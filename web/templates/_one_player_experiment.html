@@ -1,4 +1,4 @@
-{% from "_experiment_ui.html" import delete_filtered_results_form, delete_result_form, feedback_control, learning_configuration, queue_experiment_button, result_controls, select_input, regret_headers, regret_cells with context %}
+{% from "_experiment_ui.html" import delete_filtered_results_form, delete_result_form, feedback_control, learning_configuration, queue_experiment_button, result_controls, select_input, regret_headers, regret_cells, pagination_controls with context %}
 
 {% macro one_player_sidebar(current_algorithms, selected_algorithm_names) %}
             <form id="experiment-form" method="post" action="{{ url_for('dashboard.index') }}">
@@ -33,17 +33,17 @@
                         <h2 id="summary-heading">Recorded output</h2>
                     </div>
                     <div class="summary-heading-actions">
-                        <span>{{ summaries | length }} replicate group{% if summaries | length != 1 %}s{% endif %}</span>
+                        <span>{{ browsing.total_groups if browsing else summaries | length }} filtered scientific group{% if (browsing.total_groups if browsing else summaries | length) != 1 %}s{% endif %}</span>
                         {{ delete_filtered_results_form("adversarial") }}
                     </div>
                 </div>
                 {% if summaries %}
                     <div class="table-scroll">
                         <table id="summary-table">
-                            <thead><tr><th>Environment</th><th>Feedback</th><th>Algorithm</th><th>Actions</th><th>Configuration</th><th>Seed / replicates</th><th>Horizon</th>{{ regret_headers() }}<th class="sticky-actions">Actions</th></tr></thead>
+                            <thead><tr><th data-sort="environment">Environment</th><th data-sort="feedback">Feedback</th><th data-sort="algorithm">Algorithm</th><th data-sort="action">Actions</th><th data-sort="configuration">Configuration</th><th data-sort="seed_replicates">Seed / replicates</th><th data-sort="horizon">Horizon</th>{{ regret_headers() }}<th class="sticky-actions">Actions</th></tr></thead>
                             <tbody>
                                 {% for row in summaries %}
-                                    <tr class="summary-row" data-scope="{{ row.environment }}" data-feedback="{{ row.feedback_mode }}" data-action="{{ row.n_actions }}" data-profile="{{ row.algorithm }}" data-result-key="{{ row.group_id }}" data-horizon="{{ row.horizon }}" data-seed="{{ row.base_learner_seed }}" data-configuration="{{ row.environment_detail }}">
+                                    <tr class="summary-row" data-result-key="{{ row.group_id }}">
                                         <td>{{ row.environment_label }}</td><td>{{ row.feedback_label }}</td><td>{{ row.algorithm_label }}</td><td>{{ row.n_actions }}</td><td>{{ row.environment_detail }}</td><td>{{ row.base_learner_seed }} / {{ row.replicate_label }}{% if row.replicate_count > 1 %} (n={{ row.replicate_count }}){% endif %}</td><td>{{ row.horizon }}</td>
                                         {{ regret_cells(row) }}
                                         <td class="sticky-actions">{{ delete_result_form("adversarial", row.group_id) }}</td>
@@ -52,10 +52,12 @@
                             </tbody>
                         </table>
                     </div>
+                    {{ pagination_controls() }}
                 {% else %}
                     <div class="empty-state">
-                        <strong>No results yet.</strong>
-                        <p>Configure and queue an experiment to record regret trajectories and summaries.</p>
+                        <strong>{{ "Loading saved result view…" if browsing and browsing.bootstrap else "No results yet." if not browsing or not browsing.state or not browsing.state.context else "No results match this selection." }}</strong>
+                        {% if not browsing or not browsing.bootstrap %}<p>Change the filters or queue an experiment to record more results.</p>{% endif %}
+                        {{ pagination_controls() }}
                     </div>
                 {% endif %}
             </section>

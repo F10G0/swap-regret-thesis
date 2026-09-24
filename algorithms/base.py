@@ -15,7 +15,11 @@ class Algorithm(ABC):
         self.reset()
 
     def reset(self) -> None:
-        """Reset the internal state and strategy."""
+        """Reset learner state, time, current action, and strategy.
+
+        The RNG is not rewound; reductions may draw new child seeds. Use a
+        fresh learner with the original seed to replay an experiment.
+        """
         self._reset_state()
         self.t = 0
         self.current_action = None

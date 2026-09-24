@@ -91,3 +91,21 @@ def test_trajectory_prepares_once_per_concept_and_uses_only_scalar_objectives(mo
     assert concepts == ["ce", "cce"]
     assert calls == ["ce", "cce"] * 3
     np.testing.assert_array_equal(result.ce, [.25] * 3)
+
+
+def test_paired_trajectory_preflights_both_concepts_before_either_matrix(monkeypatch):
+    from metrics.empirical_distribution import EmpiricalDistributionTrajectory
+    import metrics.equilibrium_distance as module
+
+    ce_estimate = module.estimate_equilibrium_analysis((1, 2), "ce")
+    cce_estimate = module.estimate_equilibrium_analysis((1, 2), "cce")
+    assert ce_estimate.estimated_bytes < cce_estimate.estimated_bytes
+    monkeypatch.setattr(module, "EQUILIBRIUM_ANALYSIS_BUDGET_BYTES", ce_estimate.estimated_bytes)
+    monkeypatch.setattr(module, "_PreparedDistanceLP",
+                        lambda *args: pytest.fail("constructed CE before CCE preflight"))
+    empirical = EmpiricalDistributionTrajectory((1, 2), np.array([1]), np.array([[1.0, 0.0]]))
+
+    with pytest.raises(module.EquilibriumAnalysisUnavailable) as captured:
+        module.equilibrium_distance_trajectory(np.zeros((2, 1, 2)), empirical)
+
+    assert captured.value.estimate.equilibrium == "cce"

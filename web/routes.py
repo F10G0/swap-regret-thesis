@@ -1,3 +1,5 @@
+import re
+
 from flask import (
     Blueprint,
     abort,
@@ -19,7 +21,14 @@ from experiments.scenarios.adversarial import (
     ENVIRONMENT_LABELS,
     MAX_ADVERSARIAL_ACTIONS,
 )
+from metrics.equilibrium_distance import EquilibriumAnalysisUnavailable
+from web.browsing import (
+    builder_state, default_browsing_query, paginate_projection,
+    parse_browsing_query, query_parameters, query_string,
+)
+from web.filtered_deletion import FilteredResultsChanged
 from web.jobs import ServiceBusyError
+from web.presentation_query import project_dashboard_query
 from web.pdf_export import merged_figure_pdf
 from web.services import DashboardService
 from web.validation import (
@@ -33,6 +42,7 @@ from web.validation import (
 from web.view_models import (
     custom_games_context,
     dashboard_context,
+    fixed_group_detail_context,
     one_player_context,
 )
 
@@ -44,9 +54,43 @@ def get_service() -> DashboardService:
     return current_app.extensions["dashboard_service"]
 
 
-def _experiment_context(mode: str, form_state: dict | None = None, inline_error: str | None = None) -> dict:
+def _browse_url(query, page: int = 1, page_size: int = 25) -> str:
+    return f"{url_for('dashboard.index')}?{query_string(query, page, page_size)}"
+
+
+def _browsing_navigation(page=None, *, bootstrap_query=None) -> dict:
+    if page is None:
+        return {
+            "bootstrap": True, "state": None, "default_url": _browse_url(bootstrap_query),
+            "page": 1, "page_size": 25, "total_pages": 1, "total_groups": 0,
+        }
+    query = page.query
+    return {
+        "bootstrap": False, "state": builder_state(query), "default_url": "",
+        "page": page.page, "page_size": page.page_size,
+        "total_pages": page.total_pages, "total_groups": page.total_groups,
+        "previous_url": _browse_url(query, page.page - 1, page.page_size) if page.page > 1 else None,
+        "next_url": _browse_url(query, page.page + 1, page.page_size)
+            if page.page < page.total_pages else None,
+        "form_params": [(key, value) for key, value in query_parameters(query)
+                        if key not in {"page", "page_size"}],
+    }
+
+
+def _experiment_context(mode: str, form_state: dict | None = None, inline_error: str | None = None,
+                        *, results=None, browse_page=None, browsing=None) -> dict:
+    service = get_service()
     builder = one_player_context if mode == "adversarial" else dashboard_context
-    return builder(get_service(), form_state, inline_error)
+    if browsing is None:
+        results = service.result_snapshot(mode) if results is None else results
+        catalog = service.figure_builder.catalog(mode, results)
+        query = default_browsing_query(catalog, mode)
+        projection = project_dashboard_query(results, catalog, query,
+                                             presentations=service.game_presentations if mode == "fixed" else {})
+        browse_page = paginate_projection(projection, 1, 25)
+        browsing = _browsing_navigation(browse_page)
+    return builder(service, form_state, inline_error, results=results,
+                   browse_page=browse_page, browsing=browsing)
 
 
 def _parse_form() -> ExperimentForm:
@@ -116,7 +160,31 @@ def index():
         mode = request.args.get("mode", "fixed")
         if mode not in {"fixed", "adversarial"}:
             abort(404)
-        return render_template("index.html", **_experiment_context(mode))
+        service = get_service()
+        results = service.result_snapshot(mode)
+        catalog = service.figure_builder.catalog(mode, results)
+        if "context" not in request.args:
+            if set(request.args) - {"mode"}:
+                abort(400, description="incomplete dashboard query")
+            default = default_browsing_query(catalog, mode)
+            return render_template("index.html", **_experiment_context(
+                mode, results=results, browsing=_browsing_navigation(bootstrap_query=default),
+            ))
+        try:
+            query, requested_page, page_size = parse_browsing_query(request.args, catalog, mode)
+            projection = project_dashboard_query(
+                results, catalog, query,
+                presentations=service.game_presentations if mode == "fixed" else {},
+            )
+        except ValueError as error:
+            abort(400, description=str(error))
+        page = paginate_projection(projection, requested_page, page_size)
+        canonical = query_string(query, page.page, page.page_size)
+        if request.query_string != canonical.encode("ascii"):
+            return redirect(_browse_url(query, page.page, page.page_size))
+        return render_template("index.html", **_experiment_context(
+            mode, results=results, browse_page=page, browsing=_browsing_navigation(page),
+        ))
 
     if request.form.get("experiment_type") == "adversarial":
         return _submit_one_player()
@@ -129,6 +197,23 @@ def index():
 
     kind = "horizon batch" if len(form.horizon_values) > 1 else "experiment"
     return _queued_experiment_response(job, "fixed", f"Queued {kind} job {job.id[:8]}.")
+
+
+@dashboard.get("/experiment-groups/fixed/<group_id>/players/<player>")
+def fixed_group_detail(group_id: str, player: str):
+    if re.fullmatch(r"[0-9a-f]{16}", group_id) is None:
+        return jsonify(error="Invalid result group identifier."), 400
+    if re.fullmatch(r"[0-9]+", player) is None:
+        return jsonify(error="Invalid player for this result."), 400
+    try:
+        detail = fixed_group_detail_context(get_service(), group_id, int(player))
+    except ValueError:
+        return jsonify(error="Invalid player for this result."), 400
+    except KeyError:
+        return jsonify(error="This result is no longer available. Refresh results."), 404
+    response = jsonify(detail)
+    response.cache_control.no_store = True
+    return response
 
 
 def _submit_one_player():
@@ -266,16 +351,34 @@ def delete_result_group(kind: str, group_id: str):
     return redirect(url_for("dashboard.index", **redirect_arguments))
 
 
+def _filtered_deletion_state() -> dict:
+    values = request.form.to_dict(flat=True)
+    values["profiles"] = request.form.getlist("profiles")
+    return values
+
+
+@dashboard.post("/experiment-groups/<kind>/delete-filtered/preview")
+def preview_filtered_result_groups(kind: str):
+    try:
+        preview = get_service().preview_filtered_result_groups(kind, _filtered_deletion_state())
+    except (ValueError, KeyError) as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(count=preview.count, digest=preview.membership_digest)
+
+
 @dashboard.post("/experiment-groups/<kind>/delete-filtered")
 def delete_filtered_result_groups(kind: str):
-    redirect_arguments = {"mode": "adversarial"} if kind == "adversarial" else {}
     try:
-        deleted = get_service().delete_result_groups(kind, request.form.getlist("group_id"))
-    except (FileNotFoundError, KeyError, OSError, ServiceBusyError, ValueError) as error:
-        flash(str(error), "error")
-    else:
-        flash(f"Deleted {deleted} filtered experiment(s) and cleared generated artifacts.", "success")
-    return redirect(url_for("dashboard.index", **redirect_arguments))
+        deleted = get_service().delete_filtered_result_groups(
+            kind, _filtered_deletion_state(), request.form.get("digest", ""),
+        )
+    except FilteredResultsChanged as error:
+        return jsonify(error=str(error), count=error.count, reconfirmation_required=True), 409
+    except (ValueError, KeyError) as error:
+        return jsonify(error=str(error)), 400
+    except (FileNotFoundError, OSError, ServiceBusyError) as error:
+        return jsonify(error=str(error)), 409
+    return jsonify(deleted=deleted, message=f"Deleted {deleted} filtered experiment(s).")
 
 
 @dashboard.get("/figure-builder/options")
@@ -396,6 +499,8 @@ def _equilibrium_convergence_response(request_figure, figure_format: str):
         abort(404)
     try:
         path, error = request_figure()
+    except EquilibriumAnalysisUnavailable as error:
+        return jsonify({"status": "unavailable", "error": str(error)}), 422
     except (FileNotFoundError, KeyError, ValueError):
         abort(404)
     if error is not None:

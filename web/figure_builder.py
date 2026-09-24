@@ -37,11 +37,11 @@ class FigureBuilder:
         self.output_dir = service.results_dir / "cache" / "figure_builder"
         self._lock = Lock()
 
-    def _contexts(self, mode: str) -> dict:
+    def _contexts(self, mode: str, results=None) -> dict:
         if mode not in {"fixed", "adversarial"}:
             raise ValueError("Unknown experiment mode")
         presentations = self.service.game_presentations if mode == "fixed" else {}
-        groups = self.service.result_snapshot(mode).groups("builder")
+        groups = (results if results is not None else self.service.result_snapshot(mode)).groups("builder")
         compatible = defaultdict(list)
         for group in groups:
             first = group.records[0]
@@ -122,8 +122,8 @@ class FigureBuilder:
                     contexts[context_id] = context
         return contexts
 
-    def catalog(self, mode: str) -> dict:
-        contexts = self._contexts(mode)
+    def catalog(self, mode: str, results=None) -> dict:
+        contexts = self._contexts(mode, results)
         return {
             "contexts": [{key: value for key, value in context.items() if not key.startswith("_")}
                          for context in sorted(contexts.values(), key=lambda c: (c["scope"], c["player"], c["id"]))],

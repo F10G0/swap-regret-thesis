@@ -4,7 +4,7 @@ Historical benchmark evidence: this report describes the implementation measured
 
 ## Scope and working-tree preservation
 
-Implemented against the current local tree, not GitHub main. Git sees this audit directory as untracked inside `/home/florian`; therefore a normal Git diff cannot isolate these changes. Review used a source archive captured before editing, without restoring it into the working tree.
+This cleanup was implemented against the local tree available on 2026-09-08, not a checkout of GitHub main. At that time, Git treated the audit directory as untracked inside `/home/florian`, so a normal Git diff could not isolate the changes. Review used a source archive captured before editing, without restoring it into the working tree.
 
 ## Changes by file
 

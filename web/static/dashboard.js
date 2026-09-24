@@ -5,9 +5,12 @@ const dashboardData = dashboardDataElement
     ? JSON.parse(dashboardDataElement.textContent)
     : {mode: "fixed", gameDefinitions: {}, gamePresentations: {}, summaries: [], algorithms: {}, algorithmLabels: {}};
 const onePlayerMode = dashboardData.mode === "adversarial";
+let browsingNavigationPending = false;
+let lastAnnouncedBrowsingSelection = null;
 const formStorageKey = onePlayerMode ? "swap-regret-adversarial-form" : "swap-regret-experiment-form";
 const generalSeedStorageKey = "swap-regret-experiment-seed";
-let resultFilters = null;
+let filteredDeletePending = false;
+let filterSelectionRevision = 0;
 let jobPollInFlight = false;
 let jobPollTimer = null;
 
@@ -207,106 +210,201 @@ function synchronizePlayerValues() {
     }
 }
 
-function matchesResultFilters(record, state = resultFilters) {
-    if (!state) return false;
-    return record.dataset.scope === state.scope
-        && (state.feedback === "both" || record.dataset.feedback === state.feedback)
-        && (state.horizon === "all" || record.dataset.horizon === state.horizon)
-        && (onePlayerMode ? state.action === "all" || record.dataset.action === state.action
-            : record.dataset.player === state.player)
-        && state.profiles.includes(record.dataset.profile);
+function navigateBrowsing(url) {
+    if (browsingNavigationPending) return;
+    browsingNavigationPending = true;
+    window.location.assign(url);
 }
 
-function updateSummaryRows() {
-    document.querySelectorAll(".summary-row").forEach((row) => {
-        row.hidden = !matchesResultFilters(row) || !resultFilters.resultKeys.includes(row.dataset.resultKey);
-    });
-    document.querySelectorAll("#summary-table [data-regret]").forEach((cell) => {
-        cell.hidden = !resultFilters
-            || (resultFilters.metric !== "all" && cell.dataset.regret !== resultFilters.metric)
-            || (!["all", "horizon_scaling"].includes(resultFilters.view) && cell.dataset.view !== resultFilters.view);
-    });
-    const detail = element("experiment-detail");
-    if (detail && selectedSummary) {
-        const row = [...document.querySelectorAll(".summary-row")].find((row) =>
-            dashboardData.summaries[Number(row.dataset.summaryIndex)] === selectedSummary);
-        if (!row || row.hidden) detail.hidden = true;
+function browsingSelectionMatches(state) {
+    const selected = dashboardData.browsingState;
+    const context = element("filter-context");
+    if (!selected || !context || !state) return false;
+    const profiles = values => [...(values || [])].sort().join("\u0000");
+    return state.scope === selected.scope && context.value === selected.context
+        && state.comparisonMode === selected.comparisonMode
+        && state.feedback === selected.feedback && state.horizon === selected.horizon
+        && profiles(state.profiles) === profiles(selected.profiles)
+        && state.metric === selected.metric && state.view === selected.view
+        && (onePlayerMode ? state.action === selected.action : state.player === selected.player);
+}
+
+function browsingUrlForSelection(state) {
+    const current = new URLSearchParams(window.location.search);
+    const context = element("filter-context").value;
+    const params = new URLSearchParams();
+    for (const [key, value] of [
+        ["mode", dashboardData.mode], ["scope", state.scope], ["context", context],
+        ["compare", state.comparisonMode], ["feedback", state.feedback],
+        ["horizon", state.horizon],
+    ]) params.append(key, value);
+    [...state.profiles].sort().forEach(profile => params.append("profile", profile));
+    params.append("metric", state.metric);
+    params.append("view", state.view);
+    params.append(onePlayerMode ? "action" : "player", onePlayerMode ? state.action : state.player);
+    const sort = current.get("sort");
+    const regretSort = /^(average|sqrt_scaling)_(.+)$/.exec(sort || "");
+    const sortVisible = !regretSort
+        || ((state.metric === "all" || state.metric === regretSort[2])
+            && (["all", "horizon_scaling", regretSort[1]].includes(state.view)));
+    if (sort && sortVisible && (onePlayerMode || state.player !== "all")) {
+        params.append("sort", sort);
+        params.append("dir", current.get("dir") || "asc");
     }
-    document.querySelectorAll("#detail-regrets [data-regret]").forEach((cell) => {
-        cell.hidden = !resultFilters
-            || (resultFilters.metric !== "all" && cell.dataset.regret !== resultFilters.metric)
-            || (!["all", "horizon_scaling"].includes(resultFilters.view) && cell.dataset.view !== resultFilters.view);
-    });
+    params.append("page", "1");
+    params.append("page_size", current.get("page_size") || "25");
+    return `/?${params.toString()}`;
+}
+
+function handleServerBrowsingSelection(state) {
     updateFilteredDeletion();
-    highlightBestValues();
+    const context = element("filter-context");
+    if (!context || !context.value) {
+        if (dashboardData.browsingBootstrap && !element("filter-scope").options.length) {
+            navigateBrowsing(dashboardData.browsingDefaultUrl);
+            return true;
+        }
+        return false;
+    }
+    const signature = JSON.stringify([
+        context.value, state.scope, state.comparisonMode, state.feedback, state.horizon,
+        [...state.profiles].sort(), state.metric, state.view,
+        onePlayerMode ? state.action : state.player,
+    ]);
+    if (!dashboardData.browsingBootstrap && lastAnnouncedBrowsingSelection === null) {
+        lastAnnouncedBrowsingSelection = signature;
+        return false;
+    }
+    if (signature === lastAnnouncedBrowsingSelection) return false;
+    lastAnnouncedBrowsingSelection = signature;
+    if (dashboardData.browsingBootstrap || !browsingSelectionMatches(state)) {
+        navigateBrowsing(browsingUrlForSelection(state));
+    }
+    return true;
+}
+
+function filteredDeletionState() {
+    if (dashboardData.browsingBootstrap) return null;
+    const state = dashboardData.browsingState;
+    if (!state || !state.context) return null;
+    return {
+        mode: dashboardData.mode, scope: state.scope, context: state.context,
+        comparisonMode: state.comparisonMode, feedback: state.feedback,
+        horizon: state.horizon, profiles: [...state.profiles],
+        player: onePlayerMode ? null : state.player,
+        action: onePlayerMode ? state.action : null,
+    };
+}
+
+function filteredDeletionData(form, state) {
+    const data = new FormData(form);
+    data.delete("group_id");
+    Object.entries(state).forEach(([key, value]) => {
+        if (Array.isArray(value)) value.forEach(item => data.append(key, item));
+        else if (value != null) data.append(key, String(value));
+    });
+    return data;
+}
+
+function filteredDeletionNotice(message, error = false) {
+    const form = element("delete-filtered-experiments");
+    if (!form) return;
+    let notice = element("filtered-deletion-status");
+    if (!notice) {
+        notice = document.createElement("p");
+        notice.id = "filtered-deletion-status";
+        notice.setAttribute("role", "status");
+        form.after(notice);
+    }
+    notice.hidden = !message;
+    notice.className = error ? "notice notice-error" : "hint";
+    notice.textContent = message;
 }
 
 function updateFilteredDeletion() {
     const form = element("delete-filtered-experiments");
     if (!form) return;
-    const groupIds = [...new Set([...document.querySelectorAll(".summary-row:not([hidden])")].map(row => row.dataset.resultKey))];
-    const inputs = form.querySelector("[data-filtered-group-inputs]");
-    inputs.replaceChildren(...groupIds.map(groupId => {
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "group_id";
-        input.value = groupId;
-        return input;
-    }));
-    form.querySelector("[data-filtered-group-count]").textContent = groupIds.length;
+    const button = form.querySelector("button");
     const busy = document.querySelector('[data-job-id][data-status="queued"], [data-job-id][data-status="running"]');
-    form.querySelector("button").disabled = Boolean(busy) || groupIds.length === 0;
-    const noun = groupIds.length === 1 ? "experiment" : "experiments";
-    form.dataset.confirm = `Delete ${groupIds.length} filtered ${noun} and all of their replicates? Generated figures and caches will also be cleared. This cannot be undone.`;
+    button.disabled = Boolean(busy) || filteredDeletePending || !filteredDeletionState();
 }
 
-function highlightBestValues() {
-    document.querySelectorAll("[data-metric]").forEach((cell) => cell.classList.remove("best-value"));
-    const groups = new Map();
-    document.querySelectorAll("[data-metric][data-value]").forEach((cell) => {
-        if (cell.hidden) {
-            return;
-        }
-        const row = cell.closest("tr");
-        if (row.hidden) {
-            return;
-        }
-        const keyParts = [
-            cell.dataset.metric, row.dataset.scope, row.dataset.player, row.dataset.feedback, row.dataset.horizon,
-            row.dataset.seed, row.dataset.stationaryMethod, row.dataset.target, row.dataset.configuration,
-        ];
-        const key = keyParts.join("|");
-        groups.set(key, [...(groups.get(key) || []), cell]);
-    });
-    groups.forEach((cells) => {
-        const minimum = Math.min(...cells.map((cell) => Number(cell.dataset.value)));
-        cells.filter((cell) => Number(cell.dataset.value) === minimum).forEach((cell) => cell.classList.add("best-value"));
-    });
-}
-
-function installTableSorting() {
-    const table = element("summary-table");
-    if (!table) {
+async function submitFilteredDeletion(event) {
+    event.preventDefault();
+    event.stopImmediatePropagation(); // Bypass the generic pre-preview form confirmation.
+    if (filteredDeletePending) return;
+    const form = event.currentTarget;
+    const state = filteredDeletionState();
+    if (!state) {
+        filteredDeletionNotice("Select an available result set before deleting.", true);
         return;
     }
-    table.querySelectorAll("th").forEach((header, column) => {
+    const revision = filterSelectionRevision;
+    const action = form.getAttribute("action");
+    let deleted = false;
+    filteredDeletePending = true;
+    updateFilteredDeletion();
+    filteredDeletionNotice("");
+    try {
+        const previewResponse = await fetch(`${action}/preview`, {
+            method: "POST", headers: {Accept: "application/json"},
+            body: filteredDeletionData(form, state),
+        });
+        const preview = await previewResponse.json().catch(() => ({}));
+        if (!previewResponse.ok) throw new Error(preview.error || "Could not preview filtered deletion.");
+        if (revision !== filterSelectionRevision) {
+            filteredDeletionNotice("Filters changed; review the selection and try again.", true);
+            return;
+        }
+        if (!Number.isSafeInteger(preview.count) || preview.count < 0
+            || !/^[0-9a-f]{64}$/.test(preview.digest || "")) {
+            throw new Error("The deletion preview was invalid. Please try again.");
+        }
+        if (preview.count === 0) {
+            filteredDeletionNotice("No filtered experiments match the current selection.");
+            return;
+        }
+        const noun = preview.count === 1 ? "experiment" : "experiments";
+        if (!window.confirm(`Delete ${preview.count} filtered ${noun} and all of their replicates? Generated figures and caches will also be cleared. This cannot be undone.`)) return;
+        const data = filteredDeletionData(form, state);
+        data.set("digest", preview.digest);
+        const response = await fetch(action, {
+            method: "POST", headers: {Accept: "application/json"}, body: data,
+        });
+        const result = await response.json().catch(() => ({}));
+        if (response.status === 409 && result.reconfirmation_required) {
+            filteredDeletionNotice(result.error || "Results changed; please review and confirm again.", true);
+            return;
+        }
+        if (!response.ok) throw new Error(result.error || "Could not delete filtered experiments.");
+        deleted = true;
+    } catch (error) {
+        filteredDeletionNotice(error.message || "Could not delete filtered experiments.", true);
+    } finally {
+        filteredDeletePending = false;
+        updateFilteredDeletion();
+    }
+    if (deleted) window.location.reload();
+}
+
+function installServerSorting() {
+    const table = element("summary-table");
+    const state = dashboardData.browsingState;
+    if (!table || !state || (!onePlayerMode && state.player === "all")) return;
+    table.querySelectorAll("th[data-sort]:not([hidden])").forEach((header) => {
         header.tabIndex = 0;
-        header.title = "Sort column";
+        header.title = "Sort all filtered groups by this column";
+        if (new URLSearchParams(window.location.search).get("sort") === header.dataset.sort) {
+            header.dataset.direction = new URLSearchParams(window.location.search).get("dir") === "desc"
+                ? "descending" : "ascending";
+        }
         const sort = () => {
-            const rows = [...table.tBodies[0].rows];
+            const params = new URLSearchParams(window.location.search);
             const ascending = header.dataset.direction !== "ascending";
-            table.querySelectorAll("th").forEach((cell) => delete cell.dataset.direction);
-            header.dataset.direction = ascending ? "ascending" : "descending";
-            const value = (row) => row.cells[column].dataset.value === undefined ? row.cells[column].textContent.trim() : row.cells[column].dataset.value;
-            const values = rows.map(value);
-            const numeric = values.every((value) => value !== "" && Number.isFinite(Number(value)));
-            rows.sort((left, right) => {
-                const leftValue = value(left);
-                const rightValue = value(right);
-                const comparison = numeric ? Number(leftValue) - Number(rightValue) : leftValue.localeCompare(rightValue);
-                return ascending ? comparison : -comparison;
-            });
-            rows.forEach((row) => table.tBodies[0].append(row));
+            params.set("sort", header.dataset.sort);
+            params.set("dir", ascending ? "asc" : "desc");
+            params.set("page", "1");
+            navigateBrowsing(`/?${params.toString()}`);
         };
         header.addEventListener("click", sort);
         header.addEventListener("keydown", (event) => {
@@ -347,16 +445,10 @@ function addDetail(metadata, label, value) {
 }
 
 let selectedSummary = null;
+let selectedDetailRow = null;
+let detailRequestRevision = 0;
 
-function showExperimentDetail(index) {
-    const summary = dashboardData.summaries[index];
-    const panel = element("experiment-detail");
-    if (!summary || !panel) {
-        return;
-    }
-
-    selectedSummary = summary;
-    panel.hidden = false;
+function renderExperimentDetail(summary) {
     const gameLabel = gamePresentation(summary.game).label;
     element("detail-title").textContent = `${gameLabel} · player ${summary.player}`;
     const metadata = element("detail-metadata");
@@ -374,8 +466,6 @@ function showExperimentDetail(index) {
         const kind = name.split("_").pop();
         const view = name.startsWith("average_") ? "average" : "sqrt_scaling";
         const metric = document.createElement("div");
-        metric.dataset.regret = kind;
-        metric.dataset.view = view;
         const label = document.createElement("span");
         const number = document.createElement("strong");
         label.textContent = kind + (view === "average" ? " R/T" : " R/√T");
@@ -383,7 +473,6 @@ function showExperimentDetail(index) {
         metric.append(label, number);
         regrets.append(metric);
     });
-    updateSummaryRows();
 
     const downloads = element("detail-downloads");
     downloads.replaceChildren(...summary.runs.map((run) => {
@@ -406,8 +495,12 @@ function showExperimentDetail(index) {
     const distanceImage = element("detail-equilibrium-distance");
     const convergence = element("detail-convergence");
     const distanceAvailable = Boolean(summary.equilibrium_distance_url);
-    convergence.hidden = !distanceAvailable;
+    const distanceUnavailable = summary.equilibrium_distance_unavailable;
+    convergence.hidden = !distanceAvailable && !distanceUnavailable;
     element("detail-equilibrium-distance-card").hidden = !distanceAvailable;
+    const unavailableNotice = element("detail-equilibrium-distance-unavailable");
+    unavailableNotice.textContent = distanceUnavailable || "";
+    unavailableNotice.hidden = !distanceUnavailable;
     const distanceDownload = element("detail-equilibrium-distance-download");
     if (distanceAvailable) {
         setHeatmapSource(distanceImage, summary.equilibrium_distance_url, "Computing equilibrium distances…");
@@ -415,7 +508,54 @@ function showExperimentDetail(index) {
         distanceDownload.href = summary.equilibrium_distance_pdf_url;
         distanceDownload.download = `${summary.group_id}_mean_equilibrium_distance.pdf`;
     }
+}
+
+async function showExperimentDetail(row) {
+    const panel = element("experiment-detail");
+    if (!row || !panel || row.hidden) {
+        return;
+    }
+
+    const revision = ++detailRequestRevision;
+    selectedDetailRow = row;
+    selectedSummary = null;
+    panel.hidden = false;
+    panel.setAttribute("aria-busy", "true");
+    element("detail-title").textContent = `${gamePresentation(row.dataset.scope).label} · player ${row.dataset.player}`;
+    element("detail-content").hidden = true;
+    element("reuse-experiment").disabled = true;
+    const status = element("detail-status");
+    status.className = "notice";
+    status.textContent = "Loading result details…";
+    status.hidden = false;
     panel.scrollIntoView({behavior: "smooth", block: "nearest"});
+
+    let failureMessage = "Could not load result details. Select the row again or refresh results.";
+    try {
+        const response = await fetch(row.dataset.detailUrl, {headers: {Accept: "application/json"}});
+        const detail = await response.json().catch(() => ({}));
+        if (revision !== detailRequestRevision || selectedDetailRow !== row || panel.hidden || row.hidden) return;
+        if (!response.ok) {
+            if (response.status === 404) failureMessage = "This result is no longer available. Refresh results.";
+            throw new Error(failureMessage);
+        }
+        if (detail.group_id !== row.dataset.resultKey || String(detail.player) !== row.dataset.player) {
+            failureMessage = "Result details changed. Refresh results.";
+            throw new Error(failureMessage);
+        }
+        renderExperimentDetail(detail);
+        selectedSummary = detail;
+        element("detail-content").hidden = false;
+        status.hidden = true;
+        status.textContent = "";
+        element("reuse-experiment").disabled = false;
+        panel.removeAttribute("aria-busy");
+    } catch (_) {
+        if (revision !== detailRequestRevision || selectedDetailRow !== row || panel.hidden || row.hidden) return;
+        status.className = "notice notice-error";
+        status.textContent = failureMessage;
+        panel.removeAttribute("aria-busy");
+    }
 }
 
 function reuseSelectedExperiment() {
@@ -448,7 +588,10 @@ async function pollActiveJobs() {
     window.clearTimeout(jobPollTimer);
     jobPollTimer = null;
     const activeJobs = [...document.querySelectorAll('[data-job-id][data-status="queued"], [data-job-id][data-status="running"]')];
+    const pollStatus = element("job-poll-status");
     if (activeJobs.length === 0) {
+        pollStatus.hidden = true;
+        pollStatus.textContent = "";
         setBusy(false);
         return;
     }
@@ -461,12 +604,16 @@ async function pollActiveJobs() {
         }
         const jobs = await Promise.all(responses.map((response) => response.json()));
         jobs.forEach((job) => updateJobElement(document.querySelector(`[data-job-id="${job.id}"]`), job));
+        pollStatus.hidden = true;
+        pollStatus.textContent = "";
 
         const terminalJobs = jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status));
         if (terminalJobs.length > 0) {
             element("refresh-results-notice").hidden = false;
         }
     } catch (error) {
+        pollStatus.textContent = "Job status is temporarily unavailable. Retrying…";
+        pollStatus.hidden = false;
         console.warn("Could not refresh job status", error);
     } finally {
         jobPollInFlight = false;
@@ -493,11 +640,11 @@ document.addEventListener("click", (event) => {
 });
 listen("close-figure-dialog", "click", () => element("figure-dialog").close());
 document.querySelectorAll(".summary-row").forEach((row) => {
-    if (row.dataset.summaryIndex === undefined) {
+    if (row.dataset.detailUrl === undefined) {
         return;
     }
     const interactive = event => event.target.closest("a, button, form, input, select, textarea, label");
-    const showDetail = () => showExperimentDetail(Number(row.dataset.summaryIndex));
+    const showDetail = () => showExperimentDetail(row);
     row.addEventListener("click", event => {
         if (!interactive(event)) showDetail();
     });
@@ -517,11 +664,15 @@ listen("refresh-results", "click", () => {
 restoreFormState();
 installFormPersistence();
 updateDashboardForGame(playerAlgorithmSelects().map((select) => select.value));
-installTableSorting();
+installServerSorting();
+const filteredDeleteForm = element("delete-filtered-experiments");
+if (filteredDeleteForm) filteredDeleteForm.addEventListener("submit", submitFilteredDeletion, true);
 document.addEventListener("results-filter-change", (event) => {
-    resultFilters = event.detail;
-    updateSummaryRows();
+    if (handleServerBrowsingSelection(event.detail)) {
+        filterSelectionRevision += 1;
+        filteredDeletionNotice("");
+    }
 });
-updateSummaryRows();
+updateFilteredDeletion();
 updateEnvironmentDescription();
 pollActiveJobs();

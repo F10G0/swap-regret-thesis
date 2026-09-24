@@ -7,7 +7,7 @@ import pytest
 
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.results import iter_result_rows
-from tests.web.support import create_test_app, csrf_token
+from tests.web.support import browse_url, create_test_app, csrf_token
 from web.validation import ExperimentForm
 
 
@@ -61,12 +61,14 @@ def test_retired_results_are_downloadable_but_not_active_benchmarks(tmp_path, ga
     assert snapshot.warnings == (f"Skipped {retired.name}: unsupported game {game}",)
 
     client = app.test_client()
-    page = client.get("/")
+    page = client.get(browse_url(service, scope="rps"))
     assert page.status_code == 200
     data = _dashboard_data(page)
     assert game not in data["gameDefinitions"]
     assert game not in data["gamePresentations"]
-    assert {summary["game"] for summary in data["summaries"]} == {"rps"}
+    assert "summaries" not in data
+    assert page.data.count(b'data-scope="rps"') == 2
+    assert f'data-scope="{game}"'.encode() not in page.data
     assert {context["scope"] for context in client.get(
         "/figure-builder/options?mode=fixed",
     ).json["contexts"]} == {"rps"}
@@ -93,7 +95,11 @@ def test_supported_and_custom_visual_analysis_works_beside_retired_assets(tmp_pa
 
     client = app.test_client()
     token = csrf_token(client)
-    assert {row["game"] for row in _dashboard_data(client.get("/"))["summaries"]} == {"rps", custom.id}
+    page = client.get(browse_url(service, scope="rps"))
+    assert "summaries" not in _dashboard_data(page)
+    assert page.data.count(b'data-scope="rps"') == 2
+    custom_page = client.get(browse_url(service, scope=custom.id))
+    assert custom_page.data.count(f'data-scope="{custom.id}"'.encode()) == 2
     contexts = client.get("/figure-builder/options?mode=fixed").json["contexts"]
     assert {context["scope"] for context in contexts} == {"rps", custom.id}
     context = next(context for context in contexts if context["scope"] == custom.id and context["player"] == 0)

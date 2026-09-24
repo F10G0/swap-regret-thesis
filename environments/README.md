@@ -21,6 +21,6 @@ Call `step()` before reading feedback. Bandit fixed-game runs use `deviation_pay
 
 Runners supply valid actions/player ids and stop at the configured horizon; the per-round environment methods trust that call sequence. Fixed-game constructors still validate and copy external payoff tensors. Deviation-payoff vectors are views of that owned tensor and must be consumed read-only.
 
-The historical-frequency adversary adaptively uses the complete earlier action history and assigns payoff 0 to the most frequent half of the actions, rounded up. Bandit mode passes only the sampled payoff to the learner.
+The historical-frequency adversary uses cumulative action counts from earlier rounds, breaking ties with a rotating order. It assigns payoff 0 to the most frequent `ceil(K/2)` actions and payoff 1 to the others. Bandit mode passes only the sampled payoff to the learner.
 
-The lazy random walk precomputes an independent integer-state walk for every action. Rewards lie on `0, 0.1, ..., 1`; initialization is centered at `0.5` or uniform on that grid. Its random stream is derived from the experiment's base seed in a separate domain from the learner and never depends on learner actions.
+The environment precomputes an independent lazy random walk for every action. Rewards lie on `0, 0.1, ..., 1`, and every walk is initialized at `0.5`. Its random stream is derived from the experiment's base seed in a separate domain from the learner and never depends on learner actions.

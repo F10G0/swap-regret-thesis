@@ -1,5 +1,5 @@
 from concurrent.futures import Future, ThreadPoolExecutor
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from hashlib import sha256
 import logging
 from pathlib import Path
@@ -37,6 +37,8 @@ from experiments.scenarios.adversarial import (
     run_adversarial_experiment,
 )
 from experiments.scenarios.cross_play import ALGORITHMS_BY_FEEDBACK_MODE, FEEDBACK_MODE_LABELS, run_cross_play_experiment
+from metrics.equilibrium_distance import preflight_equilibrium_analysis
+from web.filtered_deletion import FilteredDeletionPreview, FilteredResultsChanged, filtered_deletion_membership
 from web.jobs import Job, JobContext, JobManager
 from web.presentations import GAME_PRESENTATIONS
 from web.validation import (
@@ -135,6 +137,11 @@ class DashboardService:
 
     def supports_equilibrium_distance(self, game_name: str) -> bool:
         return game_name in self.game_definitions
+
+    def preflight_equilibrium_distance(self, game_name: str) -> None:
+        definition = self.game_definitions[game_name]
+        for equilibrium in ("ce", "cce"):
+            preflight_equilibrium_analysis(definition.action_counts, equilibrium)
 
     def custom_games(self) -> tuple[list[GameDefinition], list[str]]:
         return self.game_catalog.custom_definitions()
@@ -373,6 +380,12 @@ class DashboardService:
         )
 
     def submit_experiment(self, form: ExperimentForm) -> Job:
+        definition = self.game_definitions.get(form.game)
+        if definition is not None:
+            for player, (algorithm, actions) in enumerate(zip(form.algorithm_names, definition.action_counts)):
+                if algorithm == "bm_optimistic_hedge" and actions < 2:
+                    raise ValueError(f"BM-OptHedge requires at least 2 actions for player {player} (game has {actions})")
+
         specs = [self._spec(form, replicate, horizon) for horizon in form.horizon_values
                  for replicate in range(form.replicates)]
 
@@ -484,6 +497,7 @@ class DashboardService:
         game_name = next(iter_result_rows(input_path))["game"]
         if not self.supports_equilibrium_distance(game_name):
             raise ValueError(f"equilibrium distance is unavailable for {game_name}")
+        self.preflight_equilibrium_distance(game_name)
         return (
             input_path,
             self.detail_figure_dir
@@ -498,6 +512,7 @@ class DashboardService:
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_equilibrium_distance(game_name):
             raise ValueError(f"equilibrium distance is unavailable for {game_name}")
+        self.preflight_equilibrium_distance(game_name)
         cache_stem = self._group_cache_stem(group_id, input_paths)
         return (
             input_paths,
@@ -636,6 +651,14 @@ class DashboardService:
             preserve=(self.adversarial_raw_dir,),
         )
 
+    def _delete_group_paths(self, kind: ResultKind, group_ids: list[str] | tuple[str, ...],
+                            results: ResultSet) -> int:
+        paths = [path for group_id in group_ids for path in self._result_group_paths(group_id, kind, results)]
+        for path in paths:
+            path.unlink()
+        self._clear_derived_artifacts()
+        return len(paths)
+
     def _delete_result_groups(self, kind: ResultKind, group_ids: list[str]) -> tuple[int, int]:
         if kind not in {"fixed", "adversarial"}:
             raise ValueError("invalid result kind")
@@ -645,11 +668,7 @@ class DashboardService:
 
         def operation() -> tuple[int, int]:
             results = self.result_snapshot(kind)
-            paths = [path for group_id in unique_ids for path in self._result_group_paths(group_id, kind, results)]
-            for path in paths:
-                path.unlink()
-            self._clear_derived_artifacts()
-            return len(unique_ids), len(paths)
+            return len(unique_ids), self._delete_group_paths(kind, unique_ids, results)
 
         return self.jobs.run_maintenance(operation)
 
@@ -658,6 +677,39 @@ class DashboardService:
 
     def delete_result_groups(self, kind: ResultKind, group_ids: list[str]) -> int:
         return self._delete_result_groups(kind, group_ids)[0]
+
+    def _filtered_result_groups(self, kind: ResultKind, values: Mapping,
+                                results: ResultSet | None = None) -> FilteredDeletionPreview:
+        if kind not in {"fixed", "adversarial"}:
+            raise ValueError("invalid result kind")
+        if values.get("mode") != kind:
+            raise ValueError("result mode does not match deletion route")
+        snapshot = results if results is not None else self.result_snapshot(kind)
+        catalog = self.figure_builder.catalog(kind, snapshot)
+        return filtered_deletion_membership(snapshot, catalog, values)
+
+    def preview_filtered_result_groups(self, kind: ResultKind, values: Mapping) -> FilteredDeletionPreview:
+        return self._filtered_result_groups(kind, values)
+
+    def delete_filtered_result_groups(self, kind: ResultKind, values: Mapping,
+                                      expected_digest: str) -> int:
+        if not isinstance(expected_digest, str) or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None:
+            raise ValueError("invalid membership digest")
+
+        def operation() -> int:
+            results = self.result_snapshot(kind)
+            try:
+                preview = self._filtered_result_groups(kind, values, results)
+            except ValueError as error:
+                # A context, profile or horizon may have disappeared since preview.
+                raise FilteredResultsChanged() from error
+            if preview.membership_digest != expected_digest:
+                raise FilteredResultsChanged(preview.count)
+            if preview.count:
+                self._delete_group_paths(kind, preview.group_ids, results)
+            return preview.count
+
+        return self.jobs.run_maintenance(operation)
 
     def clear_results(self) -> None:
         def operation() -> None:

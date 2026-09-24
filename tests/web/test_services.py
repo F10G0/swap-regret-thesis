@@ -10,7 +10,7 @@ from pypdf import PdfReader
 from web.jobs import Job, JobManager, ServiceBusyError
 from experiments.scenarios.adversarial import run_adversarial_experiment
 from experiments.scenarios.cross_play import run_cross_play_experiment
-from tests.web.support import block_job_queue, create_service, create_test_app, csrf_token, wait_for_async_result, wait_for_job
+from tests.web.support import block_job_queue, browse_url, create_service, create_test_app, csrf_token, wait_for_async_result, wait_for_job
 from web.validation import AdversarialExperimentForm, ExperimentForm
 
 
@@ -297,17 +297,17 @@ def test_delete_result_group_route_removes_one_visible_group_and_redirects(tmp_p
                         if row["base_learner_seed"] == 21)
         location = "/?mode=adversarial"
 
-    page = client.get(location).get_data(as_text=True)
+    page = client.get(browse_url(service, kind, group_id=group_id)).get_data(as_text=True)
     action = f'/experiment-groups/{kind}/{group_id}/delete'
     expected_rows = 2 if kind == "fixed" else 1
-    expected_delete_controls = 4 if kind == "fixed" else 2
+    expected_delete_controls = 2 if kind == "fixed" else 1
     assert page.count(f'action="{action}"') == expected_rows
     assert page.count(">Delete experiment</button>") == expected_delete_controls
     confirmation = "Delete this experiment and all of its replicates"
     expected_confirmation = f"{confirmation} for all players?" if kind == "fixed" else f"{confirmation}?"
     assert expected_confirmation in page
     assert page.count('<th class="sticky-actions">Actions</th>') == 1
-    assert page.count('<td class="sticky-actions">') == (4 if kind == "fixed" else 2)
+    assert page.count('<td class="sticky-actions">') == (2 if kind == "fixed" else 1)
     assert f'action="/experiment-groups/{kind}/delete-filtered"' in page
     response = client.post(action, data={"_csrf_token": csrf_token(client)})
     assert response.status_code == 302 and response.headers["Location"] == location
@@ -353,22 +353,17 @@ def test_bulk_group_deletion_is_atomic_deduplicated_and_cleans_once(tmp_path: Pa
     assert unrelated.is_file() and not artifact.exists() and cleanup_calls == 1
 
 
-@pytest.mark.parametrize("kind,location", [("fixed", "/"), ("adversarial", "/?mode=adversarial")])
-def test_filtered_deletion_route_submits_repeated_group_ids(tmp_path: Path, monkeypatch, kind: str, location: str) -> None:
+@pytest.mark.parametrize("kind", ["fixed", "adversarial"])
+def test_filtered_deletion_route_rejects_legacy_client_group_ids(tmp_path: Path, monkeypatch, kind: str) -> None:
     app, service = create_test_app(tmp_path)
-    submitted = []
-
-    def delete(submitted_kind, group_ids):
-        submitted.append((submitted_kind, group_ids))
-        return len(group_ids)
-
-    monkeypatch.setattr(service, "delete_result_groups", delete)
+    monkeypatch.setattr(service, "delete_result_groups",
+                        lambda *_: pytest.fail("legacy client group IDs must not be used"))
     client = app.test_client()
     response = client.post(f"/experiment-groups/{kind}/delete-filtered", data={
         "_csrf_token": csrf_token(client), "group_id": ["a" * 16, "b" * 16],
     })
-    assert response.status_code == 302 and response.headers["Location"] == location
-    assert submitted == [(kind, ["a" * 16, "b" * 16])]
+    assert response.status_code == 400
+    assert "membership digest" in response.get_json()["error"]
 
 
 def test_delete_result_group_rejects_busy_and_invalid_requests(tmp_path: Path) -> None:
@@ -380,7 +375,7 @@ def test_delete_result_group_rejects_busy_and_invalid_requests(tmp_path: Path) -
     outside.write_text("preserve", encoding="utf-8")
     blocker, release = block_job_queue(service.jobs)
     client = app.test_client()
-    page = client.get("/").get_data(as_text=True)
+    page = client.get(browse_url(service)).get_data(as_text=True)
     action = f'/experiment-groups/fixed/{group_id}/delete'
     form = page.split(f'action="{action}"', 1)[1].split("</form>", 1)[0]
     assert "data-busy-control" in form and "disabled" in form

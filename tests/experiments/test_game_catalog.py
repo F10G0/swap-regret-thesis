@@ -28,6 +28,22 @@ def test_custom_game_round_trip_is_reproducible(tmp_path) -> None:
     assert catalog.custom_path(definition.id) == tmp_path / "three-player-test.npz"
 
 
+def test_corrupt_custom_archive_is_skipped_without_hiding_valid_games(tmp_path) -> None:
+    catalog = GameCatalog(tmp_path)
+    valid = catalog.create_random("Usable Game", 2, [2, 2], 17)
+    expected_payoffs = catalog.load(valid.id).copy()
+    (tmp_path / "broken.npz").write_bytes(b"PK\x03\x04truncated")
+
+    definitions, warnings = catalog.custom_definitions()
+
+    assert [definition.id for definition in definitions] == [valid.id]
+    assert len(warnings) == 1
+    assert "Skipped broken.npz:" in warnings[0]
+    assert "zip" in warnings[0].lower()
+    assert valid.id in catalog.definitions()
+    assert np.array_equal(catalog.load(valid.id), expected_payoffs)
+
+
 def test_two_player_zero_sum_game_is_reproducible_symmetric_and_constant_sum(
     tmp_path,
 ) -> None:

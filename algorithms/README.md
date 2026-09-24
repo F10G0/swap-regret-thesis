@@ -20,7 +20,7 @@ The experiment runner always stops at a preset positive horizon `T`. The common 
 | `TsallisINF(K, seed=...)`, `LCEIXInner(K, seed=...)` | No horizon argument; each implements its own local-time schedule |
 | `RegretMatching`, `StationaryRegretMatching`, `FullIto`, `BanditIto`, `LCEIX` | No horizon argument |
 
-Zero is rejected by horizon-taking learners. Fixed rates never switch automatically to local-time rates. FullIto explicitly constructs Hedge with `horizon=None`; BanditIto constructs TsallisINF without a horizon. Custom inner factories receive `seed` by keyword and, where applicable, `horizon` by keyword. Registries explicitly declare whether to pass the experiment horizon. With `t` completed local updates, a local-time learner computes its next strategy using the paper's round index `t+1`.
+`BMOptimisticHedge` requires `K >= 2` and rejects the one-action case before computing its Chen–Peng rate. Zero is rejected by horizon-taking learners. Fixed rates never switch automatically to local-time rates. FullIto explicitly constructs Hedge with `horizon=None`; BanditIto constructs TsallisINF without a horizon. Custom inner factories receive `seed` by keyword and, where applicable, `horizon` by keyword. Registries explicitly declare whether to pass the experiment horizon. With `t` completed local updates, a local-time learner computes its next strategy using the paper's round index `t+1`.
 
 ## External-regret learners
 
@@ -40,11 +40,13 @@ The bandit experiment registry exposes `auer_exp3`, `exp3_ix`, `bm_exp3`, `ito_t
 
 `AuerExp3` defaults to the parameter choice from [Auer et al. (2002), Corollary 3.2](https://www.schapire.net/papers/AuerCeFrSc01.pdf). `BanditBM` explicitly selects the alternative parameter choice from the proof of Blum–Mansour Theorem 11: `gamma=min(1,sqrt(K log(K)/T))` and `eta=gamma/K`. Its `B_max=T` is valid because `B_{i,j}=E[sum_t p_i^t b_j^t] <= T` for rewards in `[0,1]`.
 
+Automatic BM-specific tuning requires `inner_algorithm_factory is AuerExp3`. A wrapper such as `partial(AuerExp3)` does not trigger it and, without an explicit tuning argument, uses standalone Auer tuning.
+
 ## Swap- and internal-regret reductions
 
 - `RegretMatching` implements Hart–Mas-Colell positive action-replacement regret. `StationaryRegretMatching` uses the stationary distribution of its regret transition matrix; its solver supports `solve`, `pinv`, and `iteration`.
 - `FullBM` is the full-information [Blum–Mansour (2007)](https://www.jmlr.org/papers/volume8/blum07a/blum07a.pdf) stationary reduction with one known-horizon `Hedge` learner per outer action.
-- `BMOptimisticHedge` is the Chen–Peng BM-Optimistic-Hedge algorithm: the standard `FullBM` reduction with one `OptimisticHedge` learner per outer action. Inner learner `i` receives weighted reward `x_t(i) r_t` and uses the fixed Theorem 5.1 rate `eta=(K log(K)/(m^2 T))^(1/4)` for `m` players. This and the standalone Optimistic Hedge rate are repeated-game tunings from Chen and Peng, not universal optimal choices for arbitrary environments.
+- `BMOptimisticHedge` is the Chen–Peng BM-Optimistic-Hedge algorithm: the standard `FullBM` reduction with one `OptimisticHedge` learner per outer action. Inner learner `i` receives weighted reward `x_t(i) r_t` and uses the fixed Theorem 5.1 rate `eta=(K log(K)/(m^2 T))^(1/4)` for `m` players. Repeated-game experiments use the actual player count; the one-player adversarial benchmark intentionally keeps the constructor default `m=2`. This and the standalone Optimistic Hedge rate are repeated-game tunings from Chen and Peng, not universal optimal choices for arbitrary environments.
 - `BanditBM` is the partial-information Blum–Mansour reduction with one BM-tuned `AuerExp3` learner per outer action. When outer action `k` is played, inner learner `i` receives the paper's observed gain `g_{i,k}=p_i q_{i,k} r_k/p_k`; its Auer learner then importance-weights by `q_{i,k}`. All inner learners update every round. Theorem 11 bounds swap pseudo-regret (the maximum over swap functions outside the expectation) by `O(K sqrt(K T log K))` with `B_max=T`.
 - `FullIto` follows the efficient reduction of [Ito (2020)](https://proceedings.neurips.cc/paper/2020/file/d79c8788088c2193f0244d8f1f36d2db-Paper.pdf): sample one inner learner from the stationary outer distribution, sample its action, and update only that learner. Its inner learners are anytime `Hedge` instances.
 - `BanditIto` uses the same Ito reduction with independent anytime `TsallisINF` inner learners. Each instance advances only when selected, so its time index is its own random local update count. Combining Ito's reduction with the minimax `O(sqrt(KT))` bandit learner yields the `O(K sqrt(T))` bandit swap-regret order.

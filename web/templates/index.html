@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_experiment_ui.html" import delete_filtered_results_form, delete_result_form, feedback_control, figure_dialog, jobs_panel, warning_panel, learning_configuration, queue_experiment_button, result_controls, regret_headers, regret_cells with context %}
+{% from "_experiment_ui.html" import delete_filtered_results_form, delete_result_form, feedback_control, figure_dialog, jobs_panel, warning_panel, learning_configuration, queue_experiment_button, result_controls, regret_headers, regret_cells, pagination_controls with context %}
 {% from "_one_player_experiment.html" import one_player_main, one_player_sidebar with context %}
 
 {% set sidebar_label = "Experiment configuration" %}
@@ -83,6 +83,9 @@
         <main id="main-content" class="content">
             {{ warning_panel(warnings, warning_heading_id) }}
             {{ jobs_panel(jobs, busy, job_heading_id, job_return_to, busy_id=job_busy_id) }}
+            <div id="job-poll-status" class="notice notice-error" role="status" hidden>
+                Job status is temporarily unavailable. Retrying…
+            </div>
             <div id="refresh-results-notice" class="notice" role="status" hidden>
                 Job status updated. Refresh when you’re ready to load the latest results.
                 <button id="refresh-results" type="button">Refresh results</button>
@@ -101,21 +104,24 @@
                             <h2 id="summary-heading">Recorded output</h2>
                         </div>
                         <div class="summary-heading-actions">
-                            <span>{{ summaries | length }} replicate-group player records</span>
+                            <span>{{ browsing.total_groups if browsing else summaries | length }} filtered scientific group{% if (browsing.total_groups if browsing else summaries | length) != 1 %}s{% endif %}</span>
                             {{ delete_filtered_results_form("fixed") }}
                         </div>
                     </div>
+                    {% if browsing and browsing.state and browsing.state.player == "all" %}
+                        <p class="hint">All players are shown together in canonical scientific-group order; column sorting is unavailable in this view.</p>
+                    {% endif %}
 
                         <div class="table-scroll">
-                            <table id="summary-table">
+                            <table id="summary-table"{% if browsing and browsing.state and browsing.state.player == "all" %} class="all-player-summary"{% endif %}>
                                 <thead>
                                     <tr>
-                                        <th>Game</th>
-                                        <th>Feedback</th>
-                                        <th>Seed / replicates</th>
-                                        <th>Player</th>
-                                        <th>Profile</th>
-                                        <th>Horizon</th>
+                                        <th data-sort="game">Game</th>
+                                        <th data-sort="feedback">Feedback</th>
+                                        <th data-sort="seed_replicates">Seed / replicates</th>
+                                        <th data-sort="player">Player</th>
+                                        <th data-sort="profile">Profile</th>
+                                        <th data-sort="horizon">Horizon</th>
                                         {{ regret_headers() }}
                                         <th class="sticky-actions">Actions</th>
                                     </tr>
@@ -126,14 +132,10 @@
                                             class="summary-row"
                                             tabindex="0"
                                             data-summary-index="{{ loop.index0 }}"
+                                            data-detail-url="{{ url_for('dashboard.fixed_group_detail', group_id=row.group_id, player=row.player) }}"
                                             data-scope="{{ row.game }}"
                                             data-player="{{ row.player }}"
-                                            data-profile="{{ row.algorithm_profile | join('_vs_') }}"
                                             data-result-key="{{ row.group_id }}"
-                                            data-feedback="{{ row.feedback_mode }}"
-                                            data-horizon="{{ row.horizon }}"
-                                            data-seed="{{ row.seed }}"
-                                            data-stationary-method="{{ row.stationary_method }}"
                                         >
                                             <td>{{ game_presentations[row.game].label }}</td>
                                             <td>{{ row.feedback_label }}</td>
@@ -148,6 +150,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        {{ pagination_controls() }}
 
                         <section id="experiment-detail" class="experiment-detail" hidden>
                             <div class="section-heading">
@@ -156,6 +159,8 @@
                                 </div>
                                 <button id="reuse-experiment" type="button">Reuse parameters</button>
                             </div>
+                            <p id="detail-status" class="notice" role="status" hidden></p>
+                            <div id="detail-content" hidden>
                             <dl id="detail-metadata" class="detail-metadata"></dl>
                             <div id="detail-regrets" class="detail-regrets"></div>
                             <div id="detail-downloads" class="detail-actions"></div>
@@ -171,14 +176,16 @@
                                 <section id="detail-convergence" class="detail-convergence detail-figure-card" aria-labelledby="detail-convergence-heading">
                                     <div id="detail-equilibrium-distance-card" class="detail-figure-content">
                                         <h3 id="detail-convergence-heading">Mean equilibrium distance</h3>
-                                        <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace below.</p>
+                                        <p>Distances are computed per replicate and then averaged. Shared trajectory analysis is available in the comparison workspace.</p>
                                         <div class="heatmap-frame">
                                             <img id="detail-equilibrium-distance" alt="CE and CCE L1 distance by horizon" loading="lazy">
                                             <span class="heatmap-loading" role="status">Loading convergence figure…</span>
                                         </div>
                                         <a id="detail-equilibrium-distance-download" href="" download>Download PDF</a>
                                     </div>
+                                    <p id="detail-equilibrium-distance-unavailable" class="notice" role="status" hidden></p>
                                 </section>
+                            </div>
                             </div>
                         </section>
                 </section>
@@ -191,8 +198,9 @@
                             </div>
                         </div>
                         <div class="empty-state">
-                            <strong>No results yet.</strong>
-                            <p>Configure and queue an experiment to record regret trajectories and summaries.</p>
+                            <strong>{{ "Loading saved result view…" if browsing and browsing.bootstrap else "No results yet." if not browsing or not browsing.state or not browsing.state.context else "No results match this selection." }}</strong>
+                            {% if not browsing or not browsing.bootstrap %}<p>Change the filters or queue an experiment to record more results.</p>{% endif %}
+                            {{ pagination_controls() }}
                         </div>
                     </section>
                 {% endif %}
@@ -209,17 +217,23 @@
                 "mode": experiment_mode,
                 "gameDefinitions": game_definitions,
                 "gamePresentations": game_presentations,
-                "summaries": summaries,
                 "algorithms": algorithms_by_feedback_mode,
                 "algorithmLabels": algorithm_labels,
+                "serverBrowsing": browsing is not none,
+                "browsingBootstrap": browsing.bootstrap if browsing else false,
+                "browsingState": browsing.state if browsing else none,
+                "browsingDefaultUrl": browsing.default_url if browsing else "",
             } | tojson }}
         {% else %}
             {{ {
                 "mode": experiment_mode,
-                "summaries": summaries,
                 "algorithms": algorithms_by_feedback_mode,
                 "algorithmLabels": algorithm_labels,
                 "environmentDescriptions": adversarial_environment_descriptions,
+                "serverBrowsing": browsing is not none,
+                "browsingBootstrap": browsing.bootstrap if browsing else false,
+                "browsingState": browsing.state if browsing else none,
+                "browsingDefaultUrl": browsing.default_url if browsing else "",
             } | tojson }}
         {% endif %}
     </script>

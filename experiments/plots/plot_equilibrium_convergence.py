@@ -27,6 +27,7 @@ from metrics.equilibrium_distance import (
     ReplicateEquilibriumDistanceTrajectory,
     aggregate_equilibrium_distance_trajectories,
     equilibrium_distance_trajectory,
+    preflight_equilibrium_analysis,
 )
 
 
@@ -168,6 +169,8 @@ def plot_result_equilibrium_distance(
 ) -> None:
     paths = [Path(input_paths)] if isinstance(input_paths, (str, Path)) else [Path(path) for path in input_paths]
     _, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
+    for equilibrium in ("ce", "cce"):
+        preflight_equilibrium_analysis(payoff_tensor.shape[1:], equilibrium)
     replicate_distances = [
         _load_result_distances(
             path, payoff_tensor,

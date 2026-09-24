@@ -1,17 +1,68 @@
 from dataclasses import dataclass
+from math import prod
 
 import numpy as np
 from scipy import sparse
 from scipy.optimize import linprog
 
-from config import EQUILIBRIUM_LP_TOLERANCE
-from metrics.empirical_distribution import EmpiricalDistributionTrajectory
+from config import EQUILIBRIUM_ANALYSIS_BUDGET_BYTES, EQUILIBRIUM_LP_TOLERANCE
+from metrics.empirical_distribution import EmpiricalDistributionTrajectory, validate_action_shape
 
 
 @dataclass(frozen=True)
 class EquilibriumDistanceResult:
     distance: float
     nearest_distribution: np.ndarray
+
+
+@dataclass(frozen=True)
+class EquilibriumAnalysisEstimate:
+    """Dense-allocation estimate for the current full-space LP construction."""
+
+    equilibrium: str
+    action_shape: tuple[int, ...]
+    n_profiles: int
+    n_incentive_rows: int
+    n_dense_coefficients: int
+    estimated_bytes: int
+
+
+class EquilibriumAnalysisUnavailable(RuntimeError):
+    """The requested exact analysis exceeds the configured resource budget."""
+
+    def __init__(self, estimate: EquilibriumAnalysisEstimate, budget_bytes: int):
+        self.estimate = estimate
+        self.budget_bytes = budget_bytes
+        super().__init__(
+            f"{estimate.equilibrium.upper()} equilibrium-distance analysis is unavailable for action space "
+            f"{estimate.action_shape} ({estimate.n_profiles:,} profiles): estimated current LP allocation "
+            f"{estimate.estimated_bytes:,} bytes exceeds the {budget_bytes:,}-byte analysis budget. "
+            "The game and regret results remain available."
+        )
+
+
+def estimate_equilibrium_analysis(action_shape, equilibrium: str) -> EquilibriumAnalysisEstimate:
+    """Estimate current dense LP allocations; not an operating-system peak RSS."""
+    shape = validate_action_shape(action_shape)
+    if equilibrium not in {"ce", "cce"}:
+        raise ValueError(f"unknown equilibrium concept {equilibrium!r}")
+    profiles = prod(shape)
+    rows = sum(actions * (actions - 1) if equilibrium == "ce" else actions for actions in shape)
+    coefficients = profiles * rows
+    # The row arrays and their stacked copy can coexist. The remaining terms
+    # cover the profile-index array, three working vectors, c, b_ub, a_eq, b_eq.
+    dense_float_values = 2 * coefficients + 9 * profiles + rows + 1
+    estimated_bytes = (dense_float_values * np.dtype(np.float64).itemsize
+                       + profiles * len(shape) * np.dtype(np.intp).itemsize)
+    return EquilibriumAnalysisEstimate(equilibrium, shape, profiles, rows, coefficients, estimated_bytes)
+
+
+def preflight_equilibrium_analysis(action_shape, equilibrium: str) -> EquilibriumAnalysisEstimate:
+    """Reject analyses beyond the fixed dense-allocation budget before LP preparation."""
+    estimate = estimate_equilibrium_analysis(action_shape, equilibrium)
+    if estimate.estimated_bytes > EQUILIBRIUM_ANALYSIS_BUDGET_BYTES:
+        raise EquilibriumAnalysisUnavailable(estimate, EQUILIBRIUM_ANALYSIS_BUDGET_BYTES)
+    return estimate
 
 
 def _validated_payoff_tensor(payoff_tensor) -> np.ndarray:
@@ -52,6 +103,7 @@ class _PreparedDistanceLP:
         self.equilibrium = equilibrium
         payoffs = np.asarray(payoff_tensor, dtype=float)
         self.action_shape = payoffs.shape[1:]
+        preflight_equilibrium_analysis(self.action_shape, equilibrium)
         self.n_profiles = int(np.prod(self.action_shape))
         profiles = np.array(list(np.ndindex(self.action_shape)))
         incentive_rows = []
@@ -100,7 +152,7 @@ class _PreparedDistanceLP:
 
 
 def equilibrium_l1_distance(payoff_tensor, empirical_distribution, equilibrium: str = "ce") -> EquilibriumDistanceResult:
-    """Return exact full-dimensional L1 distance and a nearest CE/CCE."""
+    """Return full-space L1 distance and a nearest CE/CCE via a numerical LP."""
     payoffs = _validated_payoff_tensor(payoff_tensor)
     action_shape = payoffs.shape[1:]
     empirical = _validated_distribution(empirical_distribution, action_shape)
@@ -130,6 +182,8 @@ def equilibrium_distance_trajectory(
     empirical: EmpiricalDistributionTrajectory,
 ) -> EquilibriumDistanceTrajectory:
     payoffs = _validated_payoff_tensor(payoff_tensor)
+    for equilibrium in ("ce", "cce"):
+        preflight_equilibrium_analysis(payoffs.shape[1:], equilibrium)
     ce = _PreparedDistanceLP(payoffs, "ce")
     cce = _PreparedDistanceLP(payoffs, "cce")
     if empirical.action_shape != ce.action_shape:

@@ -41,12 +41,14 @@ web: ## Start the local experiment dashboard
 
 ##@ Validation
 
-test: ## Run the complete test suite without creating caches
+test: ## Run the complete Python and Node/jsdom test suite without creating caches
+	@command -v node >/dev/null 2>&1 || { echo "Node.js >=12.22.0 is required for make test. Install Node.js, then run npm install." >&2; exit 1; }
+	@node -e "require('jsdom')" >/dev/null 2>&1 || { echo "jsdom is required for make test. Run npm install in the project root." >&2; exit 1; }
 	PYTHONDONTWRITEBYTECODE=1 $(PYTEST) -q -p no:cacheprovider
 
 ##@ Cleanup
 
-clean: ## Remove Python caches and temporary staging files
+clean: ## Remove Python caches and selected figure/game staging directories
 	find . -type d \( -name "__pycache__" -o -name ".pytest_cache" \) -prune -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 	find "$(RESULTS_DIR)" "$(CUSTOM_GAME_DIR)" -type d \( -name ".figures-*" -o -name ".equilibrium-convergence-*" -o -name ".custom-game-*" \) -prune -exec rm -rf {} + 2>/dev/null || true

@@ -93,13 +93,36 @@
 {% endmacro %}
 
 {% macro regret_headers() %}
-    {% for column in regret_columns %}<th data-regret="{{ column.metric }}" data-view="{{ column.view }}">{{ column.label }}</th>{% endfor %}
+    {% for column in regret_columns %}
+        {% set column_hidden = browsing and not browsing.bootstrap and ((browsing.state.metric != "all" and column.metric != browsing.state.metric) or (browsing.state.view not in ("all", "horizon_scaling") and column.view != browsing.state.view)) %}
+        <th {% if column_hidden %}hidden {% endif %}data-sort="{{ column.key }}">{{ column.label }}</th>
+    {% endfor %}
 {% endmacro %}
 
 {% macro regret_cells(row) %}
     {% for column in regret_columns %}
-        <td data-regret="{{ column.metric }}" data-view="{{ column.view }}" data-metric="{{ column.key }}" data-value="{{ row.display_regrets[column.key] }}">{{ "%.6f" | format(row.display_regrets[column.key]) }}</td>
+        {% set column_hidden = browsing and not browsing.bootstrap and ((browsing.state.metric != "all" and column.metric != browsing.state.metric) or (browsing.state.view not in ("all", "horizon_scaling") and column.view != browsing.state.view)) %}
+        <td {% if column_hidden %}hidden {% endif %}{% if column.key in row.best_regret_columns %}class="best-value"{% endif %}>{{ "%.6f" | format(row.display_regrets[column.key]) }}</td>
     {% endfor %}
+{% endmacro %}
+
+{% macro pagination_controls() %}
+    {% if browsing and not browsing.bootstrap %}
+        <nav class="result-pagination" aria-label="Result pages">
+            <span>{{ browsing.total_groups }} scientific group{% if browsing.total_groups != 1 %}s{% endif %} · Page {{ browsing.page }} of {{ browsing.total_pages }}</span>
+            {% if browsing.previous_url %}<a href="{{ browsing.previous_url }}">Previous</a>{% else %}<span>Previous</span>{% endif %}
+            {% if browsing.next_url %}<a href="{{ browsing.next_url }}">Next</a>{% else %}<span>Next</span>{% endif %}
+            <form method="get" action="{{ url_for('dashboard.index') }}">
+                {% for key, value in browsing.form_params %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+                <input type="hidden" name="page" value="1">
+                <label for="result-page-size">Groups per page</label>
+                <select id="result-page-size" name="page_size">
+                    {% for size in (25, 50, 100) %}<option value="{{ size }}" {% if browsing.page_size == size %}selected{% endif %}>{{ size }}</option>{% endfor %}
+                </select>
+                <button type="submit">Apply</button>
+            </form>
+        </nav>
+    {% endif %}
 {% endmacro %}
 
 {% macro delete_result_form(kind, group_id) %}
@@ -112,8 +135,7 @@
 {% macro delete_filtered_results_form(kind) %}
     <form id="delete-filtered-experiments" method="post" action="{{ url_for('dashboard.delete_filtered_result_groups', kind=kind) }}" data-confirm="Delete the filtered experiments and all of their replicates? Generated figures and caches will also be cleared. This cannot be undone.">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <span data-filtered-group-inputs></span>
-        <button id="delete-filtered-experiments-button" class="button-link button-danger" type="submit" data-busy-control disabled>Delete filtered experiments (<span data-filtered-group-count>0</span>)</button>
+        <button id="delete-filtered-experiments-button" class="button-link button-danger" type="submit" data-busy-control disabled>Delete filtered experiments</button>
     </form>
 {% endmacro %}
 

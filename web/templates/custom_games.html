@@ -54,7 +54,7 @@
                         <label for="custom-player-count">Players</label>
                         <input id="custom-player-count" name="n_players" type="number" value="{{ form_state.n_players }}" min="2" max="{{ max_players }}" required>
                     </div>
-                    <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson | forceescape }}"></div>
+                    <div id="custom-action-counts" class="action-count-grid" data-initial-counts="{{ form_state.get('action_counts', []) | tojson | forceescape }}" data-max-actions="{{ max_actions }}"></div>
                     <p class="hint">At most {{ "{:,}".format(max_payoff_values) }} payoff values.</p>
                     <button class="button-primary" type="submit">Generate and save game</button>
                 </form>

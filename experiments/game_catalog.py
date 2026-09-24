@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import tempfile
 from threading import Lock
+from zipfile import BadZipFile
 
 import numpy as np
 
@@ -199,7 +200,7 @@ class GameCatalog:
                 else:
                     definition, _ = self._load_custom_file(path)
                     self._definition_cache[path] = (stat.st_mtime_ns, stat.st_size, definition)
-            except (OSError, TypeError, ValueError) as error:
+            except (OSError, TypeError, ValueError, BadZipFile) as error:
                 warnings.append(f"Skipped {path.name}: {error}")
             else:
                 definitions.append(definition)

@@ -10,6 +10,8 @@ import time
 
 from web import create_app
 from web.services import DashboardService
+from web.browsing import default_browsing_query, query_string
+from web.presentation_query import parse_dashboard_query
 
 
 ADVERSARIAL_FORM = {
@@ -123,9 +125,47 @@ def run_node(script, *args, payload=None, jsdom=False):
     assert completed.returncode == 0, completed.stderr
 
 
-def run_ui(app, service, script, mode="fixed", **data):
+def browse_url(service, mode="fixed", *, scope=None, comparison_mode="profiles",
+               player="all", action=None, horizon=None, profiles=None, feedback=None,
+               group_id=None):
+    catalog = service.figure_builder.catalog(mode)
+    context = next(item for item in catalog["contexts"]
+                   if (scope is None or item["scope"] == scope)
+                   and (group_id is None or group_id in item["result_keys"])
+                   and (mode == "adversarial" or item["player"] == 0))
+    profile = context["profiles"][0]
+    if action is None and mode == "adversarial":
+        action = "all" if comparison_mode == "actions" else str(profile["actions"][0])
+    if horizon is None:
+        horizon = ("all" if comparison_mode == "horizons"
+                   else str(profile["horizons"][0]))
+    values = {
+        "mode": mode, "scope": context["scope"], "context": context["id"],
+        "comparison_mode": comparison_mode, "feedback": feedback or profile["feedback_mode"],
+        "horizon": horizon, "profiles": profiles if profiles is not None else [profile["id"]],
+        "view": "horizon_scaling" if comparison_mode == "horizons" else "all",
+        "player": player if mode == "fixed" else None,
+        "action": action if mode == "adversarial" else None,
+    }
+    return "/?" + query_string(parse_dashboard_query(values, catalog))
+
+
+def production_ui_page(app, service, mode="fixed", *, url=None):
+    """Render the same canonical or bare-URL dashboard page served to a browser."""
+    if url is None:
+        catalog = service.figure_builder.catalog(mode)
+        if catalog["contexts"]:
+            url = "/?" + query_string(default_browsing_query(catalog, mode))
+        else:
+            url = "/" if mode == "fixed" else "/?mode=adversarial"
+    response = app.test_client().get(url)
+    assert response.status_code == 200
+    return response.get_data(as_text=True)
+
+
+def run_ui(app, service, script, mode="fixed", *, url=None, **data):
     static = Path(__file__).parents[2] / "web/static"
-    payload = {"page": app.test_client().get("/", query_string={"mode": mode}).get_data(as_text=True),
+    payload = {"page": production_ui_page(app, service, mode, url=url),
                "catalog": service.figure_builder.catalog(mode),
                "script": "\n".join((static / name).read_text() for name in ("common.js", "dashboard.js", "figure_builder.js"))} | data
     run_node(script, payload=payload, jsdom=True)

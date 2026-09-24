@@ -7,8 +7,16 @@
     const builder = name => document.getElementById(`builder-${name}`);
     const onePlayer = form.elements.mode.value === "adversarial";
     const storageKey = `swap-regret-profile-batch-filters-${form.elements.mode.value}`;
-    let saved = {};
-    try { saved = JSON.parse(localStorage.getItem(storageKey)) || {}; } catch (_) {}
+    let localSaved = {};
+    try { localSaved = JSON.parse(localStorage.getItem(storageKey)) || {}; } catch (_) {}
+    const browsingData = JSON.parse(document.getElementById("dashboard-data").textContent);
+    const urlAuthoritative = browsingData.serverBrowsing && !browsingData.browsingBootstrap;
+    const urlState = browsingData.browsingState || {};
+    const saved = urlAuthoritative
+        ? {...localSaved, ...urlState,
+           selections: {...(localSaved.selections || {}), ...(urlState.selections || {})}}
+        : localSaved;
+    const emptyUrlSelection = urlAuthoritative && Array.isArray(saved.profiles) && saved.profiles.length === 0;
     const selections = new Map(Object.entries(saved.selections || {}));
     const feedbackLabels = {full_information: "Full information", bandit: "Bandit feedback", both: "Both"};
     let catalog = {contexts: [], metrics: [], views: []};
@@ -31,6 +39,7 @@
     const comparisonMode = () => filters.querySelector('input[name="comparison_mode"]:checked').value;
     const profiles = () => [...filter("profiles").selectedOptions].map(option => option.value);
     const selectionValid = () => currentContext && profiles().length > 0
+        && (onePlayer || filter("player").value !== "all")
         && (comparisonMode() === "profiles" || profiles().length === 1)
         && (comparisonMode() === "horizons" || filter("horizon").value !== "all")
         && (!onePlayer || comparisonMode() === "actions" || filter("action").value !== "all");
@@ -127,7 +136,7 @@
         profileSelect.multiple = !single;
         profileSelect.size = single ? 1 : Math.min(Math.max(profileSelect.options.length, 2), 8);
         filter("profiles-label").textContent = single ? "Algorithm profile" : "Algorithm profiles";
-        if (single) [...profileSelect.options].forEach(option => option.selected = option.value === chosen);
+        if (single) [...profileSelect.options].forEach(option => option.selected = !emptyUrlSelection && option.value === chosen);
         comparisonModes.forEach(value => {
             filter(`compare-${value}`).disabled = !catalog.contexts.some(context => context.comparison_modes.includes(value));
         });
@@ -142,7 +151,8 @@
         const revision = ++selectionRevision;
         clearFigures();
         if (!selectionValid()) {
-            builder("status").textContent = "No figures to display.";
+            builder("status").textContent = !onePlayer && filter("player").value === "all"
+                ? "Select a numbered player to generate figures." : "No figures to display.";
             updateButtons();
             return;
         }
@@ -217,20 +227,26 @@
         selectionKey = currentContext ? `${currentContext.id}:${feedback}:${comparisonMode()}:${action}:${horizon}` : "";
         const remembered = Array.isArray(selections.get(selectionKey)) ? selections.get(selectionKey) : [];
         const profileEntries = [...unique].sort(([left], [right]) => left.localeCompare(right));
+        const completeProfileSet = ["regrets", "horizons"].includes(comparisonMode())
+            && remembered.length > 1 && remembered.length === compatibleProfileIds.length
+            && compatibleProfileIds.every(value => remembered.includes(value));
         if (["regrets", "horizons"].includes(comparisonMode()) && profileEntries.length) {
             profileEntries.unshift(["all", "All algorithm profiles"]);
         }
         filter("profiles").disabled = true;
+        filter("profiles").multiple = comparisonMode() === "profiles";
         filter("profiles").replaceChildren(...profileEntries.map(([value, label]) => new Option(label, value)));
         const profileOptions = [...filter("profiles").options];
         if (comparisonMode() === "profiles") {
             profileOptions.forEach(option => option.selected = remembered.includes(option.value));
-            if (!filter("profiles").selectedOptions.length && compatibleProfileIds.length) {
+            if (!emptyUrlSelection && !filter("profiles").selectedOptions.length && compatibleProfileIds.length) {
                 filter("profiles").value = compatibleProfileIds[0];
             }
         } else {
-            filter("profiles").value = remembered.find(value => profileOptions.some(option => option.value === value))
-                || compatibleProfileIds[0] || "";
+            filter("profiles").value = emptyUrlSelection ? ""
+                : completeProfileSet ? "all"
+                    : remembered.find(value => profileOptions.some(option => option.value === value))
+                        || compatibleProfileIds[0] || "";
         }
         filter("profiles").disabled = filter("profiles").options.length === 0;
 
@@ -246,6 +262,7 @@
         selectedView = filter("view").value;
         updateMetricControl();
         updateComparisonControls();
+        if (emptyUrlSelection) filter("profiles").selectedIndex = -1;
         remember();
         selectionChanged();
     }
@@ -270,12 +287,15 @@
             || context.feedback_modes.includes(filter("feedback").value));
         if (!onePlayer) {
             const players = [...new Set(available.map(context => context.player))].sort((a, b) => a - b);
-            setOptions(filter("player"), players.map(value => [String(value), `Player ${value}`]), wantedPlayer);
+            const playerEntries = players.map(value => [String(value), `Player ${value}`]);
+            if (players.length) playerEntries.push(["all", "All players"]);
+            setOptions(filter("player"), playerEntries, wantedPlayer);
         }
         const contexts = catalog.contexts.filter(context => context.scope === filter("scope").value
             && context.comparison_modes.includes(comparisonMode())
             && (filter("feedback").value === "both" || context.feedback_modes.includes(filter("feedback").value))
-            && (onePlayer || String(context.player) === filter("player").value));
+            && (onePlayer || filter("player").value === "all"
+                || String(context.player) === filter("player").value));
         const entries = contexts.map(context => [context.id, context.batch_label]);
         setOptions(filter("context"), entries, wantedContext);
         filter("batches").hidden = entries.length <= 1;

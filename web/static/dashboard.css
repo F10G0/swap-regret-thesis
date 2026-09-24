@@ -918,6 +918,26 @@ fieldset {
     border-radius: 10px;
 }
 
+.result-pagination,
+.result-pagination form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.result-pagination {
+    font-size: 0.84rem;
+}
+
+.result-pagination form {
+    margin-left: auto;
+}
+
+.result-pagination select {
+    width: auto;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -937,6 +957,11 @@ th {
     top: 0;
     background: var(--surface-muted);
     cursor: pointer;
+}
+
+#summary-table.all-player-summary th,
+#summary-table th:not([data-sort]) {
+    cursor: default;
 }
 
 #summary-table .sticky-actions {

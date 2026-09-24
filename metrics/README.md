@@ -2,9 +2,9 @@
 
 Utilities for regret, empirical play, and equilibrium convergence.
 
-`RegretBundle(n_actions)` maintains one cumulative action-regret replacement-gain matrix. Runners update it every round and extract summaries at every round through horizon 500, or at most 500 geometric checkpoints for longer runs.
+`RegretBundle(n_actions)` maintains one cumulative action-regret replacement-gain matrix. Runners update it every round; under the default recording policy, they extract summaries at every round through horizon 500, or at most 500 geometric checkpoints for longer runs.
 
-Regret updates trust sampled action indices and environment payoff vectors; they perform only the replacement-gain arithmetic. Fixed-game result loaders validate stored cumulative histogram trajectories before equilibrium analysis.
+`RegretBundle.update` checks the sampled action's range but assumes the payoff vector has the expected shape and finite values. Fixed-game result loaders validate stored cumulative histogram trajectories before equilibrium analysis.
 
 ## Regret
 
@@ -17,7 +17,7 @@ internal regret = max_{i,j} G[i,j]
 swap regret     = sum_i max_j G[i,j]
 ```
 
-Each round therefore updates only `G[I_t, :]`. The evaluator uses the full payoff vector offline, while bandit learners still observe only their sampled reward. Regret and empirical-play analyses refer to the same sampled-action trajectory. Replicate curves and final summaries report replicate-mean action regret, a Monte Carlo estimate of expected action regret, without confidence bands.
+Each round therefore updates only `G[I_t, :]`. The evaluator uses the full payoff vector offline, while bandit learners still observe only their sampled reward. Regret and empirical-play analyses refer to the same sampled-action trajectory. Replicate curves and final summaries report replicate-mean action regret, a Monte Carlo estimate of expected action regret, without confidence bands. Theoretical pseudo-regret instead maximizes over deviations after taking expectation; these plots average each run's realized maximum.
 
 ## Empirical Play and Equilibria
 
@@ -25,4 +25,6 @@ Each round therefore updates only `G[I_t, :]`. The evaluator uses the full payof
 
 `equilibrium_l1_distance(...)` solves `min_{q in E} ||q - empirical||_1`, where `E` is CE or CCE. The local implementation in `equilibrium_distance.py` constructs incentive constraints and uses `scipy.optimize.linprog(method="highs")`. Prepared LPs reuse fixed coefficient matrices across checkpoints.
 
-Distances are measured in the full joint-distribution space. `equilibrium_convergence.py` computes distances per replicate and then averages them; it does not measure the distance of the replicate-mean distribution. Figures show mean CE/CCE distances without confidence bands.
+Before building dense incentive rows, a deterministic 128 MiB budget estimates the current LP's dense row arrays, stacked copy, and other fixed-size dense intermediates separately for CE and CCE. This is not a peak-RSS estimate. Over-budget equilibrium-distance analysis is unavailable, but game validity and regret learning are unaffected; within-budget analyses retain the same exact full-space formulation solved numerically.
+
+Distances are measured in the full joint-distribution space. `equilibrium_distance_trajectory(...)` computes them per replicate, and `aggregate_equilibrium_distance_trajectories(...)` then averages them; this is not the distance of the replicate-mean distribution. Figures show mean CE/CCE distances without confidence bands.

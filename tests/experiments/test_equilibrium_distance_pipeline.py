@@ -187,3 +187,17 @@ def test_distances_use_every_stored_histogram_checkpoint(tmp_path, monkeypatch):
     np.testing.assert_array_equal(empirical.horizons, joint_action_histogram_checkpoints(300))
     np.testing.assert_array_equal(empirical.horizons, stored.horizons)
     np.testing.assert_array_equal(empirical.vectors, stored.vectors)
+
+
+def test_direct_equilibrium_plot_preflights_before_loading_distance_cache(tmp_path, monkeypatch):
+    payoff_view = np.broadcast_to(np.zeros((2, 1, 1)), (2, 100, 100))
+    monkeypatch.setattr(plotting, "_load_equilibrium_game",
+                        lambda paths, custom_game_dir: ("large", payoff_view, []))
+    monkeypatch.setattr(plotting, "_load_result_distances",
+                        lambda *args: pytest.fail("loaded distances before preflight"))
+
+    with pytest.raises(metric.EquilibriumAnalysisUnavailable) as captured:
+        plotting.plot_result_equilibrium_distance(tmp_path / "unused.csv", tmp_path / "unused.png")
+
+    assert captured.value.estimate.equilibrium == "ce"
+    assert not (tmp_path / "unused.png").exists()

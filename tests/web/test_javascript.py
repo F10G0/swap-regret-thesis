@@ -4,12 +4,21 @@ import subprocess
 
 import pytest
 
-from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT
+from experiments.scenarios.adversarial import RANDOM_WALK_ENVIRONMENT, run_adversarial_experiment
 from tests.web.support import (
-    ADVERSARIAL_FORM as VALID_FORM, create_test_app, csrf_token, record_fixed_runs as result,
-    run_node, run_ui, submit_and_wait,
+    ADVERSARIAL_FORM as VALID_FORM, browse_url, create_test_app, csrf_token, production_ui_page,
+    record_fixed_runs as result, run_node, run_ui, submit_and_wait,
 )
 from web.jobs import Job
+
+
+def fixed_details(app, service):
+    client = app.test_client()
+    return {
+        (url := f'/experiment-groups/fixed/{row["group_id"]}/players/{row["player"]}'):
+        client.get(url).get_json()
+        for row in service.result_snapshot().summaries(grouped=True)
+    }
 
 
 @pytest.mark.parametrize("mode,terminal", [("fixed", "succeeded"), ("fixed", "failed"), ("adversarial", "cancelled")])
@@ -131,6 +140,63 @@ w.eval(payload.script);
     run_ui(app, service, script, mode, endpoint=endpoint, terminal=terminal, queued=response.get_json())
 
 
+def test_job_polling_failure_is_visible_retried_and_cleared(tmp_path, monkeypatch):
+    app, service = create_test_app(tmp_path)
+    monkeypatch.setattr(service.jobs, "recent", lambda: [Job("old", "Existing", "running", "Running", "now")])
+    script = r'''
+const assert = require("assert").strict;
+const {JSDOM, VirtualConsole} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const virtualConsole = new VirtualConsole();
+virtualConsole.on("jsdomError", error => {throw error;});
+const dom = new JSDOM(payload.page, {url: "http://localhost/", runScripts: "outside-only", virtualConsole});
+const w = dom.window, d = w.document;
+const timers = [];
+let polls = 0;
+w.setTimeout = (callback, delay) => {timers.push({callback, delay}); return timers.length;};
+w.clearTimeout = () => {};
+w.fetch = url => {
+    if (url === "/jobs/old") {
+        polls += 1;
+        if (polls <= 2) return Promise.reject(new Error("Network unavailable"));
+        return Promise.resolve({ok: true, json: async () => ({id: "old", status: "running", message: "Still running"})});
+    }
+    return Promise.resolve({ok: true, json: async () => payload.catalog});
+};
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const retry = () => {
+    assert.equal(timers.length, 1);
+    const timer = timers.shift();
+    assert.equal(timer.delay, 1200);
+    timer.callback();
+};
+w.eval(payload.script);
+(async () => {
+    const status = d.getElementById("job-poll-status");
+    await tick();
+    assert.equal(polls, 1);
+    assert.equal(status.hidden, false);
+    assert.match(status.textContent, /temporarily unavailable/i);
+    assert.equal(d.querySelector('[data-job-id="old"]').dataset.status, "running");
+    const warning = status.textContent;
+    retry(); await tick();
+    assert.equal(polls, 2);
+    assert.equal(d.querySelectorAll("#job-poll-status").length, 1);
+    assert.equal(status.textContent, warning);
+    assert.equal(status.hidden, false);
+    retry(); await tick();
+    assert.equal(polls, 3);
+    assert.equal(status.hidden, true);
+    assert.equal(status.textContent, "");
+    assert.equal(d.querySelector('[data-job-id="old"]').dataset.status, "running");
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delay, 1200);
+    dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});
+'''
+    run_ui(app, service, script)
+
+
 @pytest.mark.parametrize("filename", ["common.js", "dashboard.js", "custom_games.js", "figure_builder.js"])
 def test_web_javascript_parses(filename: str) -> None:
     node = shutil.which("node")
@@ -200,6 +266,8 @@ const values = dom => {
 };
 
 const first = render(payload.page), w = first.window, d = w.document;
+assert.equal(d.getElementById("custom-action-counts").dataset.maxActions, "100");
+assert([...d.querySelectorAll("#custom-action-counts input")].every(input => input.max === "100"));
 const change = (id, value, eventName) => {
     const input = d.getElementById(id); input.value = value;
     input.dispatchEvent(new w.Event(eventName, {bubbles: true}));
@@ -222,6 +290,15 @@ first.window.close();
 const inspection = render(payload.inspectionPage, stored);
 assert.deepEqual(values(inspection), expected);
 inspection.window.close();
+
+const boundary = render(payload.page, JSON.stringify({...expected, actionCounts: ["100", "3", "4"]}));
+assert.equal(values(boundary).actionCounts[0], "100");
+assert.equal(boundary.window.document.querySelector("#custom-action-counts input").max, "100");
+boundary.window.close();
+
+const overflow = render(payload.page, JSON.stringify({...expected, actionCounts: ["101", "3", "4"]}));
+assert.equal(values(overflow).actionCounts[0], "2");
+overflow.window.close();
 
 const failed = render(payload.errorPage, stored);
 const submitted = {name: "Submitted Game", seed: "-1", payoffStructure: "general_sum",
@@ -292,8 +369,8 @@ returned.window.close();
 '''
     static = Path(__file__).parents[2] / "web/static"
     payload = {
-        "fixedPage": app.test_client().get("/").get_data(as_text=True),
-        "onePlayerPage": app.test_client().get("/?mode=adversarial").get_data(as_text=True),
+        "fixedPage": production_ui_page(app, service),
+        "onePlayerPage": production_ui_page(app, service, "adversarial"),
         "catalog": service.figure_builder.catalog("fixed"),
         "script": "\n".join((static / name).read_text() for name in ("common.js", "dashboard.js", "figure_builder.js")),
     }
@@ -430,7 +507,7 @@ w.eval(payload.script);
     assert.equal(b("generate").disabled, true);
     assert(visibleRows().length > 0);
     assert.equal(visibleRows()[0].children[1].textContent, "Full information");
-    assert.equal(d.querySelectorAll('#figure-builder select, .summary-panel select, .summary-panel input:not([type="hidden"])').length, 0);
+    assert.deepEqual([...d.querySelectorAll('#figure-builder select, .summary-panel select')].map(select => select.id), ["result-page-size"]);
     assert.equal(cacheRequests.length, 1); assert.equal(generations.length, 0);
     assert.deepEqual(cacheRequests[0].body.getAll("profiles"), ["hedge_vs_hedge"]);
     assert.equal(cacheRequests[0].body.get("comparison_mode"), "regrets");
@@ -530,25 +607,27 @@ w.eval(payload.script);
     assert.equal(f("view").value, "average");
     assert.equal(f("metric").disabled, false);
     assert.equal(f("metric").value, "internal");
-    assert.equal(f("profiles").selectedOptions.length, 1);
+    assert.deepEqual([...f("profiles").selectedOptions].map(option => option.value).sort(),
+        ["hedge_vs_hedge", "hedge_vs_ito_hedge"].sort());
     finishCache(8); await tick(); await tick();
 
     change("feedback", "both");
     assert.deepEqual([...f("profiles").options].map(option => option.textContent).sort(),
         ["EXP3 vs BM-EXP3", "Hedge vs Hedge", "Hedge vs Ito-Hedge", "Ito-Hedge vs Ito-Hedge"].sort());
     selectProfiles(["hedge_vs_hedge", "auer_exp3_vs_bm_exp3"]);
-    assert.deepEqual(new Set(visibleRows().map(row => row.dataset.feedback)), new Set(["full_information", "bandit"]));
+    assert.equal(visibleRows().length, 1); // The current server page is not re-filtered in place.
     f("compare-regrets").checked = true;
     f("compare-regrets").dispatchEvent(new w.Event("change"));
     assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").selectedOptions.length, 1);
     assert.equal(f("profiles").options[0].value, "all");
     f("profiles").value = "all"; f("profiles").dispatchEvent(new w.Event("change"));
-    assert.deepEqual(new Set(visibleRows().map(row => row.dataset.profile)), new Set([
-        "hedge_vs_hedge", "ito_hedge_vs_ito_hedge", "hedge_vs_ito_hedge", "auer_exp3_vs_bm_exp3"]));
+    assert.equal(visibleRows().length, 1);
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
-    run_ui(app, service, script)
+    run_ui(app, service, script, url=browse_url(service, scope="rps",
+        comparison_mode="regrets", feedback="full_information", horizon="30",
+        player="0", profiles=["hedge_vs_hedge"]))
 
 
 def test_result_filter_sizes_profiles_and_disables_empty_dependencies(tmp_path):
@@ -614,7 +693,7 @@ w.eval(payload.script);
     assert.equal(d.getElementById("builder-status").textContent, "No figures to display.");
     assert.equal(d.getElementById("empty-results-heading").textContent, "Recorded output");
     assert.equal(d.querySelector(".summary-panel .eyebrow").textContent, "Data");
-    assert.equal(d.querySelector(".summary-panel .empty-state strong").textContent, "No results yet.");
+    assert.equal(d.querySelector(".summary-panel .empty-state strong").textContent, "Loading saved result view…");
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
@@ -654,8 +733,7 @@ w.eval(payload.script);
     assert.deepEqual([...f("horizon").options].map(option => option.value), ["20", "40", "80"]);
     assert.equal(f("horizon").value, "20"); assert.equal(f("horizon").disabled, false);
     f("horizon").value = "40"; f("horizon").dispatchEvent(new w.Event("change"));
-    assert([...d.querySelectorAll(".summary-row")].filter(row => !row.hidden)
-        .every(row => row.dataset.horizon === "40"));
+    assert([...d.querySelectorAll(".summary-row")].every(row => !row.hidden));
     assert.equal(f("compare-horizons").disabled, false);
     f("compare-horizons").checked = true;
     f("compare-horizons").dispatchEvent(new w.Event("change"));
@@ -693,7 +771,7 @@ w.eval(payload.script);
     run_ui(app, service, script)
 
 
-def test_filtered_deletion_and_fixed_row_interactions_follow_visible_groups(tmp_path):
+def test_filtered_deletion_does_not_collect_dom_ids_and_fixed_row_interactions_still_work(tmp_path):
     app, service = create_test_app(tmp_path)
     result(service, "hedge_vs_hedge")
     result(service, "ito_hedge_vs_ito_hedge")
@@ -703,9 +781,11 @@ const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
 const dom = new JSDOM(payload.page, {url: "http://localhost/", runScripts: "outside-only"});
 const w = dom.window, d = w.document, f = name => d.getElementById("filter-" + name);
 const tick = () => new Promise(resolve => setImmediate(resolve));
-w.fetch = async (url, options) => options
-    ? {ok: true, json: async () => ({cached: false, figures: []})}
-    : {ok: true, json: async () => payload.catalog};
+w.fetch = async (url, options) => String(url).startsWith("/experiment-groups/fixed/")
+    ? {ok: true, json: async () => payload.details[String(url)]}
+    : options
+        ? {ok: true, json: async () => ({cached: false, figures: []})}
+        : {ok: true, json: async () => payload.catalog};
 w.confirm = () => false;
 w.HTMLElement.prototype.scrollIntoView = () => {};
 w.eval(payload.script);
@@ -717,11 +797,11 @@ const visibleRows = () => [...d.querySelectorAll(".summary-row")].filter(row => 
     await tick(); await tick();
     assert(d.querySelector("#summary-table thead .sticky-actions"));
     assert([...d.querySelectorAll("#summary-table tbody .sticky-actions")].every(cell => cell.querySelector("button")));
-    assert.equal(d.querySelectorAll(".summary-row").length, 4);
-    assert.equal(d.querySelectorAll(".summary-row button").length, 4);
+    assert.equal(d.querySelectorAll(".summary-row").length, 1);
+    assert.equal(d.querySelectorAll(".summary-row button").length, 1);
     assert.equal(visibleRows().length, 1);
-    assert.deepEqual(ids(), [visibleRows()[0].dataset.resultKey]);
-    assert.equal(button.textContent.trim(), "Delete filtered experiments (1)");
+    assert.deepEqual(ids(), []);
+    assert.equal(button.textContent.trim(), "Delete filtered experiments");
     assert.equal(button.disabled, false);
 
     const row = visibleRows()[0], detail = d.getElementById("experiment-detail");
@@ -729,37 +809,135 @@ const visibleRows = () => [...d.querySelectorAll(".summary-row")].filter(row => 
     assert.equal(detail.hidden, true);
     row.click();
     assert.equal(detail.hidden, false);
-
-    const context = payload.catalog.contexts.find(item => item.id === f("context").value);
-    const peer = [...d.querySelectorAll(`.summary-row[data-result-key="${row.dataset.resultKey}"]`)]
-        .find(item => item !== row);
-    peer.dataset.player = row.dataset.player;
-    const state = {scope: f("scope").value, feedback: f("feedback").value, player: row.dataset.player,
-        horizon: row.dataset.horizon, profiles: [row.dataset.profile], resultKeys: context.result_keys,
-        metric: "all", view: f("view").value};
-    d.dispatchEvent(new w.CustomEvent("results-filter-change", {detail: state}));
-    assert.equal(visibleRows().length, 2);
-    assert.deepEqual(ids(), [row.dataset.resultKey]);
-    assert.equal(button.textContent.trim(), "Delete filtered experiments (1)");
-
-    peer.dataset.player = "1";
-    f("player").value = "1"; f("player").dispatchEvent(new w.Event("change"));
+    assert.equal(d.getElementById("detail-status").textContent, "Loading result details…");
     await tick(); await tick();
-    assert.equal(visibleRows().length, 1);
-    const playerOneIds = ids();
-    f("view").value = "all"; f("view").dispatchEvent(new w.Event("change"));
-    assert.deepEqual(ids(), playerOneIds);
+    const selected = payload.details[row.dataset.detailUrl];
+    assert.equal(d.getElementById("detail-content").hidden, false);
+    assert.deepEqual([...d.querySelectorAll("#detail-metadata dt")].map(item => item.textContent),
+        ["Feedback", "Profile", "Horizon", "Seed", "Replicates", "Stationary solver"]);
+    assert.equal(d.querySelectorAll("#detail-regrets strong").length, Object.keys(selected.display_regrets).length);
+    const downloadLinks = [...d.querySelectorAll("#detail-downloads a")];
+    assert.deepEqual(downloadLinks.map(link => [link.getAttribute("href"), link.getAttribute("download")]),
+        selected.runs.map(run => [run.download_url, run.experiment]));
 
-    d.dispatchEvent(new w.CustomEvent("results-filter-change", {detail: {...state, profiles: ["missing"]}}));
     assert.deepEqual(ids(), []);
-    assert.equal(button.textContent.trim(), "Delete filtered experiments (0)");
-    assert.equal(button.disabled, true);
+    assert.equal(visibleRows().length, 1);
+    assert.equal(button.textContent.trim(), "Delete filtered experiments");
+    assert.equal(button.disabled, false);
     dom.window.close();
 })().catch(error => {console.error(error); process.exit(1);});
 '''
-    run_ui(app, service, script)
+    run_ui(app, service, script, details=fixed_details(app, service))
 
-def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> None:
+@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
+def test_filtered_delete_browser_previews_server_count_and_reconfirms_on_stale_response(
+    tmp_path, mode,
+):
+    app, service = create_test_app(tmp_path)
+    if mode == "fixed":
+        result(service, "hedge_vs_hedge")
+    else:
+        run_adversarial_experiment(
+            "hedge", environment="historical_frequency_v3", feedback_mode="full_information",
+            n_actions=2, horizon=2, seed=42, output_dir=service.adversarial_raw_dir,
+        )
+    script = r'''
+const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const dom = new JSDOM(payload.page, {url: "http://localhost/", runScripts: "outside-only"});
+const w = dom.window, d = w.document;
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const previews = [], deletes = [], confirmations = [];
+const digest = "a".repeat(64);
+let previewMode = "success", pendingPreview = null;
+w.fetch = (url, options = {}) => {
+    const path = String(url);
+    if (path.endsWith("/delete-filtered/preview")) {
+        previews.push({path, options});
+        if (previewMode === "pending") return new Promise(resolve => {pendingPreview = resolve;});
+        const count = previewMode === "zero" ? 0 : 7;
+        return Promise.resolve(previewMode === "failure"
+            ? {ok: false, status: 400, json: async () => ({error: "Preview unavailable"})}
+            : {ok: true, status: 200, json: async () => ({count, digest})});
+    }
+    if (path.endsWith("/delete-filtered")) {
+        return new Promise(resolve => deletes.push({path, options, resolve}));
+    }
+    if (options.method === "POST") {
+        return Promise.resolve({ok: true, json: async () => ({cached: false, figures: []})});
+    }
+    return Promise.resolve({ok: true, json: async () => payload.catalog});
+};
+w.confirm = message => { confirmations.push(message); return true; };
+w.HTMLElement.prototype.scrollIntoView = () => {};
+w.eval(payload.script);
+const form = d.getElementById("delete-filtered-experiments");
+const button = d.getElementById("delete-filtered-experiments-button");
+const submit = () => form.dispatchEvent(new w.Event("submit", {bubbles: true, cancelable: true}));
+(async () => {
+    await tick(); await tick(); await tick();
+    assert(d.getElementById("filter-context").value);
+    assert.equal(button.disabled, false);
+    assert.equal(submit(), false);
+    assert.equal(previews.length, 1);
+    assert.equal(deletes.length, 0);
+    await tick(); await tick();
+    assert.equal(confirmations.length, 1);
+    assert(confirmations[0].includes("7 filtered experiments"));
+    assert.equal(deletes.length, 1);
+    const previewBody = previews[0].options.body, deleteBody = deletes[0].options.body;
+    assert.equal(previewBody.get("_csrf_token"), deleteBody.get("_csrf_token"));
+    assert.equal(previewBody.get("mode"), payload.mode_label);
+    assert.equal(deleteBody.get("context"), d.getElementById("filter-context").value);
+    assert.equal(deleteBody.get("digest"), digest);
+    assert.deepEqual(deleteBody.getAll("group_id"), []);
+    assert.equal(deleteBody.get("resultKeys"), null);
+    assert.equal(d.querySelectorAll(".summary-row:not([hidden])").length, 1);
+
+    deletes[0].resolve({ok: false, status: 409, json: async () =>
+        ({error: "Results changed; please review and confirm again.", reconfirmation_required: true})});
+    await tick(); await tick();
+    assert(d.getElementById("filtered-deletion-status").textContent.includes("review and confirm again"));
+    assert.equal(deletes.length, 1);
+    assert.equal(button.disabled, false);
+
+    previewMode = "failure";
+    assert.equal(submit(), false);
+    await tick(); await tick();
+    assert.equal(previews.length, 2);
+    assert.equal(deletes.length, 1);
+    assert.equal(confirmations.length, 1);
+    assert(d.getElementById("filtered-deletion-status").textContent.includes("Preview unavailable"));
+
+    previewMode = "zero";
+    assert.equal(submit(), false);
+    await tick(); await tick();
+    assert.equal(previews.length, 3);
+    assert.equal(deletes.length, 1);
+    assert.equal(confirmations.length, 1);
+    assert(d.getElementById("filtered-deletion-status").textContent.includes("No filtered experiments"));
+
+    previewMode = "pending";
+    assert.equal(submit(), false);
+    assert.equal(submit(), false);
+    assert.equal(previews.length, 4); // No duplicate request while preview is in flight.
+    assert.equal(button.disabled, true);
+    const canonical = JSON.parse(d.getElementById("dashboard-data").textContent).browsingState;
+    d.dispatchEvent(new w.CustomEvent("results-filter-change", {detail: {
+        ...canonical, profiles: ["missing"],
+    }}));
+    pendingPreview({ok: true, status: 200, json: async () => ({count: 7, digest})});
+    await tick(); await tick();
+    assert(d.getElementById("filtered-deletion-status").textContent.includes("Filters changed"));
+    assert.equal(confirmations.length, 1);
+    assert.equal(deletes.length, 1);
+    dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});
+'''
+    run_ui(app, service, script, mode=mode, mode_label=mode)
+
+
+def test_adversarial_builder_controls_leave_server_rows_unchanged(tmp_path) -> None:
     app, service = create_test_app(tmp_path)
     client = app.test_client()
     for form in (
@@ -790,7 +968,8 @@ def test_adversarial_filters_update_the_rendered_page_immediately(tmp_path) -> N
 const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
 const dom = new JSDOM(payload.page, {url: "http://localhost/?mode=adversarial", runScripts: "outside-only"});
 const w = dom.window, d = w.document, f = name => d.getElementById("filter-" + name);
-const visible = selector => [...d.querySelectorAll(selector)].filter(node => !node.hidden);
+const initialData = JSON.parse(d.getElementById("dashboard-data").textContent);
+assert.equal(Object.prototype.hasOwnProperty.call(initialData, "summaries"), false);
 const select = (name, value) => {f(name).value = value; f(name).dispatchEvent(new w.Event("change", {bubbles: true}));};
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const generationUrls = [];
@@ -806,6 +985,8 @@ w.HTMLElement.prototype.scrollIntoView = () => {};
 w.eval(payload.script);
 (async () => {
     await tick(); await tick();
+    const table = d.getElementById("summary-table");
+    const initialRows = [...table.tBodies[0].rows].map(row => row.dataset.resultKey);
     assert.equal(d.querySelector('label[for="filter-action"]').textContent, "Action");
     assert.equal(f("player"), null);
     assert.deepEqual([...d.querySelectorAll(".segmented-control span")].map(node => node.textContent),
@@ -836,8 +1017,7 @@ w.eval(payload.script);
     assert.equal(f("metric").disabled, true); assert.equal(f("profiles").multiple, false);
     select("action", "3");
     assert.deepEqual([...f("horizon").options].map(option => option.value), ["5", "6"]);
-    assert(visible(".summary-row").every(row => row.dataset.scope === "lazy_random_walk_v1"
-        && row.dataset.action === "3" && row.dataset.profile === "exp3_ix"));
+    assert.deepEqual([...table.tBodies[0].rows].map(row => row.dataset.resultKey), initialRows);
 
     f("compare-profiles").checked = true;
     f("compare-profiles").dispatchEvent(new w.Event("change"));
@@ -848,8 +1028,7 @@ w.eval(payload.script);
     assert(![...f("view").options].some(option => option.value === "log_log_fit"));
     select("metric", "internal");
     select("view", "sqrt_scaling");
-    const cells = [...visible(".summary-row")[0].querySelectorAll("[data-regret]")].filter(cell => !cell.hidden);
-    assert.equal(cells.length, 1); assert.equal(cells[0].dataset.metric, "sqrt_scaling_internal");
+    assert.deepEqual([...table.tBodies[0].rows].map(row => row.dataset.resultKey), initialRows);
 
     f("compare-actions").checked = true;
     f("compare-actions").dispatchEvent(new w.Event("change"));
@@ -860,15 +1039,15 @@ w.eval(payload.script);
     assert(![...f("view").options].some(option => option.value === "log_log_fit"));
     assert.equal(f("profiles").multiple, false); assert.equal(f("profiles").selectedOptions.length, 1);
     assert.equal(f("horizon").value, "5"); assert.equal(f("horizon").disabled, false);
-    assert.deepEqual(visible(".summary-row").map(row => row.dataset.action).sort(), ["2", "3", "4"]);
+    assert.deepEqual([...table.tBodies[0].rows].map(row => row.dataset.resultKey), initialRows);
 
     select("feedback", "both");
     assert.deepEqual([...f("profiles").options].map(option => [option.value, option.textContent]), [
         ["exp3_ix", "EXP3-IX"], ["hedge", "Hedge"]]);
     f("profiles").value = "hedge";
     f("profiles").dispatchEvent(new w.Event("change", {bubbles: true}));
-    assert.deepEqual(new Set(visible(".summary-row").map(row => row.dataset.feedback)), new Set(["full_information"]));
-    assert.deepEqual(visible(".summary-row").map(row => row.dataset.action).sort(), ["2", "4"]);
+    assert.deepEqual([...table.tBodies[0].rows].map(row => row.dataset.resultKey), initialRows);
+    assert([...table.tBodies[0].rows].every(row => !row.hidden));
 
     f("compare-horizons").checked = true;
     f("compare-horizons").dispatchEvent(new w.Event("change"));
@@ -898,3 +1077,146 @@ w.eval(payload.script);
     css = (Path(__file__).parents[2] / "web" / "static" / "dashboard.css").read_text()
     assert ".summary-row[data-summary-index] {" in css
     assert "\n.summary-row {\n" not in css
+
+
+def test_fixed_detail_keyboard_races_and_failures_are_recoverable(tmp_path):
+    app, service = create_test_app(tmp_path)
+    result(service, "hedge_vs_hedge", replicates=(0,))
+    script = r'''
+const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const dom = new JSDOM(payload.page, {url: "http://localhost/", runScripts: "outside-only"});
+const w = dom.window, d = w.document;
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const pending = [];
+w.HTMLElement.prototype.scrollIntoView = () => {};
+w.fetch = (url, options) => String(url).startsWith("/experiment-groups/fixed/")
+    ? new Promise((resolve, reject) => pending.push({url, resolve, reject}))
+    : Promise.resolve(options && options.cache === "no-store"
+        ? {ok: false, status: 503}
+        : {ok: true, json: async () => payload.catalog});
+w.eval(payload.script);
+const rows = [...d.querySelectorAll(".summary-row")];
+assert.equal(rows.length, 2);
+const [a, b] = rows;
+const finish = (request, row) => request.resolve({
+    ok: true, json: async () => payload.details[row.dataset.detailUrl],
+});
+(async () => {
+    await tick(); await tick();
+    assert.equal(a.hidden, false);
+    a.dispatchEvent(new w.KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true}));
+    assert.equal(pending.length, 1);
+    assert.equal(d.getElementById("experiment-detail").getAttribute("aria-busy"), "true");
+    assert.match(d.getElementById("detail-status").textContent, /Loading/);
+    assert.equal(d.getElementById("detail-content").hidden, true);
+
+    assert.equal(b.hidden, false);
+    b.dispatchEvent(new w.KeyboardEvent("keydown", {key: " ", bubbles: true, cancelable: true}));
+    assert.equal(pending.length, 2);
+    finish(pending[1], b);
+    await tick(); await tick();
+    assert.equal(d.getElementById("detail-content").hidden, false);
+    assert.match(d.getElementById("detail-title").textContent, /player 1/);
+    finish(pending[0], a);
+    await tick(); await tick();
+    assert.match(d.getElementById("detail-title").textContent, /player 1/);
+    assert.deepEqual([...d.querySelectorAll("#detail-downloads a")].map(link => link.getAttribute("href")),
+        payload.details[b.dataset.detailUrl].runs.map(run => run.download_url));
+
+    a.click();
+    assert.equal(pending.length, 3);
+    pending[2].resolve({ok: false, status: 404, json: async () => ({error: "missing"})});
+    await tick(); await tick();
+    assert.match(d.getElementById("detail-status").textContent, /Refresh results/);
+    assert.equal(d.getElementById("detail-content").hidden, true);
+
+    b.click();
+    assert.equal(pending.length, 4);
+    pending[3].reject(new Error("offline"));
+    await tick(); await tick();
+    assert.match(d.getElementById("detail-status").textContent, /Could not load result details/);
+    assert.equal(d.getElementById("detail-content").hidden, true);
+
+    a.click();
+    assert.equal(pending.length, 5);
+    b.click();
+    assert.equal(pending.length, 6);
+    finish(pending[4], a);
+    await tick(); await tick();
+    assert.match(d.getElementById("detail-title").textContent, /player 1/);
+    finish(pending[5], b);
+    await tick(); await tick();
+    assert.equal(d.getElementById("detail-content").hidden, false);
+    dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});
+'''
+    run_ui(app, service, script, url=browse_url(service, player="all",
+        comparison_mode="regrets", horizon="30", profiles=["hedge_vs_hedge"]),
+        details=fixed_details(app, service))
+
+
+def test_equilibrium_unavailable_notice_preserves_other_result_controls(tmp_path):
+    from experiments.scenarios.cross_play import run_cross_play_experiment
+
+    app, service = create_test_app(tmp_path)
+    definition = service.create_custom_game("Large Analysis", 2, [100, 100], 7, "zero_sum")
+    run_cross_play_experiment(
+        definition.id, ["hedge", "hedge"], horizon=2, output_dir=service.raw_dir,
+        custom_game_dir=service.game_catalog.custom_game_dir, feedback_mode="full_information",
+    )
+    result(service, "hedge_vs_hedge", horizon=2, replicates=(0,))
+    script = r'''
+const assert = require("assert").strict, {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const render = page => {
+    const dom = new JSDOM(page, {url: "http://localhost/", runScripts: "outside-only"});
+    const w = dom.window, d = w.document;
+    w.Element.prototype.scrollIntoView = () => {};
+    w.fetch = async (url, options) => String(url).startsWith("/experiment-groups/fixed/")
+        ? {ok: true, json: async () => payload.details[String(url)]}
+        : options && options.cache === "no-store"
+            ? {ok: false, status: 503}
+            : {ok: true, json: async () => payload.catalog};
+    w.eval(payload.script);
+    return {dom, d};
+};
+(async () => {
+    const large = render(payload.page);
+    const largeRow = large.d.querySelector(".summary-row");
+    assert(largeRow);
+    assert.equal(payload.details[largeRow.dataset.detailUrl].equilibrium_distance_url, null);
+    largeRow.click();
+    await tick(); await tick();
+    const notice = large.d.getElementById("detail-equilibrium-distance-unavailable");
+    assert.equal(large.d.getElementById("experiment-detail").hidden, false);
+    assert.equal(large.d.getElementById("detail-convergence").hidden, false);
+    assert.equal(large.d.getElementById("detail-equilibrium-distance-card").hidden, true);
+    assert.equal(notice.hidden, false);
+    assert.match(notice.textContent, /analysis budget/);
+    assert.match(notice.textContent, /regret results remain available/);
+    assert.equal(large.d.getElementById("detail-joint-actions").hidden, false);
+    assert(large.d.getElementById("detail-regrets").children.length > 0);
+    assert(large.d.querySelector("#detail-downloads a"));
+    large.dom.window.close();
+
+    const normal = render(payload.normalPage);
+    const normalRow = normal.d.querySelector(".summary-row");
+    assert(normalRow);
+    assert(payload.details[normalRow.dataset.detailUrl].equilibrium_distance_url);
+    normalRow.click();
+    await tick(); await tick();
+    const normalNotice = normal.d.getElementById("detail-equilibrium-distance-unavailable");
+    assert.equal(normalNotice.hidden, true);
+    assert.equal(normalNotice.textContent, "");
+    assert.equal(normal.d.getElementById("detail-equilibrium-distance-card").hidden, false);
+    assert(normal.d.getElementById("detail-equilibrium-distance-download").href.endsWith(".pdf"));
+    normal.dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});
+'''
+    run_ui(app, service, script, url=browse_url(service, scope=definition.id, player="0",
+        comparison_mode="regrets", horizon="2", profiles=["hedge_vs_hedge"]),
+        normalPage=production_ui_page(app, service, url=browse_url(service, scope="rps",
+            player="0", comparison_mode="regrets", horizon="2", profiles=["hedge_vs_hedge"])),
+        details=fixed_details(app, service))

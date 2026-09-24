@@ -182,3 +182,99 @@ def test_distance_rejects_unknown_equilibrium_concept() -> None:
 def test_distance_rejects_malformed_empirical_distributions(empirical: np.ndarray) -> None:
     with pytest.raises(ValueError):
         equilibrium_l1_distance(coordination_game_payoffs(), empirical)
+
+
+@pytest.mark.parametrize("shape,concept,profiles,rows,coefficients,expected_bytes", [
+    ((2, 3), "ce", 6, 8, 48, 1368),
+    ((2, 3), "cce", 6, 5, 30, 1056),
+    ((2, 1, 3), "ce", 6, 8, 48, 1416),
+    ((2, 1, 3), "cce", 6, 6, 36, 1208),
+])
+def test_equilibrium_resource_estimate_matches_current_dense_shapes(
+    shape, concept, profiles, rows, coefficients, expected_bytes,
+):
+    from metrics.equilibrium_distance import estimate_equilibrium_analysis
+
+    estimate = estimate_equilibrium_analysis(shape, concept)
+
+    assert estimate.action_shape == shape
+    assert estimate.equilibrium == concept
+    assert (estimate.n_profiles, estimate.n_incentive_rows, estimate.n_dense_coefficients) == (
+        profiles, rows, coefficients,
+    )
+    assert estimate.estimated_bytes == expected_bytes
+
+
+def test_resource_estimator_never_enumerates_or_constructs_requested_matrix(monkeypatch):
+    import metrics.equilibrium_distance as module
+
+    monkeypatch.setattr(module.np, "ndindex", lambda *args: pytest.fail("enumerated joint profiles"))
+    monkeypatch.setattr(module.np, "array", lambda *args, **kwargs: pytest.fail("allocated LP array"))
+
+    estimate = module.estimate_equilibrium_analysis((100, 100, 10), "cce")
+
+    assert estimate.n_profiles == 100_000
+    assert estimate.n_dense_coefficients == 21_000_000
+    assert estimate.estimated_bytes > module.EQUILIBRIUM_ANALYSIS_BUDGET_BYTES
+
+
+@pytest.mark.parametrize("concept", ("ce", "cce"))
+def test_shipped_games_remain_under_equilibrium_budget(concept):
+    from experiments.games import PAYOFF_FACTORIES
+    from metrics.equilibrium_distance import preflight_equilibrium_analysis
+
+    for factory in PAYOFF_FACTORIES.values():
+        shape = factory().shape[1:]
+        assert preflight_equilibrium_analysis(shape, concept).action_shape == shape
+
+
+def test_resource_preflight_allows_estimates_at_or_below_budget_only(monkeypatch):
+    import metrics.equilibrium_distance as module
+
+    estimate = module.estimate_equilibrium_analysis((2, 3), "ce")
+    for budget in (estimate.estimated_bytes + 1, estimate.estimated_bytes):
+        monkeypatch.setattr(module, "EQUILIBRIUM_ANALYSIS_BUDGET_BYTES", budget)
+        assert module.preflight_equilibrium_analysis((2, 3), "ce") == estimate
+    monkeypatch.setattr(module, "EQUILIBRIUM_ANALYSIS_BUDGET_BYTES", estimate.estimated_bytes - 1)
+    with pytest.raises(module.EquilibriumAnalysisUnavailable) as captured:
+        module.preflight_equilibrium_analysis((2, 3), "ce")
+    assert captured.value.estimate == estimate
+    assert captured.value.budget_bytes == estimate.estimated_bytes - 1
+
+
+def test_oversized_ce_rejects_direct_distance_before_profile_matrix(monkeypatch):
+    import metrics.equilibrium_distance as module
+
+    monkeypatch.setattr(module.np, "ndindex", lambda *args: pytest.fail("constructed profile matrix"))
+    payoffs = np.zeros((2, 100, 100))
+    empirical = np.zeros((100, 100))
+    empirical[0, 0] = 1.0
+
+    with pytest.raises(module.EquilibriumAnalysisUnavailable) as captured:
+        module.equilibrium_l1_distance(payoffs, empirical, "ce")
+
+    error = captured.value
+    assert error.estimate.equilibrium == "ce"
+    assert error.estimate.action_shape == (100, 100)
+    assert error.estimate.n_profiles == 10_000
+    assert error.estimate.n_incentive_rows == 19_800
+    assert error.estimate.estimated_bytes > error.budget_bytes
+    assert "CE" in str(error) and "analysis budget" in str(error)
+    assert module.preflight_equilibrium_analysis((100, 100), "cce").estimated_bytes < error.budget_bytes
+
+
+def test_oversized_cce_rejects_direct_preparation_before_profile_matrix(monkeypatch):
+    import metrics.equilibrium_distance as module
+
+    monkeypatch.setattr(module.np, "ndindex", lambda *args: pytest.fail("constructed profile matrix"))
+    payoffs = np.zeros((3, 100, 100, 10))
+
+    with pytest.raises(module.EquilibriumAnalysisUnavailable) as captured:
+        module._PreparedDistanceLP(payoffs, "cce")
+
+    error = captured.value
+    assert error.estimate.equilibrium == "cce"
+    assert error.estimate.action_shape == (100, 100, 10)
+    assert error.estimate.n_incentive_rows == 210
+    assert error.estimate.estimated_bytes > error.budget_bytes
+    assert "CCE" in str(error) and "100,000 profiles" in str(error)
