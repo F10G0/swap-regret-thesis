@@ -95,11 +95,10 @@ class ResultRecord:
         values = tuple({field: float(value) for field, value in observation.items()
                         if field in SUMMARY_REGRET_FIELDS}
                        for observation in rows)
-        if kind == "fixed":
-            for observation in values:
-                for field, value in observation.items():
-                    if not math.isfinite(value):
-                        raise ValueError(f"non-finite value for {field}")
+        for observation in values:
+            for field, value in observation.items():
+                if not math.isfinite(value):
+                    raise ValueError(f"non-finite value for {field}")
         # Fixed summaries canonicalize runtime JSON; one-player readers validate it
         # but leave its original serialization intact.
         runtime = row["runtime_environment"]
@@ -193,6 +192,13 @@ class ResultSet:
         if not paths:
             raise KeyError(group_id)
         return paths
+
+    def canonical_detail_paths(self, group_id: str) -> list[Path]:
+        """One path per replicate, using the dashboard summary's first-record policy."""
+        for group in self.groups("dashboard"):
+            if group.records[0].group_id == group_id:
+                return group.paths
+        raise KeyError(group_id)
 
     def context_id(self, player: int) -> str:
         first = self.records[0]

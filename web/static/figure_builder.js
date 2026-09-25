@@ -27,7 +27,7 @@
     let exporting = false, figures = [];
     let profileMetric = saved.profileMetric || "external";
     let selectedView = saved.view || "all";
-    let standardView = selectedView === "log_log_fit" ? "all" : selectedView;
+    let standardView = selectedView;
     let selectedAction = saved.selectedAction || "";
     let selectedHorizon = saved.selectedHorizon || "";
     const comparisonModes = onePlayer ? ["regrets", "profiles", "actions", "horizons"] : ["regrets", "profiles", "horizons"];
@@ -110,7 +110,7 @@
 
     const figureVisible = figure => (filter("metric").value === "all" || figure.metric === filter("metric").value)
         && (comparisonMode() === "horizons"
-            || (filter("view").value === "all" ? figure.view !== "log_log_fit" : figure.view === filter("view").value));
+            || filter("view").value === "all" || figure.view === filter("view").value);
     const visibleFigures = () => figures.filter(figureVisible);
 
     function filterFigureCards() {
@@ -120,8 +120,7 @@
     }
 
     function updateMetricControl() {
-        const logLogFit = comparisonMode() === "regrets" && filter("view").value === "log_log_fit";
-        const allRegrets = comparisonMode() === "horizons" || (comparisonMode() === "regrets" && !logLogFit);
+        const allRegrets = comparisonMode() === "horizons" || comparisonMode() === "regrets";
         const entries = allRegrets ? [["all", "All regrets"]]
             : [["all", "All regrets"], ...catalog.metrics.map(metric => [metric.id, metric.label])];
         setOptions(filter("metric"), entries, allRegrets ? "all" : profileMetric, Boolean(currentContext));
@@ -252,8 +251,7 @@
 
         const hasFilterContext = Boolean(currentContext);
         const horizonComparison = comparisonMode() === "horizons";
-        const views = catalog.views.filter(view => view.id !== "horizon_scaling"
-            && (comparisonMode() === "regrets" || view.id !== "log_log_fit"));
+        const views = catalog.views.filter(view => view.id !== "horizon_scaling");
         const viewEntries = horizonComparison ? [["horizon_scaling", "Horizon scaling"]]
             : [["all", "Both views"], ...views.map(view => [view.id, view.label])];
         setOptions(filter("view"), viewEntries,
@@ -410,7 +408,7 @@
     });
     filter("view").addEventListener("change", () => {
         selectedView = filter("view").value;
-        if (selectedView !== "log_log_fit") standardView = selectedView;
+        standardView = selectedView;
         updateMetricControl();
         filterFigureCards();
         displayRevision += 1;

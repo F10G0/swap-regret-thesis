@@ -72,12 +72,20 @@
                     {{ queue_experiment_button() }}
                 </form>
             {% endif %}
-            <form class="maintenance-actions" method="post" action="{{ url_for('dashboard.reset_results') }}" data-confirm="Delete all fixed-game and one-player experiment results, generated figures, and caches? This cannot be undone.">
-                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="confirmation" value="reset-results">
-                <input type="hidden" name="return_to" value="{{ experiment_mode }}">
-                <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>Reset all experiment results</button>
-            </form>
+            <div class="maintenance-actions">
+                <form method="post" action="{{ url_for('dashboard.clear_generated_figures') }}" data-confirm="Delete all generated figures and caches? Raw experiment CSVs will be preserved and figures can be regenerated.">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="confirmation" value="clear-generated-figures">
+                    <input type="hidden" name="return_to" value="{{ experiment_mode }}">
+                    <button type="submit" data-busy-control {% if busy %}disabled{% endif %}>Clear generated figures</button>
+                </form>
+                <form method="post" action="{{ url_for('dashboard.reset_results') }}" data-confirm="Delete all fixed-game and one-player experiment results, generated figures, and caches? This cannot be undone.">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="confirmation" value="reset-results">
+                    <input type="hidden" name="return_to" value="{{ experiment_mode }}">
+                    <button class="button-danger" type="submit" data-busy-control {% if busy %}disabled{% endif %}>Reset all experiment results</button>
+                </form>
+            </div>
         </aside>
 
         <main id="main-content" class="content">

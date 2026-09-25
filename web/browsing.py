@@ -44,7 +44,15 @@ def parse_browsing_query(values, catalog, mode: str) -> tuple[DashboardQuery, in
     """Translate the canonical GET contract through the Phase 3A validator."""
     if "context" not in values or values.get("mode") != mode:
         raise ValueError("incomplete or mismatched dashboard query")
+    page = _positive_decimal(values.get("page", "1"), "page")
+    page_size = _positive_decimal(values.get("page_size", "25"), "page size")
+    if page_size not in PAGE_SIZES:
+        raise ValueError("unsupported page size")
+    if mode == "fixed" and values.get("player") == "all" and values.get("sort"):
+        raise ValueError("sorting is unavailable for the all-player view")
     profiles = values.getlist("profile") if hasattr(values, "getlist") else values.get("profile", ())
+    if values.get("compare") == "actions" and isinstance(profiles, (tuple, list)) and len(profiles) > 1:
+        raise ValueError("multiple profiles are unsupported for this comparison")
     query = parse_dashboard_query({
         "mode": mode, "scope": values.get("scope", ""), "context": values.get("context", ""),
         "comparison_mode": values.get("compare", "regrets"),
@@ -54,8 +62,6 @@ def parse_browsing_query(values, catalog, mode: str) -> tuple[DashboardQuery, in
         "player": values.get("player"), "action": values.get("action"),
         "sort": values.get("sort") or None, "direction": values.get("dir", "asc"),
     }, catalog)
-    if query.mode == "fixed" and query.player == "all" and query.sort is not None:
-        raise ValueError("sorting is unavailable for the all-player view")
     if query.comparison_mode != "profiles" and len(query.profiles) > 1:
         context = next(item for item in catalog["contexts"] if item["id"] == query.context_id)
         compatible = _compatible_profiles(query, context, catalog)
@@ -65,10 +71,6 @@ def parse_browsing_query(values, catalog, mode: str) -> tuple[DashboardQuery, in
             raise ValueError("multiple profiles are unsupported for this comparison")
     if _hidden_regret_sort(query) or (query.sort is None and query.direction != "asc"):
         query = replace(query, sort=None, direction="asc")
-    page = _positive_decimal(values.get("page", "1"), "page")
-    page_size = _positive_decimal(values.get("page_size", "25"), "page size")
-    if page_size not in PAGE_SIZES:
-        raise ValueError("unsupported page size")
     return query, page, page_size
 
 

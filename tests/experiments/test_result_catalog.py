@@ -51,3 +51,6 @@ def test_duplicate_replicates_keep_first_summary_but_all_detail_sources():
     assert [run["replicate"] for run in groups[0]["runs"]] == [3, 4]
     assert [run["experiment"] for run in groups[0]["runs"]] == ["run-3.csv", "run-4.csv"]
     assert [p.name for p in results.detail_paths(groups[0]["group_id"])] == ["duplicate.csv", "run-3.csv", "run-4.csv"]
+    assert [p.name for p in results.canonical_detail_paths(groups[0]["group_id"])] == ["run-3.csv", "run-4.csv"]
+    with pytest.raises(KeyError):
+        results.canonical_detail_paths("missing")

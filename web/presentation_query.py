@@ -26,6 +26,10 @@ COMPARISON_MODES = {"fixed": {"regrets", "profiles", "horizons"},
                     "adversarial": {"regrets", "profiles", "actions", "horizons"}}
 
 
+class DashboardSelectionUnavailable(ValueError):
+    """A well-formed browsing selection is absent from the current catalog."""
+
+
 @dataclass(frozen=True)
 class DashboardQuery:
     mode: str = "fixed"
@@ -96,8 +100,10 @@ def _context(query: DashboardQuery, catalog: Mapping) -> Mapping | None:
         return None
     context = next((item for item in catalog.get("contexts", ())
                     if item["id"] == query.context_id), None)
-    if context is None or context["mode"] != query.mode or context["scope"] != query.scope:
-        raise ValueError("result context is unavailable or does not match the selected scope")
+    if context is None:
+        raise DashboardSelectionUnavailable("result context is unavailable")
+    if context["mode"] != query.mode or context["scope"] != query.scope:
+        raise ValueError("result context does not match the selected scope")
     return context
 
 
@@ -134,15 +140,14 @@ def validate_dashboard_query(query: DashboardQuery, catalog: Mapping) -> Mapping
         raise ValueError("invalid regret metric")
     if query.view not in {"all", *(item["id"] for item in catalog.get("views", ()))}:
         raise ValueError("invalid regret view")
-    context = _context(query, catalog)
-    if context is not None:
+    if query.context_id:
         if query.comparison_mode == "horizons":
             if query.horizon != "all" or query.metric != "all" or query.view != "horizon_scaling":
                 raise ValueError("invalid horizon comparison state")
         elif query.comparison_mode == "regrets":
             if query.horizon == "all" or query.metric != "all" or query.view == "horizon_scaling":
                 raise ValueError("invalid regret comparison state")
-        elif query.horizon == "all" or query.view in {"horizon_scaling", "log_log_fit"}:
+        elif query.horizon == "all" or query.view == "horizon_scaling":
             raise ValueError("invalid comparison state")
     if query.mode == "fixed":
         if query.action is not None or (query.player not in (None, "all")
@@ -158,23 +163,24 @@ def validate_dashboard_query(query: DashboardQuery, catalog: Mapping) -> Mapping
         raise ValueError("invalid dashboard sort")
     if not isinstance(query.profiles, tuple) or any(not isinstance(p, str) or not p for p in query.profiles):
         raise ValueError("invalid profiles")
+    context = _context(query, catalog)
     if context is None:
         if query.profiles:
             raise ValueError("profiles require a result context")
         return None
     if query.comparison_mode not in context["comparison_modes"]:
-        raise ValueError("comparison mode unavailable in result context")
+        raise DashboardSelectionUnavailable("comparison mode unavailable in result context")
     if query.feedback != "both" and query.feedback not in context["feedback_modes"]:
-        raise ValueError("feedback unavailable in result context")
+        raise DashboardSelectionUnavailable("feedback unavailable in result context")
     if query.mode == "fixed" and query.player not in (None, "all", context["player"]):
         raise ValueError("player does not match result context")
     if query.horizon != "all" and int(query.horizon) not in context["horizons"]:
-        raise ValueError("horizon is unavailable in result context")
+        raise DashboardSelectionUnavailable("horizon is unavailable in result context")
     if (query.mode == "adversarial" and query.action not in (None, "all")
             and query.action not in context["actions"]):
-        raise ValueError("action is unavailable in result context")
+        raise DashboardSelectionUnavailable("action is unavailable in result context")
     if not set(query.profiles) <= _compatible_profiles(query, context, catalog):
-        raise ValueError("profile is unavailable for this result context")
+        raise DashboardSelectionUnavailable("profile is unavailable for this result context")
     return context
 
 

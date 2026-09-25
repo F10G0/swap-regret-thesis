@@ -21,6 +21,71 @@ def fixed_details(app, service):
     }
 
 
+@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
+def test_job_status_scroll_area_keeps_all_active_jobs(tmp_path, monkeypatch, mode):
+    app, service = create_test_app(tmp_path)
+    statuses = ["succeeded"] * 5 + ["queued", "running"] * 4
+    jobs = [
+        Job(f"job-{index}", f"Job {index}", status, status, "now",
+            rounds_total=100 if status in {"queued", "running"} else 0)
+        for index, status in enumerate(statuses)
+    ]
+    monkeypatch.setattr(service.jobs, "recent", lambda: jobs)
+    monkeypatch.setattr(service.jobs, "is_busy", lambda: True)
+    page = production_ui_page(app, service, mode)
+    monkeypatch.setattr(service.jobs, "recent", lambda: [jobs[5]])
+    short_page = production_ui_page(app, service, mode)
+    css = (Path(__file__).parents[2] / "web/static/dashboard.css").read_text()
+    script = r'''
+const assert = require("assert").strict;
+const {JSDOM} = require("jsdom");
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const dom = new JSDOM(payload.page, {url: "http://localhost/"});
+const d = dom.window.document;
+const stylesheet = d.createElement("style");
+stylesheet.textContent = payload.css;
+d.head.append(stylesheet);
+const rules = [...stylesheet.sheet.cssRules];
+const rule = selector => rules.find(item => item.selectorText === selector);
+const scroll = rule(".job-list").style;
+assert.equal(scroll.getPropertyValue("max-height"), "20rem");
+assert.equal(scroll.getPropertyValue("overflow-y"), "auto");
+assert.equal(scroll.getPropertyValue("padding-right"), "8px");
+assert.equal(scroll.getPropertyValue("height"), "");
+assert.equal(scroll.getPropertyValue("min-height"), "");
+for (const selector of [".jobs-panel", ".content"]) {
+    assert.equal(rule(selector).style.getPropertyValue("overflow-y"), "");
+}
+const panel = d.querySelector(".jobs-panel");
+const list = panel.querySelector(".job-list");
+assert.equal(list.tagName, "OL");
+assert.equal(list.tabIndex, 0);
+assert.equal(list.getAttribute("aria-label"), "Job list");
+assert.deepEqual([...list.children].map(job => job.dataset.jobId), payload.expected);
+assert.equal(list.querySelectorAll('[data-status="succeeded"]').length, 5);
+assert.equal(list.querySelectorAll('[data-status="queued"], [data-status="running"]').length, 8);
+assert.equal(list.querySelectorAll("[data-status-url]").length, payload.expected.length);
+assert.equal(list.querySelectorAll("[data-job-round-progress]").length, 8);
+assert.equal(list.querySelectorAll('form[action$="/cancel"]').length, 8);
+assert.equal(list.contains(d.getElementById("jobs-heading")), false);
+assert.equal(list.contains(d.getElementById("busy-indicator")), false);
+assert.equal(d.getElementById("busy-indicator").hidden, false);
+for (const section of [d.getElementById("result-filters"), d.getElementById("figure-results"),
+                       d.querySelector(".summary-panel")]) {
+    assert(panel.compareDocumentPosition(section) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+}
+dom.window.close();
+const short = new JSDOM(payload.shortPage, {url: "http://localhost/"});
+assert.deepEqual(
+    [...short.window.document.querySelector(".job-list").children].map(job => job.dataset.jobId),
+    ["job-5"],
+);
+short.window.close();
+'''
+    run_node(script, payload={"page": page, "shortPage": short_page, "css": css,
+                              "expected": [job.id for job in jobs]}, jsdom=True)
+
+
 @pytest.mark.parametrize("mode,terminal", [("fixed", "succeeded"), ("fixed", "failed"), ("adversarial", "cancelled")])
 def test_browser_submission_and_polling_preserve_jobs_without_navigation(tmp_path, monkeypatch, mode, terminal):
     app, service = create_test_app(tmp_path)
@@ -410,10 +475,6 @@ const figuresFor = (body, tag) => {
         pdf_filename: `${tag}_${metric}_${view}.pdf`, url: `/${tag}_${metric}_${view}.png`,
         pdf_url: `/${tag}_${metric}_${view}.pdf`
     })));
-    if (comparison === "regrets") for (const metric of ["external", "internal", "swap"]) figures.push({
-        metric, view: "log_log_fit", title: `${metric} Log-log fit`, filename: `${tag}_${metric}_log_log_fit.png`,
-        pdf_filename: `${tag}_${metric}_log_log_fit.pdf`, url: `/${tag}_${metric}_log_log_fit.png`, pdf_url: `/${tag}_${metric}_log_log_fit.pdf`
-    });
     return figures;
 };
 const cacheKey = body => [body.get("comparison_mode"), body.get("action") || "", body.get("horizon"), ...body.getAll("profiles")].join("/");
@@ -490,7 +551,7 @@ w.eval(payload.script);
     assert.equal(f("metric").value, "all");
     assert.deepEqual([...f("view").options].map(option => [option.value, option.textContent]), [
         ["all", "Both views"], ["average", "Average regret (R / T)"],
-        ["sqrt_scaling", "Scaling (R / sqrt(T))"], ["log_log_fit", "Log-log fit"]]);
+        ["sqrt_scaling", "Scaling (R / sqrt(T))"]]);
     assert.equal(f("view").disabled, false); assert.equal(f("profiles").disabled, false);
     assert.equal(f("compare-profiles").disabled, false); assert.equal(f("compare-regrets").disabled, false);
     assert.equal(f("compare-horizons").disabled, true);
@@ -571,19 +632,13 @@ w.eval(payload.script);
     assert(Object.values(stored.selections).some(selection => selection.includes("hedge_vs_hedge")));
     finishCache(5, false); await tick(); await tick();
     submit(); finishGeneration(1, "regret-a"); await tick(); await tick();
-    assert.equal(b("figure").children.length, 5); assert.equal(visibleCards().length, 1);
+    assert.equal(b("figure").children.length, 2); assert.equal(visibleCards().length, 1);
     change("view", "all");
     assert.equal(visibleCards().length, 2); assert.equal(f("metric").value, "all");
-    change("view", "log_log_fit");
-    assert.equal(f("metric").value, "internal"); assert.equal(f("metric").disabled, false);
-    assert.deepEqual([...f("metric").options].map(option => option.value), ["all", "external", "internal", "swap"]);
-    change("metric", "all");
-    assert.deepEqual(visibleCards().map(card => card.dataset.metric), ["external", "internal", "swap"]);
-    for (const metric of ["external", "swap", "internal"]) {
-        change("metric", metric);
-        assert.equal(visibleCards().length, 1);
-        assert.deepEqual([visibleCards()[0].dataset.metric, visibleCards()[0].dataset.view], [metric, "log_log_fit"]);
-    }
+    change("view", "sqrt_scaling");
+    assert.equal(f("metric").value, "all"); assert.equal(f("metric").disabled, true);
+    assert.equal(visibleCards().length, 1);
+    assert.equal(visibleCards()[0].dataset.view, "sqrt_scaling");
     assert.equal(cacheRequests.length, 6); assert.equal(generations.length, 2);
     change("view", "average");
     assert.equal(f("metric").value, "all"); assert.equal(f("metric").disabled, true);
@@ -599,7 +654,6 @@ w.eval(payload.script);
     assert.deepEqual(exports[0].filenames, ["regret-a_all_average.pdf"]);
     finishExport(0); await tick(); await tick();
     assert.equal(downloads, 1);
-    change("view", "log_log_fit");
     f("compare-profiles").checked = true;
     f("compare-profiles").dispatchEvent(new w.Event("change"));
     assert.equal(f("profiles").multiple, true);
@@ -1013,7 +1067,7 @@ w.eval(payload.script);
     assert.deepEqual([...f("action").options].map(option => option.value), ["2", "3", "4"]);
     assert(![...f("action").options].some(option => option.value === "all"));
     assert.deepEqual([...f("metric").options].map(option => option.value), ["all"]);
-    assert.deepEqual([...f("view").options].map(option => option.value), ["all", "average", "sqrt_scaling", "log_log_fit"]);
+    assert.deepEqual([...f("view").options].map(option => option.value), ["all", "average", "sqrt_scaling"]);
     assert.equal(f("metric").disabled, true); assert.equal(f("profiles").multiple, false);
     select("action", "3");
     assert.deepEqual([...f("horizon").options].map(option => option.value), ["5", "6"]);

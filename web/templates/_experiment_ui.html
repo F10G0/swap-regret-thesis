@@ -206,7 +206,7 @@
             </div>
             <span {% if busy_id %}id="{{ busy_id }}" {% endif %}class="busy-indicator" {% if not busy %}hidden{% endif %}>Queue active</span>
         </div>
-        <ol class="job-list">
+        <ol class="job-list" tabindex="0" aria-label="Job list">
             {% for job in jobs %}
                 {% include "_job.html" %}
             {% endfor %}

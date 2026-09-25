@@ -1,6 +1,6 @@
 """Core full-space CE/CCE distance-convergence plotting."""
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from hashlib import sha256
 import json
 import logging
@@ -43,7 +43,10 @@ def _distance_cache_identity(path: Path, payoff_digest: str) -> dict:
     }
 
 
-def _load_result_distances(path: Path, payoff_tensor: np.ndarray, cache_dir: Path) -> EquilibriumDistanceTrajectory:
+def _load_result_distances(
+    path: Path, payoff_tensor: np.ndarray, cache_dir: Path,
+    cache_publisher: Callable[[Callable[[], None]], None] | None = None,
+) -> EquilibriumDistanceTrajectory:
     identity = _distance_cache_identity(path, payoff_tensor_digest(payoff_tensor))
     cache_path = cache_dir / f"{sha256(str(path.resolve()).encode()).hexdigest()}.json"
     try:
@@ -71,12 +74,20 @@ def _load_result_distances(path: Path, payoff_tensor: np.ndarray, cache_dir: Pat
     payload = {"identity": identity, "horizons": distances.horizons.tolist(),
                "ce": distances.ce.tolist(), "cce": distances.cce.tolist()}
     temporary_path = None
-    try:
+
+    def publish() -> None:
+        nonlocal temporary_path
         cache_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache_dir, suffix=".tmp", delete=False) as file:
             temporary_path = Path(file.name)
             json.dump(payload, file, allow_nan=False)
         os.replace(temporary_path, cache_path)
+
+    try:
+        if cache_publisher is None:
+            publish()
+        else:
+            cache_publisher(publish)
     except OSError as error:
         logger.warning("Could not cache equilibrium distances for %s: %s", path, error)
     finally:
@@ -166,19 +177,20 @@ def plot_result_equilibrium_distance(
     *,
     cache_dir: str | Path | None = None,
     information_rows: list[tuple[str, str]] | None = None,
+    cache_publisher: Callable[[Callable[[], None]], None] | None = None,
 ) -> None:
     paths = [Path(input_paths)] if isinstance(input_paths, (str, Path)) else [Path(path) for path in input_paths]
     _, payoff_tensor, _ = _load_equilibrium_game(paths, custom_game_dir)
     for equilibrium in ("ce", "cce"):
         preflight_equilibrium_analysis(payoff_tensor.shape[1:], equilibrium)
-    replicate_distances = [
-        _load_result_distances(
-            path, payoff_tensor,
-            Path(cache_dir) if cache_dir is not None else
-            (path.parent.parent if path.parent.name == "raw" else path.parent) / "cache" / "equilibrium_distance",
-        )
-        for path in paths
-    ]
+    def load_distances(path: Path) -> EquilibriumDistanceTrajectory:
+        directory = (Path(cache_dir) if cache_dir is not None else
+                     (path.parent.parent if path.parent.name == "raw" else path.parent) / "cache" / "equilibrium_distance")
+        if cache_publisher is None:
+            return _load_result_distances(path, payoff_tensor, directory)
+        return _load_result_distances(path, payoff_tensor, directory, cache_publisher)
+
+    replicate_distances = [load_distances(path) for path in paths]
     distances = aggregate_equilibrium_distance_trajectories(
         replicate_distances
     )

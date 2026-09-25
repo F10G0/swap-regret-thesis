@@ -48,14 +48,12 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
         raise ValueError("Unknown feedback mode")
     if comparison_mode == "actions" and mode != "adversarial":
         raise ValueError("Action-space comparison is available only for one-player results")
-    if metric not in {*REGRET_NAMES, "all"} or view not in {"average", "sqrt_scaling", "log_log_fit", "horizon_scaling", "all"}:
+    if metric not in {*REGRET_NAMES, "all"} or view not in {"average", "sqrt_scaling", "horizon_scaling", "all"}:
         raise ValueError("Unknown regret metric or view")
     if comparison_mode == "horizons" and view != "horizon_scaling":
         raise ValueError("Horizon comparison requires the horizon-scaling view")
     if comparison_mode != "horizons" and view == "horizon_scaling":
         raise ValueError("The horizon-scaling view is available only for horizon comparison")
-    if view == "log_log_fit" and comparison_mode != "regrets":
-        raise ValueError("The log-log fit view is available only for regret-notion comparison")
     if hasattr(values, "getlist"):
         profiles = values.getlist("profiles")
     else:
@@ -70,8 +68,7 @@ def parse_profile_selection(values: Mapping[str, str]) -> ProfileSelection:
         raise ValueError("All algorithm profiles is available only for regret or horizon comparison")
     if comparison_mode in {"regrets", "actions", "horizons"} and len(profiles) != 1:
         raise ValueError("Select exactly one algorithm profile for this comparison")
-    valid_regret_metric = metric in {*REGRET_NAMES, "all"} if view == "log_log_fit" else metric == "all"
-    if comparison_mode == "regrets" and not valid_regret_metric:
+    if comparison_mode == "regrets" and metric != "all":
         raise ValueError("Regret-notion comparison includes all regret notions")
     if comparison_mode == "horizons" and metric != "all":
         raise ValueError("Horizon comparison includes all regret notions")

@@ -7,6 +7,8 @@ import pytest
 import experiments.results as results
 import experiments.runtime_environment as runtime
 from experiments.algorithm_labels import algorithm_profile_label
+from experiments.result_catalog import ResultRecord, ResultRepository, SUMMARY_REGRET_FIELDS
+from experiments.scenarios.adversarial import run_adversarial_experiment
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from experiments.result_schema import JOINT_ACTION_HISTOGRAM_FIELD
 from experiments.result_trajectories import load_result_empirical_distribution_trajectory
@@ -26,6 +28,64 @@ def rewrite_rows(path, rows):
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+@pytest.mark.parametrize("field", SUMMARY_REGRET_FIELDS)
+@pytest.mark.parametrize("value", ("nan", "inf", "-inf"))
+def test_one_player_nonfinite_final_regret_is_skipped(tmp_path, field, value):
+    path = run_adversarial_experiment("hedge", horizon=2, output_dir=tmp_path)
+    rows = read_csv_rows(path)
+    assert field in rows[-1]
+    rows[-1][field] = value
+    rewrite_rows(path, rows)
+
+    with pytest.raises(ValueError, match=f"non-finite value for {field}"):
+        ResultRecord.read(path, "adversarial")
+    snapshot = ResultRepository(tmp_path, "adversarial").snapshot()
+    assert snapshot.records == ()
+    assert snapshot.summaries() == []
+    assert snapshot.summaries(grouped=True) == []
+    assert snapshot.warnings == (f"Skipped {path.name}: non-finite value for {field}",)
+
+
+def test_valid_one_player_result_remains_in_catalog_beside_nonfinite_file(tmp_path):
+    valid_path = run_adversarial_experiment("hedge", horizon=2, seed=7, output_dir=tmp_path)
+    expected = {field: float(value) for field, value in read_csv_rows(valid_path)[-1].items()
+                if field in SUMMARY_REGRET_FIELDS}
+    bad_path = run_adversarial_experiment("hedge", horizon=2, seed=8, output_dir=tmp_path)
+    rows = read_csv_rows(bad_path)
+    rows[-1]["average_external_regret"] = "nan"
+    rewrite_rows(bad_path, rows)
+
+    snapshot = ResultRepository(tmp_path, "adversarial").snapshot()
+    assert snapshot.paths == [valid_path]
+    assert snapshot.records[0].final_values == (expected,)
+    assert snapshot.warnings == (f"Skipped {bad_path.name}: non-finite value for average_external_regret",)
+    summary = snapshot.summaries(grouped=True)[0]
+    assert {field: summary[field] for field in expected} == expected
+
+
+def test_one_player_finite_negative_regret_remains_valid(tmp_path):
+    path = run_adversarial_experiment("hedge", horizon=2, output_dir=tmp_path)
+    rows = read_csv_rows(path)
+    rows[-1]["average_external_regret"] = "-0.25"
+    rewrite_rows(path, rows)
+
+    snapshot = ResultRepository(tmp_path, "adversarial").snapshot()
+    assert snapshot.paths == [path]
+    assert snapshot.warnings == ()
+    assert snapshot.summaries()[0]["average_external_regret"] == -0.25
+
+
+def test_fixed_nonfinite_final_regret_still_skipped(tmp_path):
+    path = create_run(tmp_path)
+    rows = read_csv_rows(path)
+    rows[-1]["average_external_regret"] = "nan"
+    rewrite_rows(path, rows)
+
+    snapshot = ResultRepository(tmp_path, "fixed").snapshot()
+    assert snapshot.records == ()
+    assert snapshot.warnings == (f"Skipped {path.name}: non-finite value for average_external_regret",)
 
 
 @pytest.mark.parametrize("loader", [lambda path: list(results.iter_result_rows(path)), results.load_final_result_rows])

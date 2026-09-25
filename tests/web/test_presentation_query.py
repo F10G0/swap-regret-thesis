@@ -175,21 +175,23 @@ def test_comparison_modes_match_current_dom(cases, mode, options, expected):
     assert_dom_parity(app, query, context, projected)
 
 
-def test_hidden_regret_view_has_no_best_marks(cases):
+@pytest.mark.parametrize("mode,scope,profile", [
+    ("fixed", "rps", "hedge_vs_hedge"),
+    ("adversarial", "historical_frequency_v3", "hedge"),
+])
+def test_retired_view_is_rejected_and_ordinary_regret_views_validate(cases, mode, scope, profile):
     _, service, _ = cases
-    query, catalog, _ = selection(
-        service, comparison_mode="regrets", view="log_log_fit",
-        profiles=("hedge_vs_hedge",))
-    projected = projection(service, query, catalog)
-    assert len(projected.groups) == 1
-    assert projected.global_minima == {}
-    assert projected.best_cells == frozenset()
-    all_cells = projection(
-        service, replace(query, view="all"), catalog)
-    assert {bucket[0] for bucket in all_cells.global_minima} == {
-        "average_external", "average_internal", "average_swap",
-        "sqrt_scaling_external", "sqrt_scaling_internal", "sqrt_scaling_swap",
-    }
+    options = dict(mode=mode, scope=scope, comparison_mode="regrets", profiles=(profile,))
+    with pytest.raises(ValueError, match="invalid regret view"):
+        selection(service, view="log_log_fit", **options)
+    for view in ("all", "average", "sqrt_scaling"):
+        query, catalog, _ = selection(service, view=view, **options)
+        projected = projection(service, query, catalog)
+        assert len(projected.groups) == 1
+        assert {bucket[0] for bucket in projected.global_minima} == {
+            f"{kind}_{metric}" for kind in ("average", "sqrt_scaling")
+            if view in ("all", kind) for metric in ("external", "internal", "swap")
+        }
 
 
 def test_default_order_and_numeric_sorts_are_deterministic(cases):

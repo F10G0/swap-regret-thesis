@@ -93,17 +93,11 @@ def test_comparison_selection_is_canonical_and_enforces_mode_contracts():
     assert (regret_selection.metric, regret_selection.view) == ("all", "all")
     assert parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
         "comparison_mode": "regrets", "horizon": "30", "profiles": ["all"]}).profiles == ("all",)
-    for metric in ("external", "internal", "swap"):
-        test_selection = parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
-                                                  "comparison_mode": "regrets", "metric": metric, "view": "log_log_fit",
-                                                  "horizon": "30",
-                                                  "profiles": ["hedge_vs_hedge"]})
-        assert (test_selection.metric, test_selection.view) == (metric, "log_log_fit")
-    assert parse_profile_selection({"mode": "fixed", "context_id": "a" * 24, "comparison_mode": "regrets",
-                                    "metric": "all", "view": "log_log_fit",
-                                    "horizon": "30",
-                                    "profiles": ["hedge_vs_hedge"]}).metric == "all"
-    with pytest.raises(ValueError, match="only for regret-notion"):
+    for view in ("all", "average", "sqrt_scaling"):
+        assert parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
+            "comparison_mode": "regrets", "horizon": "30",
+            "profiles": ["hedge_vs_hedge"], "view": view}).metric == "all"
+    with pytest.raises(ValueError, match="Unknown regret metric or view"):
         parse_profile_selection(data | {"view": "log_log_fit"})
     with pytest.raises(ValueError, match="at least one"):
         parse_profile_selection({"mode": "fixed", "context_id": "a" * 24,
@@ -557,19 +551,16 @@ def test_all_profiles_batches_independent_regret_and_horizon_figures_with_cache_
 
     calls = []
     original_curves = plotting.plot_regret_curves
-    original_log_log = plotting.plot_regret_log_log
     monkeypatch.setattr(plotting, "plot_regret_curves", lambda *args, **kwargs: (
         calls.append("regret"), original_curves(*args, **kwargs))[1])
-    monkeypatch.setattr(plotting, "plot_regret_log_log", lambda *args, **kwargs: (
-        calls.append("log-log"), original_log_log(*args, **kwargs))[1])
     all_regrets = parse_profile_selection(form(
         context, ["all"], "regrets", "all", "all", horizon=30) | {"feedback": "full_information"})
     regret_collection = service.figure_builder.build_collection(all_regrets)
 
     assert regret_collection["profiles"] == ["hedge_vs_hedge", "ito_hedge_vs_ito_hedge"]
-    assert len(regret_collection["figures"]) == 10 and calls == ["regret", "regret", "log-log", "log-log", "log-log"]
+    assert len(regret_collection["figures"]) == 4 and calls == ["regret", "regret"]
     assert Counter(tuple(figure["profiles"]) for figure in regret_collection["figures"]) == {
-        ("hedge_vs_hedge",): 5, ("ito_hedge_vs_ito_hedge",): 5}
+        ("hedge_vs_hedge",): 2, ("ito_hedge_vs_ito_hedge",): 2}
     assert all(any(label in figure["title"] for label in ("Hedge vs Hedge", "Ito-Hedge vs Ito-Hedge"))
                for figure in regret_collection["figures"])
     assert service.figure_builder.cached_collection(all_regrets) == regret_collection
@@ -634,13 +625,11 @@ def test_regret_comparison_combines_three_fixed_series_for_selected_views_and_ex
     average = build("average")
     scaling = build("sqrt_scaling")
     both = build("all")
-    diagnostics = [build("log_log_fit", metric) for metric in ("external", "internal", "swap")]
-    assert [len(response.json["figures"]) for response in (average, scaling, both, *diagnostics)] == [5] * 6
-    assert all(response.json == both.json for response in (average, scaling, *diagnostics))
+    assert [len(response.json["figures"]) for response in (average, scaling, both)] == [2] * 3
+    assert all(response.json == both.json for response in (average, scaling))
     assert [(figure["metric"], figure["view"]) for figure in both.json["figures"]] == [
-        ("all", "average"), ("all", "sqrt_scaling"),
-        ("external", "log_log_fit"), ("internal", "log_log_fit"), ("swap", "log_log_fit")]
-    assert len(captured) == 5
+        ("all", "average"), ("all", "sqrt_scaling")]
+    assert len(captured) == 2
     styles = {}
     for (figure, information_rows), view in zip(captured[:2], ("average", "sqrt_scaling")):
         assert len(figure.axes) == 1
@@ -679,28 +668,9 @@ def test_regret_comparison_combines_three_fixed_series_for_selected_views_and_ex
     assert {styles[metric][3][1] for metric in ("external", "internal", "swap")} == {0.24}
     assert styles["swap"][4] > styles["external"][4]
     assert build("all").json == both.json
-    assert len(captured) == 5
+    assert len(captured) == 2
 
-    for metric, (figure, _), artifact in zip(("external", "internal", "swap"), captured[2:], both.json["figures"][2:]):
-        axes = figure.axes[0]
-        times, means = plotting.aggregate_metric_curve(trajectories, 0, f"{metric}_regret")
-        tail = times >= context["horizons"][0] / 10
-        data_lines = [line for line in axes.lines
-                      if line.get_label() == f"Replicate-mean cumulative {metric} action regret"]
-        if np.all(means[tail] > 0):
-            np.testing.assert_array_equal(data_lines[0].get_xdata(), np.log(times[tail]))
-            np.testing.assert_array_equal(data_lines[0].get_ydata(), np.log(means[tail]))
-        else:
-            assert not data_lines
-        assert axes.get_xscale() == axes.get_yscale() == "linear"
-        assert axes.get_ylabel() == f"log replicate-mean cumulative {metric} action regret"
-        information = PdfReader(service.figure_builder.artifact_path(artifact["pdf_filename"])).pages[0].extract_text()
-        information = " ".join(information.split())
-        assert all(value in information for value in (f"Metric: {metric.title()} regret", "View: Log-log fit",
-            "Fit window: t >= T/10", "Aggregation: Replicate-mean cumulative action regret"))
-
-    for figures, expected_pages in ((average.json["figures"][:1], 1), (both.json["figures"][:2], 2),
-                                    (diagnostics[0].json["figures"][2:], 3)):
+    for figures, expected_pages in ((average.json["figures"][:1], 1), (both.json["figures"], 2)):
         response = client.post("/figures/download-filtered.pdf", data={
             "mode": "figure_builder", "_csrf_token": token,
             "filenames": [figure["pdf_filename"] for figure in figures],
@@ -750,4 +720,4 @@ def test_builder_rejects_source_mutation_before_publication(tmp_path, monkeypatc
     monkeypatch.setattr(plotting, "plot_regret_curves", render)
     with pytest.raises(ValueError, match="Results changed during rendering"):
         service.figure_builder.build_collection(parse_profile_selection(form(context, ["hedge_vs_hedge"])))
-    assert not list(service.figure_builder.output_dir.iterdir())
+    assert not list(service.figure_builder.output_dir.glob("*"))

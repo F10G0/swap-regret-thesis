@@ -1,7 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import logging
 import shutil
-from threading import Event
+from threading import Event, current_thread
 import time
 
 import pytest
@@ -11,7 +12,7 @@ from web.jobs import Job, JobManager, ServiceBusyError
 from experiments.scenarios.adversarial import run_adversarial_experiment
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from tests.web.support import block_job_queue, browse_url, create_service, create_test_app, csrf_token, wait_for_async_result, wait_for_job
-from web.validation import AdversarialExperimentForm, ExperimentForm
+from web.validation import AdversarialExperimentForm, ExperimentForm, parse_profile_selection
 
 
 def write_figure_pair(output_path, content: bytes) -> None:
@@ -239,6 +240,95 @@ def test_clear_results_removes_derived_tree_and_preserves_inputs(tmp_path: Path)
     assert input_path.is_file()
     remaining_files = {path for path in tmp_path.rglob("*") if path.is_file()}
     assert remaining_files == placeholders | {input_path}
+
+
+def test_clear_generated_figures_preserves_raw_results_and_custom_games(tmp_path: Path) -> None:
+    service = create_service(tmp_path)
+    definition = service.create_custom_game("keep me", 2, [2, 2], 0)
+    custom_path = service.game_catalog.custom_path(definition.id)
+    fixed = run_cross_play_experiment("rps", ["hedge", "hedge"], horizon=2, seed=11,
+        output_dir=service.raw_dir, feedback_mode="full_information")
+    one_player = run_adversarial_experiment("hedge", horizon=2, seed=12,
+        output_dir=service.adversarial_raw_dir)
+    preserved = {path: path.read_bytes() for path in (fixed, one_player, custom_path)}
+    artifacts = (
+        service.figure_dir / "generated.png",
+        service.figure_dir / "generated.pdf",
+        service.detail_figure_dir / "detail.png",
+        service.adversarial_dir / "figures" / "one-player.png",
+        service.adversarial_dir / "cache" / "one-player.json",
+        service.results_dir / "cache" / "figure_builder" / "collection.pdf",
+        service.results_dir / "cache" / "equilibrium_distance" / "distance.json",
+    )
+    for path in artifacts:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"generated")
+
+    generation = service._detail_figure_generation
+    service.clear_generated_figures()
+
+    assert {path: path.read_bytes() for path in preserved} == preserved
+    assert not any(path.exists() for path in artifacts)
+    assert service._detail_figure_generation == generation + 1
+    assert len(service.result_snapshot().records) == 1
+    assert len(service.result_snapshot("adversarial").records) == 1
+
+
+@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
+def test_clear_generated_figures_route_requires_csrf_and_preserves_mode(tmp_path: Path, mode: str) -> None:
+    app, service = create_test_app(tmp_path)
+    artifact = service.figure_dir / "generated.png"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"generated")
+    client = app.test_client()
+    location = "/" if mode == "fixed" else "/?mode=adversarial"
+    page = client.get(location).get_data(as_text=True)
+    form = page.split('action="/clear-generated-figures"', 1)[1].split("</form>", 1)[0]
+    assert 'name="_csrf_token"' in form
+    assert 'name="return_to" value="' + mode + '"' in form
+    assert "data-busy-control" in form and "disabled" not in form
+    assert "Raw experiment CSVs will be preserved" in form
+    assert page.index(">Clear generated figures</button>") < page.index(">Reset all experiment results</button>")
+
+    fields = {"return_to": mode, "confirmation": "clear-generated-figures"}
+    assert client.post("/clear-generated-figures", data=fields).status_code == 400
+    assert artifact.is_file()
+    token = csrf_token(client)
+    missing_confirmation = client.post("/clear-generated-figures", data={
+        "_csrf_token": token, "return_to": mode,
+    })
+    assert missing_confirmation.status_code == 302
+    assert missing_confirmation.headers["Location"] == location and artifact.is_file()
+
+    response = client.post("/clear-generated-figures", data=fields | {"_csrf_token": token})
+    assert response.status_code == 302 and response.headers["Location"] == location
+    assert not artifact.exists()
+    assert "Cleared generated figures and caches. Raw experiment results were preserved." in (
+        client.get(location).get_data(as_text=True))
+
+
+def test_clear_generated_figures_rejects_busy_jobs(tmp_path: Path) -> None:
+    app, service = create_test_app(tmp_path)
+    artifact = service.figure_dir / "generated.png"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"generated")
+    client = app.test_client()
+    token = csrf_token(client)
+    blocker, release = block_job_queue(service.jobs)
+    try:
+        page = client.get("/").get_data(as_text=True)
+        form = page.split('action="/clear-generated-figures"', 1)[1].split("</form>", 1)[0]
+        assert "data-busy-control disabled" in form
+        with pytest.raises(ServiceBusyError):
+            service.clear_generated_figures()
+        response = client.post("/clear-generated-figures", data={
+            "_csrf_token": token, "return_to": "fixed", "confirmation": "clear-generated-figures",
+        })
+        assert response.status_code == 302 and artifact.is_file()
+        assert "wait for the active operation to finish" in client.get("/").get_data(as_text=True)
+    finally:
+        release.set()
+    assert wait_for_job(service, blocker.id) == "succeeded"
 
 
 def test_delete_fixed_group_removes_all_replicates_and_clears_only_derived_artifacts(tmp_path: Path) -> None:
@@ -557,6 +647,69 @@ def test_joint_action_heatmap_is_generated_and_cached(tmp_path, grouped):
     assert ("Aggregation:  Replicate mean" in information) is grouped
 
 
+def test_group_detail_figures_use_canonical_replicates_but_delete_all_physical_files(tmp_path, monkeypatch):
+    from experiments.plots import plot_equilibrium_convergence, plot_joint_actions
+
+    service = create_service(tmp_path)
+    canonical_paths = [run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=2, replicate=replicate,
+        output_dir=service.raw_dir, feedback_mode="full_information",
+    ) for replicate in (0, 1)]
+    group_id = service.result_snapshot().groups("dashboard")[0].records[0].group_id
+    cache_stem = service._group_cache_stem(group_id, canonical_paths)
+    expected_joint_figure = service.detail_figure_dir / f"{cache_stem}_replicate_mean_joint_actions_blue_lower_origin.png"
+    initial_equilibrium_paths, expected_equilibrium_figure, initial_cache_stem = service._group_convergence_figure_path(group_id)
+    assert initial_equilibrium_paths == canonical_paths
+    assert initial_cache_stem == cache_stem
+    joint_inputs = []
+    equilibrium_inputs = []
+    information_rows = []
+
+    def capture_joint(input_paths, output_path, *args, **kwargs):
+        joint_inputs.append(list(input_paths))
+        information_rows.append(kwargs["information_rows"])
+        write_figure_pair(output_path, b"joint")
+
+    def capture_equilibrium(input_paths, output_path, *args, **kwargs):
+        equilibrium_inputs.append(list(input_paths))
+        information_rows.append(kwargs["information_rows"])
+        write_figure_pair(output_path, b"equilibrium")
+
+    monkeypatch.setattr(plot_joint_actions, "plot_joint_actions", capture_joint)
+    monkeypatch.setattr(plot_equilibrium_convergence, "plot_result_equilibrium_distance", capture_equilibrium)
+    duplicate = service.raw_dir / "zz_duplicate.csv"
+    shutil.copyfile(canonical_paths[0], duplicate)
+    snapshot = service.result_snapshot()
+    summary = snapshot.summaries(grouped=True)[0]
+    assert summary["replicate_count"] == 2
+    assert [run["experiment"] for run in summary["runs"]] == [path.name for path in canonical_paths]
+    assert snapshot.canonical_detail_paths(group_id) == canonical_paths
+    assert set(snapshot.detail_paths(group_id)) == {*canonical_paths, duplicate}
+
+    assert service._group_convergence_figure_path(group_id) == (
+        canonical_paths, expected_equilibrium_figure, cache_stem,
+    )
+    joint_figure = service.group_joint_action_figure(group_id)
+    equilibrium_figure, error = wait_for_equilibrium_figure(
+        lambda: service.request_group_equilibrium_convergence_figure(group_id)
+    )
+    assert error is None
+    assert joint_figure == expected_joint_figure
+    assert equilibrium_figure == expected_equilibrium_figure
+    assert joint_inputs == [canonical_paths]
+    assert equilibrium_inputs == [canonical_paths]
+    assert all(("Replicates", "2") in rows for rows in information_rows)
+
+    assert service.group_joint_action_figure(group_id) == joint_figure
+    assert wait_for_equilibrium_figure(
+        lambda: service.request_group_equilibrium_convergence_figure(group_id)
+    ) == (equilibrium_figure, None)
+    assert len(joint_inputs) == len(equilibrium_inputs) == 1
+
+    assert service.delete_result_group("fixed", group_id) == 3
+    assert not any(path.exists() for path in (*canonical_paths, duplicate))
+
+
 def test_custom_zero_sum_joint_action_heatmap_uses_saved_game(tmp_path: Path) -> None:
     service = create_service(tmp_path)
     definition = service.create_custom_game("Joint Actions", 2, [3, 3], 7, "zero_sum")
@@ -575,8 +728,9 @@ def test_custom_zero_sum_joint_action_heatmap_uses_saved_game(tmp_path: Path) ->
     assert figure.with_suffix(".pdf").is_file()
 
 
+@pytest.mark.parametrize("clear_method", ["clear_results", "clear_generated_figures"])
 @pytest.mark.parametrize("grouped", [False, True])
-def test_equilibrium_distance_reuses_paired_cache_and_clears_it(tmp_path, monkeypatch, grouped):
+def test_equilibrium_distance_reuses_paired_cache_and_clears_it(tmp_path, monkeypatch, grouped, clear_method):
     from experiments.plots import plot_equilibrium_convergence as plotting
     service = create_service(tmp_path)
     paths = [run_cross_play_experiment("rps", ["hedge", "hedge"],
@@ -599,8 +753,9 @@ def test_equilibrium_distance_reuses_paired_cache_and_clears_it(tmp_path, monkey
     assert len(calls) == 1  # Cache hits must not recompute distances.
     assert len(calls[0]) == len(paths) and set(calls[0]) == set(paths)
     assert first.read_bytes() == first.with_suffix(".pdf").read_bytes() == b"distance"
-    service.clear_results()
+    getattr(service, clear_method)()
     assert not first.exists() and not first.with_suffix(".pdf").exists()
+    assert all(path.exists() for path in paths) == (clear_method == "clear_generated_figures")
 
 
 def test_dashboard_keeps_active_jobs_outside_display_limit(tmp_path, monkeypatch):
@@ -612,3 +767,188 @@ def test_dashboard_keeps_active_jobs_outside_display_limit(tmp_path, monkeypatch
     page = response.get_data(as_text=True)
     for job in jobs:
         assert (f'data-job-id="{job.id}"' in page) == (job.id != "old")
+
+
+def _f3_builder_selection(service, horizon: int):
+    context = next(item for item in service.figure_builder.catalog("fixed")["contexts"]
+                   if item["scope"] == "rps" and item["player"] == 0)
+    profile = context["profiles"][0]["id"]
+    selection = parse_profile_selection({
+        "mode": "fixed", "context_id": context["id"], "comparison_mode": "regrets",
+        "metric": "all", "view": "average", "profiles": [profile],
+        "horizon": str(horizon),
+    })
+    return context, profile, selection
+
+
+@pytest.mark.parametrize("cleanup", [
+    "clear_generated_figures", "clear_results", "delete_result_group",
+    "delete_filtered_result_groups",
+])
+def test_old_figure_builder_publication_is_invalidated_by_shared_cleanup(tmp_path, monkeypatch, cleanup):
+    service = create_service(tmp_path)
+    raw = run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
+        feedback_mode="full_information",
+    )
+    context, profile, selection = _f3_builder_selection(service, 3)
+    group_id = service.result_snapshot().records[0].group_id
+    entered, release = Event(), Event()
+    original_publish = service._publish_derived_artifact
+
+    def pause_before_publish(generation, publish):
+        entered.set()
+        assert release.wait(timeout=20)
+        original_publish(generation, publish)
+
+    monkeypatch.setattr(service, "_publish_derived_artifact", pause_before_publish)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="builder") as executor:
+        old_work = executor.submit(service.figure_builder.build_collection, selection)
+        try:
+            assert entered.wait(timeout=15)
+            generation = service._detail_figure_generation
+            if cleanup == "clear_generated_figures":
+                service.clear_generated_figures()
+            elif cleanup == "clear_results":
+                service.clear_results()
+            elif cleanup == "delete_result_group":
+                assert service.delete_result_group("fixed", group_id) == 1
+            else:
+                values = {
+                    "mode": "fixed", "scope": "rps", "context": context["id"],
+                    "comparison_mode": "profiles", "feedback": "full_information",
+                    "horizon": "3", "profiles": [profile], "player": "0",
+                }
+                preview = service.preview_filtered_result_groups("fixed", values)
+                assert preview.count == 1
+                assert service.delete_filtered_result_groups(
+                    "fixed", values, preview.membership_digest) == 1
+            assert service._detail_figure_generation == generation + 1
+        finally:
+            release.set()
+        with pytest.raises(RuntimeError, match="derived artifact generation was invalidated"):
+            old_work.result(timeout=15)
+
+    assert not list(service.figure_builder.output_dir.glob("*"))
+    assert not list(tmp_path.glob(".selection-*"))
+    assert raw.exists() == (cleanup == "clear_generated_figures")
+
+
+def test_builder_and_distance_cache_old_work_cannot_republish_but_fresh_work_can(tmp_path, monkeypatch):
+    service = create_service(tmp_path)
+    raw = run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
+        feedback_mode="full_information",
+    )
+    _, _, selection = _f3_builder_selection(service, 3)
+    entered = {"builder": Event(), "cache": Event()}
+    release = Event()
+    original_publish = service._publish_derived_artifact
+
+    def pause_before_publish(generation, publish):
+        kind = "cache" if current_thread().name.startswith("equilibrium-distance") else "builder"
+        entered[kind].set()
+        assert release.wait(timeout=20)
+        original_publish(generation, publish)
+
+    monkeypatch.setattr(service, "_publish_derived_artifact", pause_before_publish)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="builder") as executor:
+        old_builder = executor.submit(service.figure_builder.build_collection, selection)
+        try:
+            assert service.request_equilibrium_convergence_figure(raw.name) == (None, None)
+            old_distance = next(iter(service._convergence_futures.values()))
+            assert all(event.wait(timeout=15) for event in entered.values())
+            service.clear_generated_figures()
+            assert service._convergence_futures == {}
+        finally:
+            release.set()
+        for old_work in (old_builder, old_distance):
+            with pytest.raises(RuntimeError, match="derived artifact generation was invalidated"):
+                old_work.result(timeout=15)
+
+    assert raw.is_file()
+    assert not list((service.results_dir / "cache").rglob("*.json"))
+    assert not list(service.figure_builder.output_dir.glob("*"))
+    assert not list(service.detail_figure_dir.glob("*"))
+    assert not list(tmp_path.glob(".selection-*"))
+    assert not list(tmp_path.glob(".equilibrium-convergence-*"))
+
+    monkeypatch.setattr(service, "_publish_derived_artifact", original_publish)
+    fresh = service.figure_builder.build_collection(selection)
+    assert len(fresh["figures"]) == 2
+    assert all((service.figure_builder.output_dir / item["filename"]).is_file()
+               and (service.figure_builder.output_dir / item["pdf_filename"]).is_file()
+               for item in fresh["figures"])
+    figure, error = wait_for_equilibrium_figure(
+        lambda: service.request_equilibrium_convergence_figure(raw.name))
+    assert error is None and figure is not None and figure.is_file()
+    assert figure.with_suffix(".pdf").is_file()
+    assert len(list((service.results_dir / "cache" / "equilibrium_distance").glob("*.json"))) == 1
+
+
+def test_existing_detail_figure_invalidation_rejects_old_render_and_allows_new(tmp_path, monkeypatch):
+    from experiments.plots import plot_equilibrium_convergence as plotting
+
+    service = create_service(tmp_path)
+    raw = run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
+        feedback_mode="full_information",
+    )
+    entered, release = Event(), Event()
+
+    def render(input_paths, output_path, **kwargs):
+        entered.set()
+        assert release.wait(timeout=20)
+        write_figure_pair(output_path, b"distance")
+
+    monkeypatch.setattr(plotting, "plot_result_equilibrium_distance", render)
+    assert service.request_equilibrium_convergence_figure(raw.name) == (None, None)
+    old_work = next(iter(service._convergence_futures.values()))
+    try:
+        assert entered.wait(timeout=15)
+        service.clear_generated_figures()
+        assert service._convergence_futures == {}
+    finally:
+        release.set()
+    with pytest.raises(RuntimeError, match="equilibrium convergence figure generation was invalidated"):
+        old_work.result(timeout=15)
+    assert not list(service.detail_figure_dir.glob("*"))
+    assert not list(tmp_path.glob(".equilibrium-convergence-*"))
+
+    figure, error = wait_for_equilibrium_figure(
+        lambda: service.request_equilibrium_convergence_figure(raw.name))
+    assert error is None and figure is not None and figure.is_file()
+    assert figure.with_suffix(".pdf").is_file()
+
+
+def test_joint_action_request_started_before_cleanup_cannot_publish_afterward(tmp_path, monkeypatch):
+    import web.services as services_module
+
+    service = create_service(tmp_path)
+    raw = run_cross_play_experiment(
+        "rps", ["hedge", "hedge"], horizon=3, output_dir=service.raw_dir,
+        feedback_mode="full_information",
+    )
+    entered, release = Event(), Event()
+    original_rows = services_module.iter_result_rows
+
+    def pause_before_detail_lock(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=20)
+        return original_rows(*args, **kwargs)
+
+    monkeypatch.setattr(services_module, "iter_result_rows", pause_before_detail_lock)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        old_work = executor.submit(service.joint_action_figure, raw.name)
+        try:
+            assert entered.wait(timeout=15)
+            service.clear_generated_figures()
+        finally:
+            release.set()
+        with pytest.raises(RuntimeError, match="joint-action figure generation was invalidated"):
+            old_work.result(timeout=15)
+
+    assert not list(service.detail_figure_dir.glob("*"))
+    monkeypatch.setattr(services_module, "iter_result_rows", original_rows)
+    fresh = service.joint_action_figure(raw.name)
+    assert fresh.is_file() and fresh.with_suffix(".pdf").is_file()

@@ -200,7 +200,7 @@ class GameCatalog:
                 else:
                     definition, _ = self._load_custom_file(path)
                     self._definition_cache[path] = (stat.st_mtime_ns, stat.st_size, definition)
-            except (OSError, TypeError, ValueError, BadZipFile) as error:
+            except (OSError, TypeError, ValueError, BadZipFile, EOFError) as error:
                 warnings.append(f"Skipped {path.name}: {error}")
             else:
                 definitions.append(definition)

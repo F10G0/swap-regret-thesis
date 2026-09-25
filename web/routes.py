@@ -28,7 +28,7 @@ from web.browsing import (
 )
 from web.filtered_deletion import FilteredResultsChanged
 from web.jobs import ServiceBusyError
-from web.presentation_query import project_dashboard_query
+from web.presentation_query import DashboardSelectionUnavailable, project_dashboard_query
 from web.pdf_export import merged_figure_pdf
 from web.services import DashboardService
 from web.validation import (
@@ -176,6 +176,10 @@ def index():
                 results, catalog, query,
                 presentations=service.game_presentations if mode == "fixed" else {},
             )
+        except DashboardSelectionUnavailable:
+            default = default_browsing_query(catalog, mode)
+            flash("Results changed since this page was loaded. Showing the latest available results.")
+            return redirect(_browse_url(default))
         except ValueError as error:
             abort(400, description=str(error))
         page = paginate_projection(projection, requested_page, page_size)
@@ -534,6 +538,23 @@ def group_equilibrium_distance(group_id: str, figure_format: str):
         ),
         figure_format,
     )
+
+
+@dashboard.post("/clear-generated-figures")
+def clear_generated_figures():
+    return_to = request.form.get("return_to")
+    redirect_arguments = {"mode": "adversarial"} if return_to == "adversarial" else {}
+    if request.form.get("confirmation") != "clear-generated-figures":
+        flash("Clear generated figures confirmation was missing.", "error")
+        return redirect(url_for("dashboard.index", **redirect_arguments))
+
+    try:
+        get_service().clear_generated_figures()
+    except ServiceBusyError as error:
+        flash(str(error), "error")
+    else:
+        flash("Cleared generated figures and caches. Raw experiment results were preserved.", "success")
+    return redirect(url_for("dashboard.index", **redirect_arguments))
 
 
 @dashboard.post("/reset")

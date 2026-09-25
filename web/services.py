@@ -91,6 +91,17 @@ class DashboardService:
         self._convergence_future_lock = Lock()
         self._convergence_futures: dict[str, Future[Path]] = {}
 
+    def _derived_generation(self) -> int:
+        with self._detail_figure_lock:
+            return self._detail_figure_generation
+
+    def _publish_derived_artifact(self, generation: int, publish: Callable[[], None]) -> None:
+        """Check the generation and publish under the shared cleanup lock."""
+        with self._detail_figure_lock:
+            if generation != self._detail_figure_generation:
+                raise RuntimeError("derived artifact generation was invalidated")
+            publish()
+
     def _clear_generated_artifacts(self, roots: tuple[Path, ...], preserve: tuple[Path, ...] = ()) -> tuple[Path, ...]:
         return clear_experiment_artifacts(
             roots,
@@ -416,10 +427,12 @@ class DashboardService:
     def detail_figure_dir(self) -> Path:
         return self.figure_dir / "details"
 
-    def _result_group_paths(self, group_id: str, kind: ResultKind = "fixed", results: ResultSet | None = None) -> list[Path]:
+    def _result_group_paths(self, group_id: str, kind: ResultKind = "fixed", results: ResultSet | None = None,
+                            *, canonical: bool = False) -> list[Path]:
         if re.fullmatch(r"[0-9a-f]{16}", group_id) is None:
             raise ValueError("invalid result group")
-        paths = (results or self.result_snapshot(kind)).detail_paths(group_id)
+        snapshot = results or self.result_snapshot(kind)
+        paths = snapshot.canonical_detail_paths(group_id) if canonical else snapshot.detail_paths(group_id)
         for path in paths:
             validate_leaf_filename(path.name, ".csv")
         if any(not path.is_file() for path in paths):
@@ -449,18 +462,20 @@ class DashboardService:
         return rows
 
     def joint_action_figure(self, filename: str) -> Path:
+        generation = self._derived_generation()
         filename = validate_leaf_filename(filename, ".csv")
         input_path = self.raw_dir / filename
         if not input_path.is_file():
             raise FileNotFoundError(filename)
-        return self._joint_action_figure([input_path], input_path.stem, False)
+        return self._joint_action_figure([input_path], input_path.stem, False, generation)
 
     def group_joint_action_figure(self, group_id: str) -> Path:
-        input_paths = self._result_group_paths(group_id)
+        generation = self._derived_generation()
+        input_paths = self._result_group_paths(group_id, canonical=True)
         cache_stem = self._group_cache_stem(group_id, input_paths)
-        return self._joint_action_figure(input_paths, f"{cache_stem}_replicate_mean", True)
+        return self._joint_action_figure(input_paths, f"{cache_stem}_replicate_mean", True, generation)
 
-    def _joint_action_figure(self, input_paths: list[Path], cache_stem: str, replicate_mean: bool) -> Path:
+    def _joint_action_figure(self, input_paths: list[Path], cache_stem: str, replicate_mean: bool, generation: int) -> Path:
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_matrix_figures(game_name):
             raise ValueError(f"joint-action heatmaps are unavailable for {game_name}")
@@ -468,6 +483,8 @@ class DashboardService:
         output_path = self.detail_figure_dir / f"{cache_stem}_joint_actions_blue_lower_origin.png"
         input_mtime = max(path.stat().st_mtime_ns for path in input_paths)
         with self._detail_figure_lock:
+            if generation != self._detail_figure_generation:
+                raise RuntimeError("joint-action figure generation was invalidated")
             if figure_pair_is_current(output_path, input_mtime):
                 return output_path
 
@@ -508,7 +525,7 @@ class DashboardService:
         self,
         group_id: str,
     ) -> tuple[list[Path], Path, str]:
-        input_paths = self._result_group_paths(group_id)
+        input_paths = self._result_group_paths(group_id, canonical=True)
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_equilibrium_distance(game_name):
             raise ValueError(f"equilibrium distance is unavailable for {game_name}")
@@ -562,6 +579,7 @@ class DashboardService:
         self,
         filename: str,
     ) -> tuple[Path | None, str | None]:
+        generation = self._derived_generation()
         input_path, output_path = self._convergence_figure_path(filename)
         return self._request_convergence_figure(
             [input_path],
@@ -571,6 +589,7 @@ class DashboardService:
                 [input_path],
                 output_path,
                 False,
+                generation,
             ),
             filename,
         )
@@ -579,6 +598,7 @@ class DashboardService:
         self,
         group_id: str,
     ) -> tuple[Path | None, str | None]:
+        generation = self._derived_generation()
         input_paths, output_path, cache_stem = self._group_convergence_figure_path(
             group_id
         )
@@ -590,6 +610,7 @@ class DashboardService:
                 input_paths,
                 output_path,
                 True,
+                generation,
             ),
             f"group {group_id}",
         )
@@ -599,14 +620,16 @@ class DashboardService:
         input_paths: list[Path],
         output_path: Path,
         replicate_mean: bool,
+        generation: int,
     ) -> Path:
         with self._detail_figure_lock:
+            if generation != self._detail_figure_generation:
+                raise RuntimeError("equilibrium convergence figure generation was invalidated")
             input_state = {path: path.stat().st_mtime_ns for path in input_paths}
             input_mtime = max(input_state.values())
             if figure_pair_is_current(output_path, input_mtime):
                 return output_path
-            generation = self._detail_figure_generation
-            self.detail_figure_dir.mkdir(parents=True, exist_ok=True)
+
 
         from experiments.plots.plot_equilibrium_convergence import (
             plot_result_equilibrium_distance,
@@ -614,7 +637,7 @@ class DashboardService:
 
         with tempfile.TemporaryDirectory(
             prefix=".equilibrium-convergence-",
-            dir=self.detail_figure_dir,
+            dir=self.results_dir,
         ) as temporary_directory:
             temporary_path = Path(temporary_directory) / output_path.name
             plot_result_equilibrium_distance(
@@ -622,6 +645,7 @@ class DashboardService:
                 temporary_path,
                 custom_game_dir=self.game_catalog.custom_game_dir,
                 cache_dir=self.results_dir / "cache" / "equilibrium_distance",
+                cache_publisher=lambda publish: self._publish_derived_artifact(generation, publish),
                 information_rows=self._detail_figure_information(
                     input_paths, "Equilibrium-distance convergence", replicate_mean,
                     (("Distances", "CE, CCE"), ("Norm", "L1")),
@@ -632,10 +656,11 @@ class DashboardService:
                     raise RuntimeError("equilibrium convergence figure generation was invalidated")
                 if any(not path.is_file() or path.stat().st_mtime_ns != mtime for path, mtime in input_state.items()):
                     raise RuntimeError("experiment group changed while equilibrium convergence figures were generated")
+                self.detail_figure_dir.mkdir(parents=True, exist_ok=True)
                 publish_figure_pair(temporary_path, output_path)
         return output_path
 
-    def _invalidate_detail_figures(self) -> None:
+    def _clear_derived_artifacts(self) -> None:
         with self._convergence_future_lock:
             for future in self._convergence_futures.values():
                 future.cancel()
@@ -643,13 +668,10 @@ class DashboardService:
         with self._detail_figure_lock:
             self._detail_figure_generation += 1
             self._clear_generated_artifacts((self.detail_figure_dir,))
-
-    def _clear_derived_artifacts(self) -> None:
-        self._invalidate_detail_figures()
-        self._clear_generated_artifacts(
-            (self.figure_dir, self.adversarial_dir, self.results_dir / "cache"),
-            preserve=(self.adversarial_raw_dir,),
-        )
+            self._clear_generated_artifacts(
+                (self.figure_dir, self.adversarial_dir, self.results_dir / "cache"),
+                preserve=(self.adversarial_raw_dir,),
+            )
 
     def _delete_group_paths(self, kind: ResultKind, group_ids: list[str] | tuple[str, ...],
                             results: ResultSet) -> int:
@@ -710,6 +732,9 @@ class DashboardService:
             return preview.count
 
         return self.jobs.run_maintenance(operation)
+
+    def clear_generated_figures(self) -> None:
+        self.jobs.run_maintenance(self._clear_derived_artifacts)
 
     def clear_results(self) -> None:
         def operation() -> None:

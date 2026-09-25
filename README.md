@@ -24,6 +24,8 @@ prerequisites are absent. To run the dashboard without testing, `make install`
 followed by `make web` is sufficient; Flask normally serves it at
 `http://127.0.0.1:5000/`.
 
+GitHub Actions runs this complete test path on pushes and pull requests.
+
 ## Scope
 
 | Feedback | Display name (`experiment ID`) |

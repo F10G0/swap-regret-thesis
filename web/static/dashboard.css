@@ -101,7 +101,8 @@ select:disabled {
 input:focus-visible,
 select:focus-visible,
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+.job-list:focus-visible {
     outline: 2px solid var(--accent-focus);
     outline-offset: 1px;
 }
@@ -643,6 +644,9 @@ fieldset {
 .job-list {
     margin: 16px 0 0;
     padding: 0;
+    padding-right: 8px;
+    max-height: 20rem;
+    overflow-y: auto;
     list-style: none;
 }
 

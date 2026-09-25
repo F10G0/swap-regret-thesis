@@ -22,9 +22,8 @@ from web.validation import FigureSelection, validate_leaf_filename
 
 
 VIEWS = {"average": "Average regret (R / T)", "sqrt_scaling": "Scaling (R / sqrt(T))"}
-LOG_LOG_FIT_VIEW = "log_log_fit"
 HORIZON_SCALING_VIEW = "horizon_scaling"
-VIEW_LABELS = VIEWS | {LOG_LOG_FIT_VIEW: "Log-log fit", HORIZON_SCALING_VIEW: "Horizon scaling"}
+VIEW_LABELS = VIEWS | {HORIZON_SCALING_VIEW: "Horizon scaling"}
 
 
 def _digest(value) -> str:
@@ -143,6 +142,7 @@ class FigureBuilder:
         return self._collection(selection, render=False)
 
     def _collection(self, selection, render: bool) -> dict:
+        generation = self.service._derived_generation() if render else None
         context = self._contexts(selection.mode).get(selection.context_id)
         profiles = selection.profiles
         if profiles == ("all",):
@@ -165,7 +165,7 @@ class FigureBuilder:
         sources = self._sources(paths)
         loaded = {}
         if selection.comparison_mode == "regrets":
-            figure_specs = [("all", view) for view in VIEWS] + [(metric, LOG_LOG_FIT_VIEW) for metric in REGRET_NAMES]
+            figure_specs = [("all", view) for view in VIEWS]
         elif selection.comparison_mode == "horizons":
             figure_specs = [("all", HORIZON_SCALING_VIEW)]
         else:
@@ -175,13 +175,15 @@ class FigureBuilder:
             for metric, view in figure_specs:
                 figure = self._build(FigureSelection(item.mode, item.context_id, item.comparison_mode,
                                                      metric, view, item.profiles, item.action,
-                                                     item.horizon), context, loaded, render)
+                                                     item.horizon), context, loaded, render, generation)
                 if figure is None:
                     return {"figures": [], "profiles": list(profiles),
                             "comparison_mode": selection.comparison_mode, "cached": False}
                 figures.append(figure)
         if self._sources(paths) != sources:
             raise ValueError("Results changed during rendering. Refresh and try again.")
+        if render and generation != self.service._derived_generation():
+            raise RuntimeError("derived artifact generation was invalidated")
         return {"figures": figures, "profiles": list(profiles),
                 "comparison_mode": selection.comparison_mode, "cached": True}
 
@@ -254,14 +256,6 @@ class FigureBuilder:
             return rows
         rows.extend([("Horizon", f"{int(selection.horizon):,}"),
                      ("Replicates", str(len(context["_replicates"]))), ("Seed", str(context["base_seed"]))])
-        if selection.view == LOG_LOG_FIT_VIEW:
-            rows.extend([
-                ("Metric", f"{selection.metric.title()} regret"),
-                ("View", VIEW_LABELS[LOG_LOG_FIT_VIEW]),
-                ("Fit window", "t >= T/10"),
-                ("Aggregation", "Replicate-mean cumulative action regret"),
-            ])
-            return rows
         if selection.comparison_mode == "regrets":
             rows.append(("Regrets", "External, Internal, Swap"))
         else:
@@ -269,7 +263,7 @@ class FigureBuilder:
         rows.append(("View", "R / T" if selection.view == "average" else "R / sqrt(T)"))
         return rows
 
-    def _build(self, selection, context, loaded, render=True) -> dict | None:
+    def _build(self, selection, context, loaded, render: bool, generation: int | None) -> dict | None:
         profiles = tuple(sorted(set(selection.profiles)))
         if not profiles:
             raise ValueError("Select at least one algorithm profile")
@@ -277,12 +271,9 @@ class FigureBuilder:
             raise ValueError("Unknown regret metric or view")
         if (selection.comparison_mode == "horizons") != (selection.view == HORIZON_SCALING_VIEW):
             raise ValueError("The horizon-scaling view is available only for horizon comparison")
-        if selection.view == LOG_LOG_FIT_VIEW and selection.comparison_mode != "regrets":
-            raise ValueError("The log-log fit view is available only for regret-notion comparison")
         if selection.comparison_mode not in {"regrets", "horizons"} and selection.metric not in REGRET_NAMES:
             raise ValueError("Unknown regret metric or view")
-        valid_metric = selection.metric in REGRET_NAMES if selection.view == LOG_LOG_FIT_VIEW else selection.metric == "all"
-        if selection.comparison_mode == "regrets" and (not valid_metric or len(profiles) != 1):
+        if selection.comparison_mode == "regrets" and (selection.metric != "all" or len(profiles) != 1):
             raise ValueError("Regret-notion comparison requires exactly one profile and all regret notions")
         if selection.comparison_mode == "actions" and (selection.mode != "adversarial" or len(profiles) != 1):
             raise ValueError("Action-space comparison requires exactly one one-player profile")
@@ -316,7 +307,6 @@ class FigureBuilder:
         filename = f"{context['scope']}_{feedback}_{selection.metric}_{selection.view}_{dimension}_{artifact_id}.png"
         output_path = self.output_dir / filename
         title_metric = "Regret notions" if selection.view == HORIZON_SCALING_VIEW else (
-            f"{selection.metric.title()} regret" if selection.view == LOG_LOG_FIT_VIEW else
             "Regret notions" if selection.comparison_mode == "regrets" else selection.metric.title())
         title_dimension = f"Player {context['player']}" if selection.mode == "fixed" else (
             "Action spaces" if selection.comparison_mode == "actions" else f"K={selection.action}")
@@ -411,20 +401,13 @@ class FigureBuilder:
             endpoint_series = [(labels[profile], final_values(profile, selection.metric)) for profile in profiles]
             y_label = regret_axis_label(selection.metric, selection.view)
         elif selection.comparison_mode == "regrets":
-            if selection.view == LOG_LOG_FIT_VIEW:
-                def make_curves():
-                    return [curve(profiles[0], selection.metric, f"Replicate-mean cumulative {selection.metric} action regret",
-                                  regret_series_style(selection.metric))]
-                endpoint_series = None
-                y_label = None
-            else:
-                def make_curves():
-                    return [curve(profiles[0], metric, f"{metric.title()} regret",
-                                  regret_series_style(metric, index, len(REGRET_NAMES)))
-                            for index, metric in enumerate(REGRET_NAMES)]
-                endpoint_horizon = int(selection.horizon)
-                endpoint_series = [(metric.title(), final_values(profiles[0], metric)) for metric in REGRET_NAMES]
-                y_label = regret_comparison_axis_label(selection.view)
+            def make_curves():
+                return [curve(profiles[0], metric, f"{metric.title()} regret",
+                              regret_series_style(metric, index, len(REGRET_NAMES)))
+                        for index, metric in enumerate(REGRET_NAMES)]
+            endpoint_horizon = int(selection.horizon)
+            endpoint_series = [(metric.title(), final_values(profiles[0], metric)) for metric in REGRET_NAMES]
+            y_label = regret_comparison_axis_label(selection.view)
         else:
             actions = [action for action in sorted(context["_paths"], key=int)
                        if profiles[0] in context["_paths"][action].get(selection.horizon, {})]
@@ -439,22 +422,17 @@ class FigureBuilder:
 
         with self._lock:
             if not all(path.is_file() for path in figure_paths(output_path)):
-                self.output_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.TemporaryDirectory(prefix=".selection-", dir=self.output_dir) as directory:
+                with tempfile.TemporaryDirectory(prefix=".selection-", dir=self.service.results_dir) as directory:
                     source_path = Path(directory) / filename
                     information_rows = self._information_rows(selection, context, profiles)
                     curves = make_curves()
-                    if endpoint_series is not None:
-                        information_rows.extend([
-                            ("Final endpoint at T" if selection.view == HORIZON_SCALING_VIEW else "Final endpoints at T",
-                             f"{endpoint_horizon:,}"),
-                            ("Endpoint statistics", ENDPOINT_STATISTICS_DESCRIPTION),
-                            *((label, format_value_summary(values)) for label, values in endpoint_series),
-                        ])
-                    if selection.view == LOG_LOG_FIT_VIEW:
-                        fixed.plot_regret_log_log(curves[0], selection.metric, int(selection.horizon), source_path,
-                                                  information_rows=information_rows)
-                    elif selection.view == HORIZON_SCALING_VIEW:
+                    information_rows.extend([
+                        ("Final endpoint at T" if selection.view == HORIZON_SCALING_VIEW else "Final endpoints at T",
+                         f"{endpoint_horizon:,}"),
+                        ("Endpoint statistics", ENDPOINT_STATISTICS_DESCRIPTION),
+                        *((label, format_value_summary(values)) for label, values in endpoint_series),
+                    ])
+                    if selection.view == HORIZON_SCALING_VIEW:
                         fixed.plot_horizon_scaling(curves, source_path,
                                                    information_rows=information_rows)
                     elif selection.comparison_mode == "regrets":
@@ -464,7 +442,11 @@ class FigureBuilder:
                         fixed.plot_regret_curves(curves, y_label, source_path, information_rows=information_rows)
                     if self._sources(paths) != sources:
                         raise ValueError("Results changed during rendering. Refresh and try again.")
-                    publish_figure_pair(source_path, output_path)
+                    def publish() -> None:
+                        self.output_dir.mkdir(parents=True, exist_ok=True)
+                        publish_figure_pair(source_path, output_path)
+
+                    self.service._publish_derived_artifact(generation, publish)
         return result
 
     def artifact_path(self, filename: str) -> Path:

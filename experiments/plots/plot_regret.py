@@ -25,8 +25,6 @@ class RegretCurve:
     style: dict
 
 
-INSUFFICIENT_LOG_LOG_POINTS = "Insufficient positive tail checkpoints for log-log fit"
-NON_POSITIVE_LOG_LOG_REGRET = "Log-log fit unavailable: replicate-mean cumulative action regret is non-positive within the fit window."
 INSUFFICIENT_HORIZONS = "Horizon scaling unavailable: at least three distinct horizons are required."
 NON_POSITIVE_HORIZON_REGRET = "Horizon scaling unavailable: replicate-mean final cumulative action regret is non-positive at one or more horizons."
 
@@ -83,21 +81,6 @@ def aggregate_final_metric(replicate_runs: list[list[dict]], player: int, column
     return float(np.mean(values))
 
 
-def regret_log_log_fit(times: np.ndarray, mean_regret: np.ndarray, horizon: int) -> tuple[np.ndarray, np.ndarray, tuple[float, float] | None, str | None]:
-    tail = times >= horizon / 10
-    tail_times = times[tail]
-    tail_regret = mean_regret[tail]
-    if len(tail_times) < 3:
-        if np.all(tail_regret > 0):
-            return np.log(tail_times), np.log(tail_regret), None, INSUFFICIENT_LOG_LOG_POINTS
-        return np.array([]), np.array([]), None, INSUFFICIENT_LOG_LOG_POINTS
-    if np.any(tail_regret <= 0):
-        return np.array([]), np.array([]), None, NON_POSITIVE_LOG_LOG_REGRET
-    x = np.log(tail_times)
-    y = np.log(tail_regret)
-    return x, y, tuple(np.polyfit(x, y, 1)), None
-
-
 def horizon_scaling_fit(horizons: np.ndarray, mean_regret: np.ndarray) -> tuple[tuple[float, float] | None, str | None]:
     if horizons.ndim != 1 or mean_regret.shape != horizons.shape or not np.all(np.isfinite(mean_regret)):
         raise ValueError("horizon scaling data must be finite one-dimensional arrays of equal length")
@@ -136,33 +119,6 @@ def plot_regret_curves(curves: list[RegretCurve], y_label: str, output_path: str
     axes.set_xlabel(r"Round $T$")
     axes.set_ylabel(y_label)
     finish_line_figure(figure, axes, legend_ncol=legend_ncol)
-    if information_rows is None:
-        save_figure_pair(figure, output_path)
-    else:
-        save_figure_pair(figure, output_path, information_rows=information_rows)
-    plt.close(figure)
-
-
-@publication_plot
-def plot_regret_log_log(curve: RegretCurve, metric: str, horizon: int, output_path: str | Path,
-                        information_rows: list[tuple[str, str]] | None = None) -> None:
-    x, y, fit, message = regret_log_log_fit(curve.x, curve.y, horizon)
-    figure, axes = plt.subplots()
-    if fit is None:
-        axes.set_axis_off()
-        axes.text(0.5, 0.5, message, ha="center", va="center", transform=axes.transAxes)
-        if information_rows is not None:
-            information_rows = [*information_rows, ("Fit", "Unavailable")]
-    else:
-        axes.plot(x, y, label=curve.label, **curve.style)
-        slope, intercept = fit
-        axes.plot(x, slope * x + intercept, color="#333333", linestyle=":",
-                  label=f"OLS fit (slope = {slope:.3f})")
-        if information_rows is not None:
-            information_rows = [*information_rows, ("Fitted slope", f"{slope:.3f}")]
-        axes.set_xlabel(r"$\log t$")
-        axes.set_ylabel(f"log replicate-mean cumulative {metric} action regret")
-        finish_line_figure(figure, axes)
     if information_rows is None:
         save_figure_pair(figure, output_path)
     else:

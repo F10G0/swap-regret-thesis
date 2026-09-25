@@ -42,7 +42,7 @@ The paired CE/CCE detail figure is unavailable when either analysis exceeds the 
 | `results/cache/` | Figure Builder and equilibrium-distance artifacts |
 | `data/custom_games/` | Saved custom games |
 
-`make reset` and **Reset all experiment results** remove all experiment-derived data, generated figures, and experiment-dependent caches. Source and configuration inputs such as custom games, plus `.gitkeep` placeholders, are preserved.
+**Clear generated figures** removes regenerable figures and caches while preserving fixed-game and one-player raw experiment CSVs. `make reset` and **Reset all experiment results** also remove raw results. Source and configuration inputs such as custom games, plus `.gitkeep` placeholders, are preserved.
 
 POST parameters, CSRF tokens, and filenames are validated. For a stable session secret across restarts:
 

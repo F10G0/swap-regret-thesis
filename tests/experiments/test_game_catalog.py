@@ -44,6 +44,34 @@ def test_corrupt_custom_archive_is_skipped_without_hiding_valid_games(tmp_path) 
     assert np.array_equal(catalog.load(valid.id), expected_payoffs)
 
 
+def test_empty_custom_archive_is_skipped_with_warning(tmp_path) -> None:
+    catalog = GameCatalog(tmp_path)
+    (tmp_path / "empty.npz").write_bytes(b"")
+
+    definitions, warnings = catalog.custom_definitions()
+
+    assert definitions == []
+    assert len(warnings) == 1
+    assert "Skipped empty.npz:" in warnings[0]
+    with pytest.raises(EOFError):
+        catalog.load(f"{CUSTOM_GAME_PREFIX}empty")
+
+
+def test_empty_custom_archive_does_not_hide_valid_game(tmp_path) -> None:
+    catalog = GameCatalog(tmp_path)
+    valid = catalog.create_random("Usable Game", 2, [2, 2], 17)
+    expected_payoffs = catalog.load(valid.id).copy()
+    (tmp_path / "empty.npz").write_bytes(b"")
+
+    definitions, warnings = catalog.custom_definitions()
+
+    assert definitions == [valid]
+    assert len(warnings) == 1
+    assert "Skipped empty.npz:" in warnings[0]
+    assert valid.id in catalog.definitions()
+    assert np.array_equal(catalog.load(valid.id), expected_payoffs)
+
+
 def test_two_player_zero_sum_game_is_reproducible_symmetric_and_constant_sum(
     tmp_path,
 ) -> None:

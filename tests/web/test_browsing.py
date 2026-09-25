@@ -13,7 +13,7 @@ from experiments.result_catalog import ResultSet
 from experiments.scenarios.adversarial import run_adversarial_experiment
 from experiments.scenarios.cross_play import run_cross_play_experiment
 from tests.web.support import browse_url, create_test_app, csrf_token, dashboard_data, run_node
-from web.browsing import paginate_projection, parse_browsing_query, query_string
+from web.browsing import default_browsing_query, paginate_projection, parse_browsing_query, query_string
 from web.presentation_query import project_dashboard_query
 
 
@@ -27,7 +27,7 @@ def _group_ids(response):
 
 
 def _params(url):
-    return MultiDict(parse_qsl(urlsplit(url).query))
+    return MultiDict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
 
 
 @pytest.fixture(scope="module")
@@ -63,6 +63,32 @@ def _fixed_url(service, player="0"):
 def _one_url(service):
     return browse_url(service, "adversarial", comparison_mode="actions",
                       action="all", horizon="2")
+
+
+def _record_replicate(service, mode, replicate, algorithm="hedge"):
+    if mode == "fixed":
+        return run_cross_play_experiment(
+            "rps", (algorithm, algorithm), feedback_mode="full_information",
+            horizon=2, seed=17, replicate=replicate, output_dir=service.raw_dir,
+        )
+    return run_adversarial_experiment(
+        algorithm, feedback_mode="full_information", n_actions=2,
+        horizon=2, seed=17, replicate=replicate, output_dir=service.adversarial_raw_dir,
+    )
+
+
+def _assert_recovered(client, url, catalog, mode):
+    response = client.get(url, follow_redirects=True)
+    assert response.status_code == 200
+    assert len(response.history) == 1
+    destination = response.history[0].headers["Location"]
+    query, page, page_size = parse_browsing_query(_params(destination), catalog, mode)
+    assert destination == "/?" + query_string(query, page, page_size)
+    assert query.mode == mode
+    assert query == default_browsing_query(catalog, mode)
+    assert dashboard_data(response)["browsingState"]["context"] == query.context_id
+    assert b"Results changed since this page was loaded." in response.data
+    return query, response
 
 
 @pytest.mark.parametrize("mode,total", [("fixed", 53), ("adversarial", 27)])
@@ -171,7 +197,113 @@ def test_sorting_empty_state_and_pager_state(populated):
     assert b"Page 1 of 1" in response.data
     clamped = client.get("/?" + query_string(empty, 9))
     assert clamped.status_code == 302 and _params(clamped.headers["Location"])["page"] == "1"
-    assert client.get("/?" + query_string(replace(query, context_id="stale"))).status_code == 400
+    _assert_recovered(client, "/?" + query_string(replace(query, context_id="stale")),
+                      catalog, "fixed")
+
+
+@pytest.mark.parametrize("mode", ("fixed", "adversarial"))
+def test_old_url_recovers_after_replicate_completion(tmp_path, mode):
+    app, service = create_test_app(tmp_path)
+    _record_replicate(service, mode, 0)
+    url = browse_url(service, mode, player="0", action="2")
+    client = app.test_client()
+    assert client.get(url).status_code == 200
+    old_context = _params(url)["context"]
+
+    _record_replicate(service, mode, 1)
+    catalog = service.figure_builder.catalog(mode)
+    current_contexts = {context["id"] for context in catalog["contexts"]}
+    assert old_context not in current_contexts
+    query, response = _assert_recovered(client, url, catalog, mode)
+    assert query.context_id in current_contexts
+    assert _rows(response)
+
+
+@pytest.mark.parametrize("mode", ("fixed", "adversarial"))
+def test_moved_profile_recovers_while_old_context_survives(tmp_path, mode):
+    app, service = create_test_app(tmp_path)
+    for algorithm in ("hedge", "ito_hedge"):
+        _record_replicate(service, mode, 0, algorithm)
+    moved = "hedge_vs_hedge" if mode == "fixed" else "hedge"
+    other = "ito_hedge_vs_ito_hedge" if mode == "fixed" else "ito_hedge"
+    url = browse_url(service, mode, player="0", action="2", profiles=[moved])
+    client = app.test_client()
+    assert client.get(url).status_code == 200
+    old_context = _params(url)["context"]
+    initial = next(context for context in service.figure_builder.catalog(mode)["contexts"]
+                   if context["id"] == old_context)
+    assert {moved, other} <= {profile["id"] for profile in initial["profiles"]}
+
+    _record_replicate(service, mode, 1, "hedge")
+    catalog = service.figure_builder.catalog(mode)
+    surviving = next(context for context in catalog["contexts"]
+                     if context["id"] == old_context)
+    assert other in {profile["id"] for profile in surviving["profiles"]}
+    assert moved not in {profile["id"] for profile in surviving["profiles"]}
+    query, response = _assert_recovered(client, url, catalog, mode)
+    assert query.context_id in {context["id"] for context in catalog["contexts"]}
+    assert _rows(response)
+
+
+@pytest.mark.parametrize("mode,changes", [
+    ("fixed", {"comparison_mode": "horizons", "horizon": "all", "view": "horizon_scaling"}),
+    ("fixed", {"feedback": "bandit"}),
+    ("fixed", {"horizon": "3"}),
+    ("adversarial", {"action": 3}),
+])
+def test_catalog_dependent_unavailable_control_recovers(tmp_path, mode, changes):
+    app, service = create_test_app(tmp_path)
+    _record_replicate(service, mode, 0)
+    catalog = service.figure_builder.catalog(mode)
+    url = browse_url(service, mode, player="0", action="2")
+    query, _, _ = parse_browsing_query(_params(url), catalog, mode)
+    unavailable_url = "/?" + query_string(replace(query, **changes))
+
+    recovered, _ = _assert_recovered(app.test_client(), unavailable_url, catalog, mode)
+    assert recovered.context_id in {context["id"] for context in catalog["contexts"]}
+
+
+@pytest.mark.parametrize("mode", ("fixed", "adversarial"))
+def test_old_url_recovers_to_empty_state_without_redirect_loop(tmp_path, mode):
+    app, service = create_test_app(tmp_path)
+    path = _record_replicate(service, mode, 0)
+    url = browse_url(service, mode, player="0", action="2")
+    client = app.test_client()
+    assert client.get(url).status_code == 200
+    path.unlink()
+    catalog = service.figure_builder.catalog(mode)
+    assert catalog["contexts"] == []
+
+    query, response = _assert_recovered(client, url, catalog, mode)
+    assert query.context_id == ""
+    assert _rows(response) == []
+
+
+@pytest.mark.parametrize("mode", ("fixed", "adversarial"))
+def test_stale_context_does_not_hide_structurally_invalid_get(tmp_path, mode):
+    app, service = create_test_app(tmp_path)
+    _record_replicate(service, mode, 0)
+    catalog = service.figure_builder.catalog(mode)
+    url = browse_url(service, mode, player="0", action="2")
+    query, _, _ = parse_browsing_query(_params(url), catalog, mode)
+    stale = replace(query, context_id="missing")
+    malformed = [
+        "/?" + query_string(stale, 0),
+        "/?" + query_string(stale, 1, 0),
+        "/?" + query_string(stale, 1, 101),
+        "/?" + query_string(replace(stale, sort="not_a_column")),
+        "/?" + query_string(stale) + "&dir=sideways",
+        "/?" + query_string(replace(stale, horizon="0")),
+        "/?" + query_string(replace(stale, horizon="all")),
+        "/?" + query_string(replace(stale, metric="unsupported")),
+        "/?" + query_string(replace(stale, view="unsupported")),
+        "/?" + query_string(query) + "&action=2" if mode == "fixed"
+            else "/?" + query_string(query) + "&player=1",
+        "/?" + query_string(replace(query, scope="wrong-scope")),
+    ]
+    client = app.test_client()
+    for candidate in malformed:
+        assert client.get(candidate).status_code == 400, candidate
 
 
 def test_bootstrap_and_canonical_url_are_distinct(populated):
@@ -400,7 +532,8 @@ const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 (async () => {
     for (const [saved, expected] of [[null, payload.first], [payload.saved, payload.second],
-                                     [{scope: "stale", context: "missing"}, payload.first]]) {
+                                     [{scope: "stale", context: "missing"}, payload.first],
+                                     [{...payload.saved, view: "log_log_fit"}, payload.second]]) {
         const errors = new VirtualConsole();
         errors.on("jsdomError", error => {throw error;});
         const dom = new JSDOM(payload.page, {
@@ -423,6 +556,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
         assert.equal(params.get("mode"), payload.mode);
         assert.deepEqual(params.getAll("profile"), [expected]);
         assert.equal(params.get("page"), "1");
+        assert(["all", "average", "sqrt_scaling"].includes(params.get("view")));
         await tick();
         assert.equal(nav.length, 1);
         dom.window.close();
@@ -865,6 +999,75 @@ def test_hidden_regret_sort_clears_without_changing_membership(populated, mode):
     assert.equal(preserved.get("dir"), "desc");
     assert.equal(preserved.get("page"), "1");
     unrelated.dom.window.close();
+})().catch(error => {console.error(error); process.exit(1);});
+'''
+    run_node(script, payload=payload, jsdom=True)
+
+
+@pytest.mark.parametrize("mode", ["fixed", "adversarial"])
+def test_retired_view_rejected_and_remaining_views_navigate_canonically(tmp_path, mode):
+    app, service, profiles = _phase3e_case(tmp_path, mode, horizons=(2, 3, 4))
+    client = app.test_client()
+    catalog = service.figure_builder.catalog(mode)
+    assert [view["id"] for view in catalog["views"]] == [
+        "average", "sqrt_scaling", "horizon_scaling"]
+    cases = []
+    for comparison in ("regrets", "profiles", "horizons"):
+        url = browse_url(service, mode, comparison_mode=comparison,
+                         profiles=profiles[:1], player="0", action="2")
+        query, _, _ = parse_browsing_query(_params(url), catalog, mode)
+        stale = client.get("/?" + query_string(replace(query, view="log_log_fit")))
+        assert stale.status_code == 400
+        assert b"invalid regret view" in stale.data
+        views = ("horizon_scaling",) if comparison == "horizons" else ("all", "average", "sqrt_scaling")
+        for view in views:
+            canonical = "/?" + query_string(replace(query, view=view))
+            response = client.get(canonical)
+            assert response.status_code == 200
+            cases.append({"comparison": comparison, "view": view, "url": canonical,
+                          "page": response.get_data(as_text=True)})
+
+    token = csrf_token(client)
+    for endpoint in ("/figure-builder/cache", "/figure-builder/collection"):
+        response = client.post(endpoint, data={
+            "_csrf_token": token, "mode": mode, "context_id": catalog["contexts"][0]["id"],
+            "comparison_mode": "regrets", "profiles": profiles[:1],
+            "horizon": "2", "action": "2", "metric": "all", "view": "log_log_fit",
+        })
+        assert response.status_code == 400
+        assert "Unknown regret metric or view" in response.json["error"]
+
+    static = Path(__file__).parents[2] / "web/static"
+    payload = {
+        "mode": mode, "catalog": catalog, "cases": cases,
+        "script": "\n".join((static / name).read_text() for name in
+                           ("common.js", "dashboard.js", "figure_builder.js")),
+    }
+    script = _PHASE3E_BROWSER + r'''
+(async () => {
+    for (const current of payload.cases) {
+        const state = await render(current.page, current.url,
+            JSON.stringify({view: "log_log_fit"}));
+        const view = state.d.getElementById("filter-view");
+        const metric = state.d.getElementById("filter-metric");
+        assert.equal(view.value, current.view);
+        assert.equal(state.nav.length, 0); // Canonical URL overrides stale local storage.
+        const available = payload.cases.filter(item => item.comparison === current.comparison);
+        assert.deepEqual([...view.options].map(option => option.value), available.map(item => item.view));
+        assert.equal(metric.disabled, current.comparison !== "profiles");
+        for (const target of available) {
+            if (current.view === target.view) continue; // The intercepted navigation does not reload this page.
+            view.value = target.view;
+            view.dispatchEvent(new state.w.Event("change"));
+            await tick(); await tick();
+            const actual = new URL(state.nav[state.nav.length - 1], state.w.location).searchParams;
+            const expected = new URL(target.url, state.w.location).searchParams;
+            assert.deepEqual([...actual.entries()].sort(), [...expected.entries()].sort());
+        }
+        assert(state.nav.every(url => new URL(url, state.w.location).searchParams.get("view") !== "log_log_fit"));
+        assert(state.requests.every(request => request.body.get("view") !== "log_log_fit"));
+        state.dom.window.close();
+    }
 })().catch(error => {console.error(error); process.exit(1);});
 '''
     run_node(script, payload=payload, jsdom=True)
