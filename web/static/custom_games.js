@@ -149,9 +149,7 @@ function renderFixedActionControls() {
     if (!payoffFixedActionContainer) {
         return;
     }
-    const previousValues = new Map(
-        [...payoffFixedActionContainer.querySelectorAll("select")].map((select) => [Number(select.dataset.player), select.value])
-    );
+    const previousValues = new Map([...payoffFixedActionContainer.querySelectorAll("select")].map((select) => [Number(select.dataset.player), select.value]));
     const rowPlayer = Number(payoffRowPlayerSelect.value);
     const columnPlayer = Number(payoffColumnPlayerSelect.value);
     const fields = [];

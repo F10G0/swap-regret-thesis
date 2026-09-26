@@ -9,10 +9,7 @@ from web.routes import dashboard
 from web.services import DashboardService
 
 
-def create_app(
-    test_config: dict | None = None,
-    service: DashboardService | None = None,
-) -> Flask:
+def create_app(test_config: dict | None = None, service: DashboardService | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SWAP_REGRET_WEB_SECRET") or secrets.token_hex(32),
@@ -49,9 +46,7 @@ def create_app(
                 session["_csrf_token"] = token
             return token
 
-        return {
-            "csrf_token": csrf_token,
-        }
+        return {"csrf_token": csrf_token}
 
     @app.before_request
     def protect_post_requests() -> None:
@@ -60,10 +55,7 @@ def create_app(
 
         expected_token = session.get("_csrf_token", "")
         submitted_token = request.form.get("_csrf_token", "")
-        if not expected_token or not secrets.compare_digest(
-            expected_token,
-            submitted_token,
-        ):
+        if not expected_token or not secrets.compare_digest(expected_token, submitted_token):
             abort(400, description="invalid or missing CSRF token")
 
     return app

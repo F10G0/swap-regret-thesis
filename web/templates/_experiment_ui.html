@@ -30,8 +30,7 @@
 {% endmacro %}
 
 {% macro result_controls() %}
-    <section id="result-filters" class="panel result-panel" aria-labelledby="results-controls-heading"
-             data-options-url="{{ url_for('dashboard.figure_builder_options', mode=experiment_mode) }}">
+    <section id="result-filters" class="panel result-panel" aria-labelledby="results-controls-heading" data-options-url="{{ url_for('dashboard.figure_builder_options', mode=experiment_mode) }}">
         <div class="section-heading panel-heading">
             <div>
                 <p class="eyebrow">Analysis</p>
@@ -69,9 +68,7 @@
             <select id="filter-profiles" name="profiles" form="figure-builder" size="1" aria-describedby="filter-selection-status" disabled></select>
             <span id="filter-selection-status" class="hint" role="status">0 profiles selected.</span>
         </div>
-        <form id="figure-builder" method="post" action="{{ url_for('dashboard.build_figure_collection') }}"
-              data-cache-url="{{ url_for('dashboard.cached_figure_collection') }}"
-              data-export-url="{{ url_for('dashboard.download_filtered_figures') }}">
+        <form id="figure-builder" method="post" action="{{ url_for('dashboard.build_figure_collection') }}" data-cache-url="{{ url_for('dashboard.cached_figure_collection') }}" data-export-url="{{ url_for('dashboard.download_filtered_figures') }}">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="mode" value="{{ experiment_mode }}">
             <button id="builder-generate" class="button-primary" type="submit" disabled>Generate figures</button>

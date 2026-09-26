@@ -52,8 +52,7 @@ def estimate_equilibrium_analysis(action_shape, equilibrium: str) -> Equilibrium
     # The row arrays and their stacked copy can coexist. The remaining terms
     # cover the profile-index array, three working vectors, c, b_ub, a_eq, b_eq.
     dense_float_values = 2 * coefficients + 9 * profiles + rows + 1
-    estimated_bytes = (dense_float_values * np.dtype(np.float64).itemsize
-                       + profiles * len(shape) * np.dtype(np.intp).itemsize)
+    estimated_bytes = dense_float_values * np.dtype(np.float64).itemsize + profiles * len(shape) * np.dtype(np.intp).itemsize
     return EquilibriumAnalysisEstimate(equilibrium, shape, profiles, rows, coefficients, estimated_bytes)
 
 
@@ -71,10 +70,7 @@ def _validated_payoff_tensor(payoff_tensor) -> np.ndarray:
     except (TypeError, ValueError) as error:
         raise ValueError("payoff_tensor must be a rectangular numeric array") from error
     if payoffs.ndim < 2 or payoffs.shape[0] != payoffs.ndim - 1:
-        raise ValueError(
-            "payoff_tensor must have one action axis per player "
-            "(shape[0] must equal ndim - 1)"
-        )
+        raise ValueError("payoff_tensor must have one action axis per player " "(shape[0] must equal ndim - 1)")
     if any(dimension == 0 for dimension in payoffs.shape):
         raise ValueError("payoff_tensor dimensions must be non-empty")
     if not np.all(np.isfinite(payoffs)):
@@ -110,10 +106,7 @@ class _PreparedDistanceLP:
         for player, n_actions in enumerate(self.action_shape):
             utility = payoffs[player].ravel(order="C")
             for deviation in range(n_actions):
-                deviation_utility = np.broadcast_to(
-                    np.expand_dims(np.take(payoffs[player], deviation, axis=player), axis=player),
-                    self.action_shape,
-                ).ravel(order="C")
+                deviation_utility = np.broadcast_to(np.expand_dims(np.take(payoffs[player], deviation, axis=player), axis=player), self.action_shape).ravel(order="C")
                 # Deviation minus obedience <= 0, in the upstream C-order.
                 gain = deviation_utility - utility
                 if equilibrium == "cce":
@@ -127,11 +120,7 @@ class _PreparedDistanceLP:
         incentives = sparse.csr_matrix(np.asarray(incentive_rows).reshape(-1, m))
         identity = sparse.eye(m, format="csr")
         self.c = np.concatenate((np.zeros(m), np.ones(m)))
-        self.a_ub = sparse.vstack((
-            sparse.hstack((incentives, sparse.csr_matrix(incentives.shape))),
-            sparse.hstack((identity, -identity)),
-            sparse.hstack((-identity, -identity)),
-        ), format="csr")
+        self.a_ub = sparse.vstack((sparse.hstack((incentives, sparse.csr_matrix(incentives.shape))), sparse.hstack((identity, -identity)), sparse.hstack((-identity, -identity))), format="csr")
         self.b_ub = np.zeros(self.a_ub.shape[0])
         self.a_eq = sparse.csr_matrix(np.concatenate((np.ones(m), np.zeros(m)))[None, :])
         self.b_eq = np.ones(1)
@@ -140,12 +129,8 @@ class _PreparedDistanceLP:
         m = self.n_profiles
         self.b_ub[-2 * m:-m] = empirical_vector
         self.b_ub[-m:] = -empirical_vector
-        result = linprog(
-            self.c, A_ub=self.a_ub, b_ub=self.b_ub,
-            A_eq=self.a_eq, b_eq=self.b_eq, bounds=(0.0, None), method="highs",
-            options={"primal_feasibility_tolerance": 1e-9, "dual_feasibility_tolerance": 1e-9,
-                     "ipm_optimality_tolerance": 1e-10},
-        )
+        result = linprog(self.c, A_ub=self.a_ub, b_ub=self.b_ub, A_eq=self.a_eq, b_eq=self.b_eq, bounds=(0.0, None), method="highs",
+                         options={"primal_feasibility_tolerance": 1e-9, "dual_feasibility_tolerance": 1e-9, "ipm_optimality_tolerance": 1e-10})
         if not result.success:
             raise RuntimeError(f"{self.equilibrium.upper()} distance optimization failed: {result.message}")
         return result
@@ -177,10 +162,7 @@ class ReplicateEquilibriumDistanceTrajectory:
     n_replicates: int
 
 
-def equilibrium_distance_trajectory(
-    payoff_tensor,
-    empirical: EmpiricalDistributionTrajectory,
-) -> EquilibriumDistanceTrajectory:
+def equilibrium_distance_trajectory(payoff_tensor, empirical: EmpiricalDistributionTrajectory) -> EquilibriumDistanceTrajectory:
     payoffs = _validated_payoff_tensor(payoff_tensor)
     for equilibrium in ("ce", "cce"):
         preflight_equilibrium_analysis(payoffs.shape[1:], equilibrium)
@@ -194,31 +176,16 @@ def equilibrium_distance_trajectory(
         # Figures need only the objective, not a reshaped nearest equilibrium.
         ce_distances.append(float(ce.solve(vector).fun))
         cce_distances.append(float(cce.solve(vector).fun))
-    return EquilibriumDistanceTrajectory(
-        empirical.horizons,
-        np.asarray(ce_distances),
-        np.asarray(cce_distances),
-    )
+    return EquilibriumDistanceTrajectory(empirical.horizons, np.asarray(ce_distances), np.asarray(cce_distances))
 
 
-def aggregate_equilibrium_distance_trajectories(
-    trajectories: list[EquilibriumDistanceTrajectory],
-) -> ReplicateEquilibriumDistanceTrajectory:
+def aggregate_equilibrium_distance_trajectories(trajectories: list[EquilibriumDistanceTrajectory]) -> ReplicateEquilibriumDistanceTrajectory:
     if not trajectories:
-        raise ValueError(
-            "at least one equilibrium-distance trajectory is required"
-        )
+        raise ValueError("at least one equilibrium-distance trajectory is required")
     horizons = trajectories[0].horizons
     for trajectory in trajectories[1:]:
         if not np.array_equal(trajectory.horizons, horizons):
-            raise ValueError(
-                "equilibrium-distance trajectories must have matching horizons"
-            )
+            raise ValueError("equilibrium-distance trajectories must have matching horizons")
     ce = np.asarray([trajectory.ce for trajectory in trajectories])
     cce = np.asarray([trajectory.cce for trajectory in trajectories])
-    return ReplicateEquilibriumDistanceTrajectory(
-        horizons.copy(),
-        np.mean(ce, axis=0),
-        np.mean(cce, axis=0),
-        len(trajectories),
-    )
+    return ReplicateEquilibriumDistanceTrajectory(horizons.copy(), np.mean(ce, axis=0), np.mean(cce, axis=0), len(trajectories))

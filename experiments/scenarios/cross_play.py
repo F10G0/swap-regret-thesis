@@ -66,11 +66,7 @@ def player_seed(spec: ExperimentSpec, player_id: int) -> int:
     )[player_id]
 
 
-def replicate_player_seeds(
-    base_seed: int,
-    replicate: int,
-    n_players: int,
-) -> tuple[int, ...]:
+def replicate_player_seeds(base_seed: int, replicate: int, n_players: int) -> tuple[int, ...]:
     """Return the complete deterministic player-seed schedule for a replicate."""
     if base_seed < 0 or replicate < 0 or n_players <= 0:
         raise ValueError("seed inputs must be non-negative and include players")

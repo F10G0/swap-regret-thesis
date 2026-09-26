@@ -11,8 +11,7 @@ class OptimisticHedge(ExponentialWeightsAlgorithm):
     def __init__(self, n_actions: int, horizon: int, learning_rate: float | None = None, seed: int | None = None) -> None:
         if not isinstance(horizon, (int, np.integer)) or isinstance(horizon, bool) or horizon <= 0:
             raise ValueError("horizon must be a positive integer")
-        if learning_rate is not None and (not isinstance(learning_rate, Real) or isinstance(learning_rate, bool)
-                                          or not np.isfinite(learning_rate) or learning_rate <= 0):
+        if learning_rate is not None and (not isinstance(learning_rate, Real) or isinstance(learning_rate, bool) or not np.isfinite(learning_rate) or learning_rate <= 0):
             raise ValueError("learning_rate must be finite and strictly positive")
         self.horizon = horizon
         super().__init__(n_actions, seed=seed)

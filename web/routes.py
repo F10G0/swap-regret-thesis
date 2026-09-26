@@ -172,10 +172,7 @@ def index():
             ))
         try:
             query, requested_page, page_size = parse_browsing_query(request.args, catalog, mode)
-            projection = project_dashboard_query(
-                results, catalog, query,
-                presentations=service.game_presentations if mode == "fixed" else {},
-            )
+            projection = project_dashboard_query(results, catalog, query, presentations=service.game_presentations if mode == "fixed" else {})
         except DashboardSelectionUnavailable:
             default = default_browsing_query(catalog, mode)
             flash("Results changed since this page was loaded. Showing the latest available results.")
@@ -252,13 +249,7 @@ def custom_games():
             if payoff_structure == "zero_sum" and len(action_counts) == 1:
                 action_counts *= 2
             seed = parse_non_negative_integer(request.form["seed"], "seed")
-            definition = service.create_custom_game(
-                request.form["name"],
-                n_players,
-                action_counts,
-                seed,
-                payoff_structure,
-            )
+            definition = service.create_custom_game(request.form["name"], n_players, action_counts, seed, payoff_structure)
         except (FileExistsError, KeyError, OSError, ValueError) as error:
             form_state = dict(request.form)
             form_state["action_counts"] = request.form.getlist("action_counts")
@@ -453,13 +444,7 @@ def download_filtered_figures():
     except (OSError, ValueError, PyPdfError):
         return jsonify(error="Could not read a selected figure. Generate the figures again and retry."), 422
 
-    response = send_file(
-        output,
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name="filtered-regret-figures.pdf",
-        max_age=0,
-    )
+    response = send_file(output, mimetype="application/pdf", as_attachment=True, download_name="filtered-regret-figures.pdf", max_age=0)
     response.cache_control.no_store = True
     return response
 

@@ -75,14 +75,7 @@ class JobManager:
     def _has_active_job_unlocked(self) -> bool:
         return any(job.status in {"queued", "running"} for job in self._jobs.values())
 
-    def submit(
-        self,
-        description: str,
-        operation: Callable[[JobContext], str | None],
-        total: int = 1,
-        rounds_total: int = 0,
-        resource_keys: set[str] | None = None,
-    ) -> Job:
+    def submit(self, description: str, operation: Callable[[JobContext], str | None], total: int = 1, rounds_total: int = 0, resource_keys: set[str] | None = None) -> Job:
         with self._lock:
             if self._maintenance_active:
                 raise ServiceBusyError("dashboard maintenance is currently running")

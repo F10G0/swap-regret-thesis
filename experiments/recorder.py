@@ -68,15 +68,7 @@ class CsvRecorder:
 
     def __enter__(self) -> "CsvRecorder":
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_file = tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="",
-            prefix=f".{self.output_path.name}.",
-            suffix=".tmp",
-            dir=self.output_path.parent,
-            delete=False,
-        )
+        temporary_file = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", prefix=f".{self.output_path.name}.", suffix=".tmp", dir=self.output_path.parent, delete=False)
         self.temporary_path = Path(temporary_file.name)
         self.file = temporary_file
         try:

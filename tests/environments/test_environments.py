@@ -100,10 +100,7 @@ def test_constructor_owns_external_tensor_but_feedback_is_a_view() -> None:
         (np.zeros((2, 2, 2, 2)), "number of players"),
     ],
 )
-def test_environment_rejects_invalid_payoff_tensor(
-    payoff_tensor: np.ndarray,
-    message: str,
-) -> None:
+def test_environment_rejects_invalid_payoff_tensor(payoff_tensor: np.ndarray, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         RepeatedGame(payoff_tensor)
 
@@ -247,10 +244,7 @@ def test_runner_steps_environment_once_per_round() -> None:
             self.rows.append(row)
 
     game = CountingGame(asymmetric_payoff_tensor())
-    players = [
-        Hedge(2, horizon=3, seed=0),
-        Hedge(3, horizon=3, seed=1),
-    ]
+    players = [Hedge(2, horizon=3, seed=0), Hedge(3, horizon=3, seed=1)]
     recorder = MemoryRecorder()
 
     run_game(

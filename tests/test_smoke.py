@@ -30,9 +30,7 @@ def test_fixed_experiment_records_feedback_and_refuses_overwrite(tmp_path, monke
     ("bandit", ["lce_ix", "exp3_ix"]),
 ])
 def test_registered_profiles_record_without_learning_rate_columns(tmp_path, feedback_mode, names):
-    output_path = run_cross_play_experiment(
-        "rps", names, horizon=3, seed=7, output_dir=tmp_path, feedback_mode=feedback_mode,
-    )
+    output_path = run_cross_play_experiment("rps", names, horizon=3, seed=7, output_dir=tmp_path, feedback_mode=feedback_mode)
 
     rows = _read_rows(output_path)
     assert len(rows) == 6
@@ -41,11 +39,7 @@ def test_registered_profiles_record_without_learning_rate_columns(tmp_path, feed
 
 def test_removed_exp3_is_rejected_for_new_cross_play_runs(tmp_path) -> None:
     with pytest.raises(ValueError, match="unknown algorithm: exp3"):
-        run_cross_play_experiment(
-            game_name="rps", algorithm_names=["exp3", "exp3_ix"],
-            horizon=3, output_dir=tmp_path,
-            feedback_mode="bandit",
-        )
+        run_cross_play_experiment(game_name="rps", algorithm_names=["exp3", "exp3_ix"], horizon=3, output_dir=tmp_path, feedback_mode="bandit")
     assert list(tmp_path.iterdir()) == []
 
 
@@ -73,9 +67,7 @@ def test_cancelled_experiment_does_not_publish_partial_result(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("feedback_mode", ["full_information", "bandit"])
-def test_retired_games_are_rejected_for_new_cross_play_runs(
-    tmp_path, feedback_mode
-) -> None:
+def test_retired_games_are_rejected_for_new_cross_play_runs(tmp_path, feedback_mode) -> None:
     game_name = "bertrand_standard_o1"
     if feedback_mode == "full_information":
         algorithm = "hedge"

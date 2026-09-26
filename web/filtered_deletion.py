@@ -32,9 +32,7 @@ class FilteredResultsChanged(ValueError):
         super().__init__("Results changed; please review and confirm again.")
 
 
-def filtered_deletion_membership(
-    results: ResultSet, catalog: Mapping, values: Mapping,
-) -> FilteredDeletionPreview:
+def filtered_deletion_membership(results: ResultSet, catalog: Mapping, values: Mapping) -> FilteredDeletionPreview:
     """Project all matching groups; ignore sort, display columns and future pages."""
     if not values.get("context"):
         raise ValueError("a result context is required for filtered deletion")

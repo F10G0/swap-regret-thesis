@@ -73,15 +73,8 @@ def clear_experiment_artifacts(
 
 
 def main() -> None:
-    parser = ArgumentParser(
-        description="Remove all artifacts derived from experiment results."
-    )
-    parser.add_argument(
-        "--preserve",
-        action="append",
-        default=[],
-        help="source/configuration path to retain (may be repeated)",
-    )
+    parser = ArgumentParser(description="Remove all artifacts derived from experiment results.")
+    parser.add_argument("--preserve", action="append", default=[], help="source/configuration path to retain (may be repeated)")
     parser.add_argument("roots", nargs="+", help="generated artifact roots")
     arguments = parser.parse_args()
     clear_experiment_artifacts(arguments.roots, preserve=arguments.preserve)

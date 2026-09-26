@@ -22,9 +22,7 @@ from tests.support import read_csv_rows as _rows
 
 def test_removed_exp3_is_rejected_for_new_adversarial_runs(tmp_path) -> None:
     with pytest.raises(ValueError, match="algorithm exp3 is not available"):
-        run_adversarial_experiment(
-            "exp3", feedback_mode="bandit", horizon=3, output_dir=tmp_path,
-        )
+        run_adversarial_experiment("exp3", feedback_mode="bandit", horizon=3, output_dir=tmp_path)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -33,9 +31,7 @@ def test_removed_exp3_is_rejected_for_new_adversarial_runs(tmp_path) -> None:
 ])
 def test_invalid_adversarial_algorithm_identity(tmp_path, algorithm, feedback_mode) -> None:
     # Use a valid trajectory as a schema fixture, not as an Exp3 reproduction.
-    path = run_adversarial_experiment(
-        "exp3_ix", feedback_mode="bandit", horizon=3, output_dir=tmp_path,
-    )
+    path = run_adversarial_experiment("exp3_ix", feedback_mode="bandit", horizon=3, output_dir=tmp_path)
     rows = _rows(path)
     for row in rows:
         row["algorithm"] = algorithm
@@ -62,14 +58,10 @@ def test_adversarial_experiment_records_canonical_regret(tmp_path) -> None:
     rows = _rows(output_path)
 
     assert len(rows) == 5
-    assert {row["environment"] for row in rows} == {
-        HISTORICAL_FREQUENCY_ENVIRONMENT
-    }
+    assert {row["environment"] for row in rows} == {HISTORICAL_FREQUENCY_ENVIRONMENT}
     assert {row["feedback_mode"] for row in rows} == {"full_information"}
     assert {row["base_learner_seed"] for row in rows} == {"7"}
-    assert {row["learner_seed"] for row in rows} == {
-        str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))
-    }
+    assert {row["learner_seed"] for row in rows} == {str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))}
     assert {row["replicate"] for row in rows} == {"0"}
     assert rows[0]["punished_actions"] == "0 1"
     assert rows[-1]["t"] == "5"
@@ -79,9 +71,7 @@ def test_adversarial_experiment_records_canonical_regret(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("algorithm", ["auer_exp3", "exp3_ix"])
-def test_bandit_adversarial_experiment_uses_scalar_learner_feedback(
-    tmp_path, algorithm,
-) -> None:
+def test_bandit_adversarial_experiment_uses_scalar_learner_feedback(tmp_path, algorithm) -> None:
     output_path = run_adversarial_experiment(
         algorithm,
         feedback_mode="bandit",
@@ -117,12 +107,8 @@ def test_random_walk_experiment_records_environment_metadata(tmp_path) -> None:
     assert {row["reward_step"] for row in rows} == {"0.1"}
     assert {row["base_environment_seed"] for row in rows} == {"7"}
     assert {row["base_learner_seed"] for row in rows} == {"7"}
-    assert {row["environment_seed"] for row in rows} == {
-        str(domain_separated_seed(7, 0, ENVIRONMENT_SEED_DOMAIN))
-    }
-    assert {row["learner_seed"] for row in rows} == {
-        str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))
-    }
+    assert {row["environment_seed"] for row in rows} == {str(domain_separated_seed(7, 0, ENVIRONMENT_SEED_DOMAIN))}
+    assert {row["learner_seed"] for row in rows} == {str(domain_separated_seed(7, 0, LEARNER_SEED_DOMAIN))}
     assert all(row["punished_actions"] == "" for row in rows)
     assert all(0 <= int(row["current_best_action"]) < 3 for row in rows)
     assert all(0.0 <= float(row["current_best_reward"]) <= 1.0 for row in rows)

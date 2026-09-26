@@ -84,10 +84,7 @@ class DashboardService:
         self.figure_builder = FigureBuilder(self)
         self._detail_figure_lock = Lock()
         self._detail_figure_generation = 0
-        self._convergence_executor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="equilibrium-distance",
-        )
+        self._convergence_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="equilibrium-distance")
         self._convergence_future_lock = Lock()
         self._convergence_futures: dict[str, Future[Path]] = {}
 
@@ -157,21 +154,8 @@ class DashboardService:
     def custom_games(self) -> tuple[list[GameDefinition], list[str]]:
         return self.game_catalog.custom_definitions()
 
-    def create_custom_game(
-        self,
-        name: str,
-        n_players,
-        action_counts,
-        seed,
-        payoff_structure: str = "general_sum",
-    ) -> GameDefinition:
-        return self.game_catalog.create_random(
-            name,
-            n_players,
-            action_counts,
-            seed,
-            payoff_structure,
-        )
+    def create_custom_game(self, name: str, n_players, action_counts, seed, payoff_structure: str = "general_sum") -> GameDefinition:
+        return self.game_catalog.create_random(name, n_players, action_counts, seed, payoff_structure)
 
     def delete_custom_game(self, game_id: str) -> GameDefinition:
         def operation() -> GameDefinition:
@@ -329,10 +313,7 @@ class DashboardService:
             resource_keys={resource_key(spec) for spec in missing},
         )
 
-    def submit_adversarial_experiment(
-        self,
-        form: AdversarialExperimentForm,
-    ) -> Job:
+    def submit_adversarial_experiment(self, form: AdversarialExperimentForm) -> Job:
         specs = [
             AdversarialExperimentSpec(
                 environment=form.environment,
@@ -503,10 +484,7 @@ class DashboardService:
                 publish_figure_pair(temporary_path, output_path)
         return output_path
 
-    def _convergence_figure_path(
-        self,
-        filename: str,
-    ) -> tuple[Path, Path]:
+    def _convergence_figure_path(self, filename: str) -> tuple[Path, Path]:
         filename = validate_leaf_filename(filename, ".csv")
         input_path = self.raw_dir / filename
         if not input_path.is_file():
@@ -521,10 +499,7 @@ class DashboardService:
             / f"{input_path.stem}_equilibrium_distance.png",
         )
 
-    def _group_convergence_figure_path(
-        self,
-        group_id: str,
-    ) -> tuple[list[Path], Path, str]:
+    def _group_convergence_figure_path(self, group_id: str) -> tuple[list[Path], Path, str]:
         input_paths = self._result_group_paths(group_id, canonical=True)
         game_name = next(iter_result_rows(input_paths[0]))["game"]
         if not self.supports_equilibrium_distance(game_name):
@@ -569,16 +544,10 @@ class DashboardService:
         try:
             return future.result(), None
         except Exception as error:
-            logger.exception(
-                "Equilibrium distance generation failed for %s",
-                log_context,
-            )
+            logger.exception("Equilibrium distance generation failed for %s", log_context)
             return None, f"{type(error).__name__}: {error}"
 
-    def request_equilibrium_convergence_figure(
-        self,
-        filename: str,
-    ) -> tuple[Path | None, str | None]:
+    def request_equilibrium_convergence_figure(self, filename: str) -> tuple[Path | None, str | None]:
         generation = self._derived_generation()
         input_path, output_path = self._convergence_figure_path(filename)
         return self._request_convergence_figure(
@@ -594,14 +563,9 @@ class DashboardService:
             filename,
         )
 
-    def request_group_equilibrium_convergence_figure(
-        self,
-        group_id: str,
-    ) -> tuple[Path | None, str | None]:
+    def request_group_equilibrium_convergence_figure(self, group_id: str) -> tuple[Path | None, str | None]:
         generation = self._derived_generation()
-        input_paths, output_path, cache_stem = self._group_convergence_figure_path(
-            group_id
-        )
+        input_paths, output_path, cache_stem = self._group_convergence_figure_path(group_id)
         return self._request_convergence_figure(
             input_paths,
             output_path,

@@ -146,10 +146,7 @@ def _integer_list_tokens(value: str, name: str, max_values: int | None = None) -
 
 def parse_action_counts(value: str, max_actions: int, max_values: int = 20) -> tuple[int, ...]:
     tokens = _integer_list_tokens(value, "action count", max_values)
-    action_counts = tuple(
-        parse_positive_integer(token, "action count", max_actions)
-        for token in tokens
-    )
+    action_counts = tuple(parse_positive_integer(token, "action count", max_actions) for token in tokens)
     if any(action_count < 2 for action_count in action_counts):
         raise ValueError("action counts must be at least 2")
     if len(set(action_counts)) != len(action_counts):
@@ -164,11 +161,7 @@ def parse_horizons(value: str, max_horizon: int, max_values: int | None = None) 
 
 def validate_leaf_filename(filename: str, suffix: str) -> str:
     filename_path = Path(filename)
-    if (
-        not filename
-        or filename_path.name != filename
-        or filename_path.suffix.lower() != suffix.lower()
-    ):
+    if not filename or filename_path.name != filename or filename_path.suffix.lower() != suffix.lower():
         raise ValueError("invalid filename")
     return filename
 
@@ -188,10 +181,7 @@ def _form_algorithm_names(values: Mapping[str, str]) -> tuple[str, ...]:
     return names
 
 
-def _parse_learning_configuration(
-    values: Mapping[str, str],
-    algorithms_by_feedback_mode: Mapping[str, list[str]],
-) -> tuple[str, tuple[str, ...]]:
+def _parse_learning_configuration(values: Mapping[str, str], algorithms_by_feedback_mode: Mapping[str, list[str]]) -> tuple[str, tuple[str, ...]]:
     try:
         feedback_mode = values["feedback_mode"]
     except KeyError as error:
@@ -205,13 +195,7 @@ def _parse_learning_configuration(
     return feedback_mode, algorithm_names
 
 
-def parse_experiment_form(
-    values: Mapping[str, str],
-    games: Mapping[str, int],
-    algorithms_by_feedback_mode: dict[str, list[str]],
-    max_horizon: int,
-    max_replicates: int = 100,
-) -> ExperimentForm:
+def parse_experiment_form(values: Mapping[str, str], games: Mapping[str, int], algorithms_by_feedback_mode: dict[str, list[str]], max_horizon: int, max_replicates: int = 100) -> ExperimentForm:
     try:
         game = values["game"]
         horizon_value = values["horizon"]
@@ -221,19 +205,12 @@ def parse_experiment_form(
 
     if game not in games:
         raise ValueError(f"unknown game: {game}")
-    feedback_mode, algorithm_names = _parse_learning_configuration(
-        values,
-        algorithms_by_feedback_mode,
-    )
+    feedback_mode, algorithm_names = _parse_learning_configuration(values, algorithms_by_feedback_mode)
     expected_players = games[game]
     if len(algorithm_names) != expected_players:
         raise ValueError(f"game {game} requires {expected_players} player algorithms")
 
-    replicates = parse_positive_integer(
-        values.get("replicates", ""),
-        "replicates",
-        max_replicates,
-    )
+    replicates = parse_positive_integer(values.get("replicates", ""), "replicates", max_replicates)
     horizons = parse_horizons(horizon_value, max_horizon)
     return ExperimentForm(
         game=game,
@@ -246,14 +223,7 @@ def parse_experiment_form(
     )
 
 
-def parse_adversarial_experiment_form(
-    values: Mapping[str, str],
-    algorithms_by_feedback_mode: Mapping[str, list[str]],
-    environments: set[str],
-    max_actions: int,
-    max_horizon: int,
-    max_replicates: int = 100,
-) -> AdversarialExperimentForm:
+def parse_adversarial_experiment_form(values: Mapping[str, str], algorithms_by_feedback_mode: Mapping[str, list[str]], environments: set[str], max_actions: int, max_horizon: int, max_replicates: int = 100) -> AdversarialExperimentForm:
     try:
         environment = values["environment"]
         actions = values["actions"]
@@ -262,10 +232,7 @@ def parse_adversarial_experiment_form(
     except KeyError as error:
         raise ValueError(f"missing form field: {error.args[0]}") from error
 
-    feedback_mode, algorithm_names = _parse_learning_configuration(
-        values,
-        algorithms_by_feedback_mode,
-    )
+    feedback_mode, algorithm_names = _parse_learning_configuration(values, algorithms_by_feedback_mode)
     if len(algorithm_names) != 1:
         raise ValueError("one-player environments require one algorithm")
     algorithm_name = algorithm_names[0]
@@ -281,10 +248,6 @@ def parse_adversarial_experiment_form(
         action_counts=action_counts,
         horizon=horizons[0],
         seed=parse_non_negative_integer(seed, "seed"),
-        replicates=parse_positive_integer(
-            values.get("replicates", ""),
-            "replicates",
-            max_replicates,
-        ),
+        replicates=parse_positive_integer(values.get("replicates", ""), "replicates", max_replicates),
         horizons=horizons,
     )

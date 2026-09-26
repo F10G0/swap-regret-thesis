@@ -81,26 +81,15 @@ def test_dashboard_requires_csrf_token(tmp_path: Path) -> None:
 def test_dashboard_returns_form_error_for_invalid_horizon(tmp_path: Path) -> None:
     app, _ = create_test_app(tmp_path)
     client = app.test_client()
-    response = client.post(
-        "/",
-        data=VALID_FORM | {
-            "_csrf_token": csrf_token(client),
-            "horizon": "0",
-        },
-    )
+    response = client.post("/", data=VALID_FORM | {"_csrf_token": csrf_token(client), "horizon": "0"})
     assert response.status_code == 400
     assert b"horizon must be positive" in response.data
 
 
-def test_dashboard_queues_valid_experiment_and_exposes_job_status(
-    tmp_path: Path,
-) -> None:
+def test_dashboard_queues_valid_experiment_and_exposes_job_status(tmp_path: Path) -> None:
     app, service = create_test_app(tmp_path)
     client = app.test_client()
-    response = client.post(
-        "/",
-        data=VALID_FORM | {"_csrf_token": csrf_token(client)},
-    )
+    response = client.post("/", data=VALID_FORM | {"_csrf_token": csrf_token(client)})
     assert response.status_code == 302
 
     job = service.jobs.recent()[0]
@@ -113,22 +102,14 @@ def test_dashboard_queues_valid_experiment_and_exposes_job_status(
     assert len(list((tmp_path / "raw").glob("*.csv"))) == 1
 
 
-def test_dashboard_accepts_multiple_experiments_while_queue_is_active(
-    tmp_path: Path,
-) -> None:
+def test_dashboard_accepts_multiple_experiments_while_queue_is_active(tmp_path: Path) -> None:
     app, service = create_test_app(tmp_path)
     client = app.test_client()
     blocker, release_blocker = block_job_queue(service.jobs)
     token = csrf_token(client)
     first_response = client.post("/", data=VALID_FORM | {"_csrf_token": token})
-    second_response = client.post(
-        "/",
-        data=VALID_FORM | {"_csrf_token": token, "seed": "43"},
-    )
-    experiment_jobs = [
-        job for job in service.jobs.recent()
-        if job.id != blocker.id
-    ]
+    second_response = client.post("/", data=VALID_FORM | {"_csrf_token": token, "seed": "43"})
+    experiment_jobs = [job for job in service.jobs.recent() if job.id != blocker.id]
 
     assert first_response.status_code == 302
     assert second_response.status_code == 302
