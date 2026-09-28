@@ -82,7 +82,7 @@ CE/CCE incentive constraints and L1 projection are implemented locally using Num
 
 ## Research Materials
 
-[Documentation and research materials](docs/README.md) describes the submitted thesis PDF and source archive in `docs/thesis/`, the earlier proposal in `docs/proposal/`, and the selected papers and project description in `docs/references/`. These historical materials are separate from generated experiment outputs in `results/`; later code or documentation changes do not alter the submitted thesis.
+[Documentation and research materials](docs/README.md) describes the submitted thesis PDF and source archive in `docs/thesis/`, the defense presentation PDF and LaTeX source archive in `docs/presentation/`, the earlier proposal in `docs/proposal/`, and the selected papers and project description in `docs/references/`. These materials are separate from generated experiment outputs in `results/`; later code or documentation changes do not alter the submitted thesis.
 
 ## Guides
 

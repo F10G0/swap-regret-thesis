@@ -13,6 +13,12 @@ It is separate from generated experiment outputs, which are stored under
   - These files represent the submitted historical version and should not be
     modified to reflect later code or documentation changes.
 
+- `presentation/`
+
+  - Bachelor thesis defense presentation.
+  - Includes the presentation PDF and the corresponding LaTeX source archive,
+    with slides, bibliography, figures, and theme.
+
 - `proposal/`
 
   - Earlier bachelor thesis proposal and its source files.
