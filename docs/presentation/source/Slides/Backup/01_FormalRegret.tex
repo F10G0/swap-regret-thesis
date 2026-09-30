@@ -1,0 +1,30 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Formal action-regret definitions}
+
+  \small
+  For the realized action sequence, define the pairwise replacement gain
+  \[
+    G_T(i,j)=\sum_{t=1}^T \mathbf 1\{I_t=i\}\bigl(r_t(j)-r_t(i)\bigr).
+  \]
+
+  \vspace{0.08cm}
+  \begin{itemize}
+    \setlength{\itemsep}{0.16cm}
+    \item \textbf{External regret:}\quad
+      $R_T^{\rm ext}=\max_j \sum_i G_T(i,j)$
+    \item \textbf{Internal regret:}\quad
+      $R_T^{\rm int}=\max_{i,j} G_T(i,j)$
+    \item \textbf{Swap regret:}\quad
+      $R_T^{\rm swap}=\sum_i \max_j G_T(i,j)$
+  \end{itemize}
+
+  \vspace{0.08cm}
+  \begin{center}
+    $R_T^{\rm ext}\le R_T^{\rm swap}$,\qquad
+    $R_T^{\rm int}\le R_T^{\rm swap}\le K R_T^{\rm int}$.
+
+    \vspace{0.16cm}
+
+    External and internal regret are not generally ordered.
+  \end{center}
+\end{frame}

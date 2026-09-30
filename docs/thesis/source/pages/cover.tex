@@ -1,0 +1,30 @@
+\begin{titlepage}
+  \thispagestyle{empty}
+  \centering
+
+  \IfFileExists{logos/tum.pdf}{%
+    \includegraphics[height=18mm]{logos/tum.pdf}
+  }{}
+
+  \vspace{10mm}
+  {\Large \School\par}
+
+  \vspace{4mm}
+  {\large \University\par}
+
+  \vfill
+  {\Large \ThesisType\par}
+
+  \vspace{18mm}
+  {\huge\bfseries \ThesisTitle\par}
+
+  \vspace{18mm}
+  {\LARGE \AuthorName\par}
+
+  \IfFileExists{logos/faculty.png}{%
+    \vfill
+    \includegraphics[height=20mm]{logos/faculty.png}
+  }{%
+    \vfill
+  }
+\end{titlepage}

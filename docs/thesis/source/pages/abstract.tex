@@ -1,0 +1,8 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+This thesis empirically compares regret-minimizing algorithms under full-information and bandit feedback. All algorithms are evaluated within a common framework using expected action regret. The experiments cover two one-player environments---an adaptive historical-frequency process and an oblivious lazy random walk---as well as repeated Rock--Paper--Scissors and Rock--Paper--Scissors--Lizard--Spock games. Additional experiments examine how performance changes with the action-space size, horizon, and opponent.
+
+The results show that similar performance under external regret can mask substantial differences in internal and swap regret. These differences are clearest in the adaptive environment and much smaller under the oblivious random walk. A related distinction appears in the repeated-game experiments. Several methods targeting internal or swap regret achieve smaller CE distances in the tested self-play settings, while external-regret learners can remain much closer to the CCE set than to the CE set. The cross-play results also show that finite-horizon regret can be sensitive to the opponent.
+
+Overall, the results are broadly consistent with the qualitative expectations from the literature, while also showing that finite-horizon performance depends on the regret notion, feedback setting, environment, action-space size, horizon, and opponent.

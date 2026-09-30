@@ -1,0 +1,89 @@
+\chapter{Introduction}
+\label{chap:introduction}
+
+\section{Background and Motivation}
+
+Online learning studies sequential decision problems in which a learner
+repeatedly chooses among available actions without knowing future rewards or
+losses. A standard objective is to minimize \emph{external regret}, which
+compares the learner with the best fixed action in hindsight. Classical work
+includes Hannan's repeated-play framework \citep{dresher_approximation_1958},
+the Weighted Majority algorithm \citep{littlestone_weighted_1994}, and Hedge
+\citep{freund_decision-theoretic_1997}. Under bandit feedback, where only the
+reward of the selected action is observed, algorithms such as EXP3 provide the
+corresponding adversarial guarantee \citep{auer_nonstochastic_2002}.
+
+External regret considers only fixed deviations. Internal regret allows one
+action to be replaced by another, while swap regret allows a separate
+replacement for every action. These stronger notions are particularly relevant
+in repeated games: vanishing external regret is associated with coarse
+correlated equilibrium \citep{chen_hedging_2020}, whereas vanishing internal
+or swap regret is associated with correlated equilibrium
+\citep{hart_simple_2000,blum_external_2007}. This has motivated both direct
+regret-matching procedures and reductions that construct stronger-regret
+learners from external-regret algorithms
+\citep{hart_simple_2000,blum_external_2007,ito_tight_2020}.
+
+Theoretical guarantees, however, do not by themselves determine finite-horizon
+behavior. Algorithms with the same asymptotic order can differ substantially
+over practical horizons, and stronger guarantees may come with different
+finite-horizon constants or update structures. The environment also matters:
+an adaptive reward process can react to the learner's past actions, whereas an
+oblivious process is fixed independently of them. In repeated games, the
+opponent is itself part of the reward-generation process.
+
+Structured self-play can introduce additional regularity beyond an arbitrary
+adversarial sequence. For example, optimistic methods can obtain faster regret
+rates in repeated games \citep{chen_hedging_2020}, and recent work shows that
+no-swap-regret dynamics can have stronger convergence properties in symmetric
+zero-sum self-play \citep{leme_convergence_2024}. These results provide useful
+theoretical context, but they do not directly answer how the different
+algorithms compare empirically under a common finite-horizon evaluator.
+
+This thesis therefore focuses on an empirical comparison. The goal is to study
+how external-, internal-, and swap-regret algorithms behave under the same
+experimental framework, how stable the observed differences are across
+feedback models and reward processes, and how they translate into repeated-game
+behavior.
+
+\section{Research Questions and Contributions}
+
+The empirical study is organized around three research questions:
+
+\begin{enumerate}
+    \item \textbf{How do the considered algorithms differ in external,
+    internal, and swap regret at finite horizons?}
+
+    \item \textbf{How stable are these differences across full-information and
+    bandit feedback, adaptive and oblivious reward processes, action-space
+    sizes, and horizons?}
+
+    \item \textbf{In repeated games, how are the regret differences reflected
+    in CE/CCE behavior, and how strongly do they depend on the opponent?}
+\end{enumerate}
+
+To address these questions, the thesis implements and evaluates a collection of
+existing external-regret, regret-matching, and swap-regret methods under a
+common framework. The experiments use expected action regret as the common
+regret metric. They cover full-information and bandit feedback, an adaptive
+historical-frequency environment, an oblivious lazy-random-walk environment,
+action-space and horizon scaling, and self-play and cross-play in RPS and
+RPSLS. The repeated-game experiments additionally evaluate the empirical
+joint-action distribution relative to the correlated-equilibrium and
+coarse-correlated-equilibrium sets.
+
+The thesis does not propose a new learning algorithm or derive new regret
+bounds. Its contribution is the consistent empirical comparison of existing
+methods and the analysis of their finite-horizon behavior across these
+settings.
+
+\section{Thesis Structure}
+
+Chapter~2 introduces the online-learning setting, the regret notions used in
+the thesis, and the equilibrium concepts needed for the repeated-game
+experiments. Chapter~3 presents the implemented algorithms and the literature
+results most relevant to their interpretation. Chapter~4 describes the
+experimental environments, configuration, and evaluation metrics.
+Chapter~5 reports the empirical results. Chapter~6 discusses the main
+finite-horizon findings and relates them to the existing literature. Finally,
+Chapter~7 summarizes the conclusions and outlines directions for future work.

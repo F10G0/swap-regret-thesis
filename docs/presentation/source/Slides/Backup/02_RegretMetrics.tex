@@ -1,0 +1,25 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Expected action regret and nearby notions}
+
+  \vspace{0.2cm}
+  \footnotesize
+  For $q\in\{\mathrm{ext},\mathrm{int},\mathrm{swap}\}$, the experiments report
+  \[
+    \mathcal R_T^q=\mathbb E[R_T^q],
+  \]
+  estimated by the mean over 12 independent replicates.
+
+  \vspace{0.2cm}
+  \begin{itemize}
+    \setlength{\itemsep}{0.12cm}
+    \item \textbf{Action regret:} compute regret from the actions actually sampled in each run; maximize within the run before averaging.
+    \item \textbf{Distribution regret:} evaluate the learner's mixed strategy rather than the sampled action trajectory.
+    \item \textbf{Pseudo-regret:} the expectation and maximization are arranged differently, so it is not interchangeable with expected action regret.
+  \end{itemize}
+
+  \vspace{0.2cm}
+  {\scriptsize\textcolor{black!60}{
+    Therefore, the common empirical evaluator does not directly verify every literature guarantee.
+    {\itshape Terminology follows \citet{greenwald_bounds_2006} and \citet{huang_near-optimal_2023}.}
+  }}
+\end{frame}

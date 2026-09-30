@@ -1,0 +1,270 @@
+% beamerthemeTUMclean.sty
+% A clean reusable TUM-style Beamer theme
+%
+% Usage:
+%   \usetheme{TUMclean}
+%
+% Optional user command in main.tex:
+%   \renewcommand{\presentationcontext}{Seminar: Learning in Games}
+%
+% Required logo file:
+%   logos/tumlogo
+% or change \TUMcleanLogoPath below.
+
+\mode<presentation>
+
+% --------------------------------------------------------------------------
+% Options
+% --------------------------------------------------------------------------
+
+\DeclareOptionBeamer{compress}{\beamer@compresstrue}
+\ProcessOptionsBeamer
+
+% --------------------------------------------------------------------------
+% Required packages
+% --------------------------------------------------------------------------
+
+\RequirePackage{graphicx}
+\RequirePackage{xcolor}
+\RequirePackage{amssymb}
+
+% --------------------------------------------------------------------------
+% TUM colors
+% --------------------------------------------------------------------------
+
+\definecolor{tumcolor-blue}{rgb}{0,0.396,0.7412}
+\definecolor{tumcolor-green}{rgb}{0.6353,0.6784,0}
+\definecolor{tumcolor-lightgrey}{rgb}{0.8549,0.8431,0.7961}
+\definecolor{tumcolor-orange}{rgb}{0.8902,0.4471,0.1333}
+
+% Main aliases
+\colorlet{TUMblue}{tumcolor-blue}
+\colorlet{TUMgreen}{tumcolor-green}
+\colorlet{TUMlightgrey}{tumcolor-lightgrey}
+\colorlet{TUMorange}{tumcolor-orange}
+
+% --------------------------------------------------------------------------
+% Adjustable layout parameters
+% --------------------------------------------------------------------------
+
+\newcommand{\TUMcleanLogoPath}{logos/tumlogo}
+
+\newlength{\TUMcleanHeaderTopSep}
+\setlength{\TUMcleanHeaderTopSep}{0.15cm}
+
+\newlength{\TUMcleanHeaderRightMargin}
+\setlength{\TUMcleanHeaderRightMargin}{0.30cm}
+
+\newlength{\TUMcleanHeaderRuleSep}
+\setlength{\TUMcleanHeaderRuleSep}{0.7mm}
+
+\newlength{\TUMcleanFooterLeftMargin}
+\setlength{\TUMcleanFooterLeftMargin}{0.25cm}
+
+\newlength{\TUMcleanFooterBottomSep}
+\setlength{\TUMcleanFooterBottomSep}{5pt}
+
+\newlength{\TUMcleanRuleThickness}
+\setlength{\TUMcleanRuleThickness}{0.4pt}
+
+% --------------------------------------------------------------------------
+% General Beamer settings
+% --------------------------------------------------------------------------
+
+\useinnertheme{default}
+
+\setbeamertemplate{navigation symbols}{}
+
+\setbeamercovered{transparent}
+
+% --------------------------------------------------------------------------
+% Colors
+% --------------------------------------------------------------------------
+
+\setbeamercolor{normal text}{fg=black,bg=white}
+\setbeamercolor{alerted text}{fg=red!80!black}
+\setbeamercolor{example text}{fg=TUMgreen!60!black}
+
+\setbeamercolor{structure}{fg=TUMblue}
+\setbeamercolor{local structure}{fg=TUMblue}
+
+\setbeamercolor{title}{fg=TUMblue}
+\setbeamercolor{subtitle}{fg=TUMblue}
+\setbeamercolor{author}{fg=black}
+\setbeamercolor{institute}{fg=black}
+\setbeamercolor{date}{fg=black}
+
+\setbeamercolor{frametitle}{fg=TUMblue,bg=white}
+\setbeamercolor{framesubtitle}{fg=TUMblue,bg=white}
+
+\setbeamercolor{section in toc}{fg=black}
+\setbeamercolor{subsection in toc}{fg=black}
+
+\setbeamercolor{item}{fg=TUMblue}
+\setbeamercolor{subitem}{fg=TUMblue}
+\setbeamercolor{subsubitem}{fg=TUMblue}
+
+\setbeamercolor{enumerate item}{fg=black}
+\setbeamercolor{enumerate subitem}{fg=black}
+\setbeamercolor{enumerate subsubitem}{fg=black}
+\setbeamercolor{itemize item}{fg=TUMblue}
+\setbeamercolor{itemize subitem}{fg=TUMblue}
+\setbeamercolor{itemize subsubitem}{fg=TUMblue}
+
+\setbeamercolor{block title}{fg=black,bg=TUMlightgrey}
+\setbeamercolor{block body}{fg=black,bg=TUMlightgrey!45!white}
+
+\setbeamercolor{block title alerted}{fg=black,bg=TUMorange}
+\setbeamercolor{block body alerted}{fg=black,bg=TUMorange!35!white}
+
+\setbeamercolor{block title example}{fg=black,bg=TUMgreen}
+\setbeamercolor{block body example}{fg=black,bg=TUMgreen!35!white}
+
+\setbeamercolor{caption name}{fg=TUMblue}
+\setbeamercolor{bibliography item}{fg=TUMblue}
+\setbeamercolor{bibliography entry author}{fg=TUMblue}
+\setbeamercolor{bibliography entry title}{fg=black}
+\setbeamercolor{bibliography entry location}{fg=black!60}
+\setbeamercolor{bibliography entry note}{fg=black!60}
+
+% --------------------------------------------------------------------------
+% Fonts
+% --------------------------------------------------------------------------
+
+\setbeamerfont{title}{size=\Large,parent=structure}
+\setbeamerfont{subtitle}{size=\normalsize,parent=title}
+\setbeamerfont{author}{size=\normalsize}
+\setbeamerfont{institute}{size=\normalsize}
+\setbeamerfont{date}{size=\normalsize}
+
+\setbeamerfont{frametitle}{size=\large,parent=structure}
+\setbeamerfont{framesubtitle}{size=\footnotesize,parent=frametitle}
+
+\setbeamerfont{section in toc}{parent=structure}
+\setbeamerfont{subsection in toc}{size=\small}
+\setbeamerfont{subsubsection in toc}{size=\footnotesize}
+
+\setbeamerfont{headline}{size=\tiny,parent=structure}
+\setbeamerfont{footline}{size=\scriptsize,parent=structure}
+
+\setbeamerfont{block title}{size=\normalsize,parent=structure}
+\setbeamerfont{block body}{}
+
+\setbeamerfont{block title alerted}{parent={block title,alerted text}}
+\setbeamerfont{block body alerted}{}
+
+\setbeamerfont{block title example}{parent={block title,example text}}
+\setbeamerfont{block body example}{}
+
+\setbeamerfont{item}{parent=structure}
+\setbeamerfont{subitem}{parent=item}
+\setbeamerfont{subsubitem}{parent=subitem}
+
+\setbeamerfont{itemize item}{parent=item}
+\setbeamerfont{itemize subitem}{parent=subitem}
+\setbeamerfont{itemize subsubitem}{parent=subsubitem}
+
+\setbeamerfont{enumerate item}{parent=item}
+\setbeamerfont{enumerate subitem}{parent=subitem}
+\setbeamerfont{enumerate subsubitem}{parent=subitem}
+
+\setbeamerfont{itemize/enumerate body}{}
+\setbeamerfont{itemize/enumerate subbody}{size=\small}
+\setbeamerfont{itemize/enumerate subsubbody}{size=\footnotesize}
+
+\setbeamerfont{caption}{size=\small}
+\setbeamerfont{caption name}{parent={structure,caption}}
+
+\setbeamerfont{bibliography item}{size=\small}
+\setbeamerfont{bibliography entry author}{size=\small}
+\setbeamerfont{bibliography entry title}{size=\small}
+\setbeamerfont{bibliography entry location}{size=\small}
+\setbeamerfont{bibliography entry note}{size=\small}
+
+% --------------------------------------------------------------------------
+% Headline
+% --------------------------------------------------------------------------
+% Right-aligned TUM logo and blue horizontal rule.
+
+\setbeamertemplate{headline}{%
+  \vbox{%
+    \vspace{\TUMcleanHeaderTopSep}%
+    \hbox to \paperwidth{%
+      \hfill
+      \includegraphics[scale=0.60]{\TUMcleanLogoPath}%
+      \hspace*{\TUMcleanHeaderRightMargin}%
+    }%
+    \vspace{\TUMcleanHeaderRuleSep}%
+    \hbox to \paperwidth{%
+      \textcolor{TUMblue}{\rule{\paperwidth}{\TUMcleanRuleThickness}}%
+    }%
+  }%
+}
+
+% --------------------------------------------------------------------------
+% Footline
+% --------------------------------------------------------------------------
+% Presentation context on the left, page number on the right.
+
+\providecommand{\presentationcontext}{}
+
+\setbeamertemplate{footline}{%
+  \vbox{%
+    \hbox to \paperwidth{%
+      \hspace*{\TUMcleanFooterLeftMargin}%
+      \usebeamerfont{footline}%
+      \textcolor{TUMblue}{\presentationcontext}%
+      \hfill
+      \usebeamerfont{footline}%
+      \textcolor{TUMblue}{\insertframenumber\,/\,\inserttotalframenumber}%
+      \hspace*{\TUMcleanHeaderRightMargin}%
+    }%
+    \vspace{\TUMcleanFooterBottomSep}%
+  }%
+}
+
+% --------------------------------------------------------------------------
+% Title page
+% --------------------------------------------------------------------------
+
+\setbeamertemplate{title page}{%
+  \vbox{}%
+  \vfill
+  \begin{center}
+    {\usebeamerfont{title}\usebeamercolor[fg]{title}\inserttitle\par}
+    \vspace{0.4cm}
+    \ifx\insertsubtitle\@empty
+    \else
+      {\usebeamerfont{subtitle}\usebeamercolor[fg]{subtitle}\insertsubtitle\par}
+      \vspace{0.5cm}
+    \fi
+    {\usebeamerfont{author}\usebeamercolor[fg]{author}\insertauthor\par}
+    \vspace{0.25cm}
+    {\usebeamerfont{institute}\usebeamercolor[fg]{institute}\insertinstitute\par}
+    \vspace{0.25cm}
+    {\usebeamerfont{date}\usebeamercolor[fg]{date}\insertdate\par}
+  \end{center}
+  \vfill
+}
+
+% --------------------------------------------------------------------------
+% Table of contents
+% --------------------------------------------------------------------------
+
+\setbeamertemplate{section in toc}[sections numbered]
+\setbeamertemplate{subsection in toc}{%
+  \leavevmode
+  \leftskip=1.5em
+  \inserttocsubsection\par
+}
+
+% --------------------------------------------------------------------------
+% Blocks and lists
+% --------------------------------------------------------------------------
+
+\setbeamertemplate{blocks}[rounded][shadow=false]
+\setbeamertemplate{itemize item}{\raise0.2ex\hbox{\small$\blacktriangleright$}}
+\setbeamertemplate{itemize subitem}{\raise0.2ex\hbox{\scriptsize$\blacktriangleright$}}
+\setbeamertemplate{itemize subsubitem}{\raise0.2ex\hbox{\tiny$\blacktriangleright$}}
+
+\mode<all>

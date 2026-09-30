@@ -20,5 +20,5 @@ jobs:
         with:
           node-version: '12.22.x'
       - run: make install
-      - run: npm install
+      - run: npm ci
       - run: make test

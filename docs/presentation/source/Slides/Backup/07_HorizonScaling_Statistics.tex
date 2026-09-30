@@ -1,0 +1,32 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Finite-horizon scaling protocol}
+
+  \small
+
+  Each configured horizon is an independent experiment: the learner is
+  reinitialized and fixed-horizon parameters are recomputed from that run's
+  own $T$.
+
+  \vspace{0.30cm}
+
+  At each horizon, final cumulative action regret is averaged across
+  replicates. Positive replicate-mean endpoints are fitted by OLS in
+  log--log coordinates:
+  \[
+    \log R_T=\alpha\log T+\log c,
+    \qquad
+    R_T\approx cT^\alpha.
+  \]
+
+  {\bfseries Interpretation:}
+  $\alpha$ and $c$ are finite-horizon descriptors, not asymptotic regret
+  rates.
+
+  \vspace{0.50cm}
+
+  {\scriptsize
+  Horizons:
+  $10^3,\,2\!\cdot\!10^3,\,3\!\cdot\!10^3,\,5\!\cdot\!10^3,\,
+  10^4,\,2\!\cdot\!10^4,\,3\!\cdot\!10^4,\,5\!\cdot\!10^4,\,
+  10^5,\,2\!\cdot\!10^5,\,3\!\cdot\!10^5,\,5\!\cdot\!10^5,\,10^6$.}
+\end{frame}

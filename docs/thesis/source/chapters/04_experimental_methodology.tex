@@ -1,0 +1,211 @@
+% Chapter 4 — Experimental Methodology
+
+\chapter{Experimental Methodology}
+\label{chap:methodology}
+
+This chapter describes the experimental setup used in
+Chapter~\ref{chap:results}. The experiments combine two one-player reward
+processes with repeated play in RPS and RPSLS. Full-information and bandit
+learners are evaluated with the same expected action-regret metrics introduced
+in Chapter~\ref{chap:background}. Repeated-game experiments additionally track
+the empirical joint-action distribution and its distance to the CE and CCE
+sets.
+
+\section{Experimental Setup}
+\label{sec:experimental-design}
+
+The main trajectory experiments use horizon \(T=10^6\), 12 independent
+replicates, and base seed 42. All random-number streams are deterministically
+derived from this base seed, so rerunning the same experiment configuration
+reproduces the same stochastic trajectories. The one-player experiments use
+\(K=10\) actions unless the action-space size is varied. The full-information
+and bandit algorithm sets are those summarized in
+Chapter~\ref{chap:algorithms}.
+
+The additional scaling experiments are:
+
+\begin{itemize}
+    \item \textbf{Action-space scaling:} HFA with
+    \(K\in\{2,3,5,10,20,30,50\}\) and \(T=10^6\).
+    \item \textbf{One-player horizon scaling:} HFA and LRW with \(K=10\).
+    \item \textbf{Repeated-game horizon scaling:} RPSLS self-play and selected
+    cross-play profiles.
+\end{itemize}
+
+The horizon-scaling experiments use
+\[
+\{1000,2000,3000,5000,10^4,2\!\cdot\!10^4,3\!\cdot\!10^4,
+5\!\cdot\!10^4,10^5,2\!\cdot\!10^5,3\!\cdot\!10^5,
+5\!\cdot\!10^5,10^6\}.
+\]
+Each horizon is run as an independent experiment: the learner is reinitialized,
+and any fixed-horizon parameter is computed from that run's own \(T\).
+
+\section{One-Player Environments}
+\label{sec:experimental-environments}
+
+The two one-player environments are deliberately different in how the reward
+sequence is generated.
+
+\subsection{Adaptive Historical-Frequency Environment}
+
+The historical-frequency adversary (HFA) is \emph{adaptive but
+non-anticipating}. Before round \(t\), it ranks the actions by how often they
+have been selected in the previous rounds. The \(\lceil K/2\rceil\) most
+frequently selected actions receive reward \(0\), while the remaining actions
+receive reward \(1\). Ties are resolved by a deterministic rotating
+order.
+
+Thus \(r_t\) can depend on the learner's past actions, but not on the fresh
+random draw \(I_t\) from the current round. For the main \(K=10\) experiments,
+five actions are punished each round. HFA is used both for the main one-player
+comparison and for the action-space study.
+
+\subsection{Oblivious Lazy Random Walk Environment}
+
+The lazy random walk (LRW) provides an \emph{oblivious} contrast: its reward
+sequence is generated independently of the learner's actions. Each action has
+its own process on
+\[
+    \{0,0.1,\ldots,0.9,1\},
+\]
+starting at \(0.5\). At an interior state, the next reward moves down by
+\(0.1\), stays unchanged, or moves up by \(0.1\), each with probability
+\(1/3\). At either boundary, it stays or moves one step inward, each with
+probability \(1/2\).
+
+For a fixed replicate, the complete reward paths are generated independently
+of the learner. Algorithms compared within that replicate therefore face the
+same underlying LRW realization. In contrast to HFA, the learner's actions do
+not affect future rewards.
+
+\section{Repeated Games}
+\label{sec:repeated-game-method}
+
+The repeated-game experiments use Rock--Paper--Scissors (RPS) and
+Rock--Paper--Scissors--Lizard--Spock (RPSLS). Raw win/tie/loss payoffs
+\(1,0,-1\) are normalized to \(1,0.5,0\), so both games are symmetric
+constant-sum games with total payoff \(1\) at every action profile.
+
+For RPS, with actions ordered Rock, Paper, Scissors, player~0's payoff matrix
+is
+\[
+U_{\mathrm{RPS}}
+=
+\begin{pmatrix}
+0.5 & 0   & 1 \\
+1   & 0.5 & 0 \\
+0   & 1   & 0.5
+\end{pmatrix}.
+\]
+Player~1 receives \(1-U_{\mathrm{RPS}}\) entrywise.
+
+For RPSLS, with actions ordered Rock, Paper, Scissors, Lizard, Spock,
+player~0's payoff matrix is
+\[
+U_{\mathrm{RPSLS}}
+=
+\begin{pmatrix}
+0.5 & 0   & 1   & 1   & 0 \\
+1   & 0.5 & 0   & 0   & 1 \\
+0   & 1   & 0.5 & 1   & 0 \\
+0   & 1   & 0   & 0.5 & 1 \\
+1   & 0   & 1   & 0   & 0.5
+\end{pmatrix},
+\]
+and again player~1 receives the complementary payoff \(1-U_{\mathrm{RPSLS}}\).
+
+At each round, both players sample their actions before feedback is produced.
+Under full information, a player observes the payoff of every one of its
+actions against the opponent's realized action. Under bandit feedback, it
+observes only the payoff of its played action. The counterfactual payoff vector
+is still retained by the simulator for offline regret evaluation and is never
+shown to a bandit learner.
+
+RPS is mainly used to inspect the structure of the empirical joint-action
+distribution. RPSLS is the main game for self-play, horizon-scaling, and
+cross-play comparisons.
+
+\section{Evaluation Metrics}
+\label{sec:evaluation-metrics}
+
+\subsection{Expected Action Regret}
+
+Following the terminology of \citet{greenwald_bounds_2006}, the evaluator
+computes \emph{action regret} from the actions actually sampled in each
+replicate. It maintains the replacement gains
+\[
+    G_T(i,j)
+    =
+    \sum_{t=1}^{T}
+    \mathbf 1\{I_t=i\}
+    \bigl(r_t(j)-r_t(i)\bigr).
+\]
+External, internal, and swap action regret are then
+\[
+    R_T^{\mathrm{ext}}
+    =\max_j\sum_i G_T(i,j),
+    \qquad
+    R_T^{\mathrm{int}}
+    =\max_{i,j}G_T(i,j),
+\]
+and
+\[
+    R_T^{\mathrm{swap}}
+    =\sum_i\max_jG_T(i,j).
+\]
+
+The reported trajectories are arithmetic means over the 12 replicates and are
+therefore Monte Carlo estimates of the corresponding expected action regret,
+\[
+    \mathcal R_T^q=\mathbb E[R_T^q],
+    \qquad
+    q\in\{\mathrm{ext},\mathrm{int},\mathrm{swap}\}.
+\]
+For swap regret, this placement of the expectation follows the expected swap
+regret notion distinguished from pseudo-regret by
+\citet{huang_near-optimal_2023}. The main plots use \(R_t/t\); selected
+supplementary plots use
+\(R_t/\sqrt t\). The same evaluator is used for all algorithms under both
+feedback models.
+
+\subsection{Equilibrium Distance}
+
+For repeated games, the empirical joint distribution after \(t\) rounds is
+\[
+    \widehat{\mu}_t(a)
+    =
+    \frac{1}{t}\sum_{s=1}^{t}\mathbf 1\{a_s=a\}.
+\]
+The experiments compute its full-dimensional \(L_1\) distance to the complete
+CE and CCE sets:
+\[
+    d_E(\widehat{\mu}_t)
+    =
+    \min_{\mu\in E}
+    \|\widehat{\mu}_t-\mu\|_1,
+    \qquad
+    E\in\{\mathrm{CE},\mathrm{CCE}\}.
+\]
+The corresponding linear programs are solved with HiGHS. Distances are
+computed separately for each replicate and then averaged. Joint-action
+heatmaps instead average the final empirical distributions across replicates.
+
+\section{Finite-Horizon Scaling}
+\label{sec:scaling-and-reporting}
+
+For each independently configured horizon, the final action regret is first
+averaged across replicates. Positive replicate-mean endpoints are fitted by
+ordinary least squares in log--log coordinates,
+\[
+    \log R_T=\alpha\log T+\log c,
+    \qquad\text{equivalently}\qquad
+    R_T\approx cT^\alpha.
+\]
+The fitted \(\alpha\) and \(c\) are used only as finite-horizon empirical
+descriptors, not as estimates of asymptotic regret rates.
+
+Trajectory figures show replicate means without confidence bands. Endpoint
+information pages additionally report the sample standard deviation and
+standard error. These statistics are descriptive and are not used for formal
+hypothesis testing.

@@ -1,0 +1,79 @@
+\begin{frame}
+  \frametitle{Algorithms compared}
+
+  % Slightly use the outer margins
+  \hspace*{-0.025\textwidth}%
+  \begin{minipage}{1.05\textwidth}
+
+  {\footnotesize
+  \renewcommand{\arraystretch}{1.16}
+  \begin{tabular}{
+    @{}
+    >{\raggedright\arraybackslash}p{0.69\linewidth}
+    >{\raggedright\arraybackslash}p{0.29\linewidth}
+    @{}
+  }
+
+    Hedge
+    &
+    {\scriptsize\textcolor{gray}{Freund--Schapire (1997)}} \\
+
+    Optimistic Hedge (\textbf{OptHedge})
+    &
+    {\scriptsize\textcolor{gray}{Chen--Peng (2020)}} \\
+
+    Regret Matching (\textbf{RM})
+    &
+    {\scriptsize\textcolor{gray}{Hart--Mas-Colell (2000)}} \\
+
+    Stationary Regret Matching (\textbf{SRM})
+    &
+    {\scriptsize\textcolor{gray}{Hart--Mas-Colell (2000)}} \\
+
+    Blum--Mansour reduction + Hedge (\textbf{BM-Hedge})
+    &
+    {\scriptsize\textcolor{gray}{Blum--Mansour (2007)}} \\
+
+    Blum--Mansour reduction + Optimistic Hedge
+    (\textbf{BM-OptHedge})
+    &
+    {\scriptsize\textcolor{gray}{
+      Blum--Mansour (2007); Chen--Peng (2020)
+    }} \\
+
+    Ito reduction + Hedge (\textbf{Ito-Hedge})
+    &
+    {\scriptsize\textcolor{gray}{Ito (2020)}} \\[-0.16cm]
+
+    \multicolumn{2}{@{}l@{}}{%
+      \textcolor{TUMblue}{\rule{\linewidth}{0.35pt}}%
+    } \\
+
+    EXP3
+    &
+    {\scriptsize\textcolor{gray}{Auer et al. (2002)}} \\
+
+    EXP3 with implicit exploration (\textbf{EXP3-IX})
+    &
+    {\scriptsize\textcolor{gray}{Neu (2015)}} \\
+
+    Blum--Mansour reduction + EXP3 (\textbf{BM-EXP3})
+    &
+    {\scriptsize\textcolor{gray}{Blum--Mansour (2007)}} \\
+
+    Ito reduction + Tsallis-INF (\textbf{Ito-Tsallis})
+    &
+    {\scriptsize\textcolor{gray}{
+      Ito (2020); Zimmert--Seldin (2021)
+    }} \\
+
+    LCE-IX
+    &
+    {\scriptsize\textcolor{gray}{Huang--Pan (2023)}}
+
+  \end{tabular}
+  }
+
+  \end{minipage}
+
+\end{frame}

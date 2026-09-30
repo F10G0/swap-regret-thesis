@@ -1,0 +1,23 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Exact one-player reward processes}
+
+  \vspace{0.20cm}
+
+  \footnotesize
+  {\bfseries Historical-Frequency Adversary (HFA)}\par
+  \vspace{0.30cm}
+  Before round $t$, actions are ranked by past play counts. The $\lceil K/2\rceil$ most frequently played actions receive reward $0$ and the rest reward $1$; ties use a deterministic rotating order. HFA is adaptive but non-anticipating.
+
+  \vspace{0.10cm}
+  \textcolor{TUMblue}{\rule{\linewidth}{0.35pt}}
+  \vspace{-0.10cm}
+
+  {\bfseries Lazy Random Walk (LRW)}\par
+  \vspace{0.30cm}
+  Each action follows its own process on $\{0,0.1,\ldots,1\}$, starting at $0.5$. At interior states it moves down, stays, or moves up with probability $1/3$ each; at a boundary it stays or moves inward with probability $1/2$ each. Reward paths are generated independently of the learner.
+
+  \vspace{0.30cm}
+  {\scriptsize\textcolor{black!60}{
+  Main one-player runs: $K=10$, $T=10^6$, 12 replicates, base seed 42.
+  Within an LRW replicate, all compared algorithms face the same underlying reward realization.}}
+\end{frame}

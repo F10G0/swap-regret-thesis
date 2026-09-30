@@ -1,0 +1,55 @@
+\begin{frame}
+  \frametitle{RPSLS cross-play: Hedge across opponents}
+
+  \vspace{0.5cm}
+  \begin{columns}[T,onlytextwidth]
+
+    \column{0.55\textwidth}
+      \centering
+      \includegraphics[
+        width=\linewidth
+      ]{rpsls_hedge_opponents_swap.pdf}
+
+    \column{0.43\textwidth}
+      \centering
+
+      {\small\bfseries Hedge as player 0}\\[0.12cm]
+
+      {\scriptsize
+      \renewcommand{\arraystretch}{1.22}
+      \setlength{\tabcolsep}{3.5pt}
+
+      \begin{tabular}{@{}lrrr@{}}
+        \toprule
+        Opponent
+          & $\alpha_{\rm ext}$
+          & $\alpha_{\rm int}$
+          & $\alpha_{\rm swap}$ \\
+        \midrule
+        Hedge
+          & 0.474 & 0.915 & 0.964 \\
+        BM-Hedge
+          & 0.479 & 0.516 & 0.510 \\
+        Ito-Hedge
+          & 0.431 & 0.527 & 0.533 \\
+        OptHedge
+          & 0.510 & 0.664 & 0.647 \\
+        SRM
+          & 0.513 & 0.574 & 0.574 \\
+        \bottomrule
+      \end{tabular}
+      }
+
+  \end{columns}
+
+  \vspace{0.50cm}
+
+  \begin{center}
+    {\scriptsize\textcolor{black!60}{
+      Final cumulative regret across independently configured horizons is summarized by
+      $R_T \approx cT^\alpha$;
+      $\alpha$ is a finite-horizon descriptor, not an asymptotic rate.
+    }}
+  \end{center}
+
+\end{frame}

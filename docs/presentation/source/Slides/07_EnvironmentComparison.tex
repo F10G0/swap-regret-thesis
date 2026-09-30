@@ -1,0 +1,80 @@
+\begin{frame}
+  \frametitle{Bandit feedback: comparison across environments}
+
+  \hspace*{-0.06\textwidth}
+  \begin{minipage}{1.04\textwidth}
+
+  % ==================================================
+  % Column headings
+  % ==================================================
+  \begin{columns}[c,onlytextwidth]
+    \column{0.1\textwidth}
+
+    \column{0.46\textwidth}
+      \centering
+      {\small\bfseries HFA}
+
+    \column{0.46\textwidth}
+      \centering
+      {\small\bfseries LRW}
+  \end{columns}
+
+  \vspace{0.20cm}
+
+  % ==================================================
+  % External-regret row
+  % ==================================================
+  \begin{columns}[c,onlytextwidth]
+    \column{0.10\textwidth}
+      \centering
+      \raisebox{1cm}{%
+        \parbox{\linewidth}{%
+          \centering
+          \small\bfseries Ext.
+        }%
+      }
+
+    \column{0.46\textwidth}
+      \centering
+      \includegraphics[
+        width=\linewidth
+      ]{hfa_bandit_external.pdf}
+
+    \column{0.46\textwidth}
+      \centering
+      \includegraphics[
+        width=\linewidth
+      ]{lrw_bandit_external.pdf}
+  \end{columns}
+
+  \vspace{0.10cm}
+
+  % ==================================================
+  % Swap-regret row
+  % ==================================================
+  \begin{columns}[c,onlytextwidth]
+    \column{0.10\textwidth}
+      \centering
+      \raisebox{1cm}{%
+        \parbox{\linewidth}{%
+          \centering
+          \small\bfseries Swap
+        }%
+      }
+
+    \column{0.46\textwidth}
+      \centering
+      \includegraphics[
+        width=\linewidth
+      ]{hfa_bandit_swap.pdf}
+
+    \column{0.46\textwidth}
+      \centering
+      \includegraphics[
+        width=\linewidth
+      ]{lrw_bandit_swap.pdf}
+  \end{columns}
+
+  \end{minipage}
+
+\end{frame}

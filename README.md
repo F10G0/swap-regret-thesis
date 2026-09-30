@@ -9,15 +9,15 @@ Python 3.10 or newer is required. Use an isolated Python environment. Node.js
 
 ```bash
 make install
-npm install
+npm ci
 make test
 make web
 ```
 
-`make install` uses the pinned Python `requirements.lock`. `npm install` installs
-the frontend-test-only `jsdom` dependency declared in `package.json`. The direct
-`jsdom` version is pinned, but there is no npm lockfile yet, so transitive npm
-dependencies are not frozen. `make test` checks Node.js and `jsdom` before running
+`make install` uses the pinned Python `requirements.lock`. `npm ci` installs
+the frontend-test-only `jsdom` dependency declared in `package.json`, using
+`package-lock.json` to lock `jsdom` and its transitive dependencies to exact
+versions with integrity hashes. `make test` checks Node.js and `jsdom` before running
 the complete pytest suite; a successful run should have no unintended frontend
 skips. Direct `python3 -m pytest` can still skip frontend tests when those
 prerequisites are absent. To run the dashboard without testing, `make install`
@@ -82,7 +82,9 @@ CE/CCE incentive constraints and L1 projection are implemented locally using Num
 
 ## Research Materials
 
-[Documentation and research materials](docs/README.md) describes the submitted thesis PDF and source archive in `docs/thesis/`, the defense presentation PDF and LaTeX source archive in `docs/presentation/`, the earlier proposal in `docs/proposal/`, and the selected papers and project description in `docs/references/`. These materials are separate from generated experiment outputs in `results/`; later code or documentation changes do not alter the submitted thesis.
+[Documentation and research materials](docs/README.md) includes the submitted thesis PDF in `docs/thesis/` and its buildable LaTeX source in `docs/thesis/source/`; the defense presentation PDF in `docs/presentation/` and its LaTeX/Beamer source in `docs/presentation/source/`; and the supervisor project description, bachelor thesis proposal, and proposal source files in `docs/proposal/`.
+
+Third-party research papers are not redistributed; relevant literature is cited in the thesis, presentation, and bibliography files. The submitted thesis and defense PDFs are historical artifacts and are not updated to reflect later code or documentation changes.
 
 ## Guides
 

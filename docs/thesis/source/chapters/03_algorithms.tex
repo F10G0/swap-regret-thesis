@@ -1,0 +1,273 @@
+% Chapter 3 — Regret-Minimizing Algorithms
+
+\chapter{Regret-Minimizing Algorithms}
+\label{chap:algorithms}
+
+This chapter introduces the algorithms used in the experiments. All methods are
+taken from the literature; the purpose here is only to state the implemented
+variant, the main idea behind it, and the theoretical guarantee that is most
+relevant for the later empirical comparison. Detailed proofs are not repeated.
+
+The implementations fall into three groups: standalone external-regret
+learners, regret-matching procedures, and reductions that construct stronger
+regret guarantees from external-regret sublearners.
+
+% ============================================================
+\section{External-Regret Learners}
+
+\paragraph{Hedge and Optimistic Hedge.}
+
+Hedge is the main full-information external-regret baseline. The implementation samples according
+to exponential weights and, for a known horizon, uses
+\(\eta=\sqrt{\frac{8\log K}{T}}\) \citep{freund_decision-theoretic_1997}. With bounded rewards this gives the standard
+root-$T$ distribution-regret guarantee. The same fixed-horizon Hedge learner is used inside BM-Hedge.
+Ito-Hedge instead uses the anytime version
+\(\eta_s=\sqrt{8\log K/s}\), where \(s\) is the local update count of the
+selected Ito sublearner.
+
+Following \citet{chen_hedging_2020}, Optimistic Hedge (OptHedge) uses the optimistic update
+\[
+    p_{t+1}(i)\propto
+    p_t(i)\exp\!\left(\eta(2r_t(i)-r_{t-1}(i))\right)
+\]
+with learning rate \(\eta=\left(\frac{\log K}{T}\right)^{1/6}\). Their fast
+\(O(T^{1/6}\log^{5/6}K)\) mixed external-regret result applies when both
+players use Optimistic Hedge in a two-player repeated game. It is not a
+general adversarial guarantee, so the one-player OptHedge experiments are used
+only as empirical comparisons.
+
+\paragraph{EXP3, EXP3-IX, and Tsallis-INF.}
+
+EXP3 is the explicit-exploration bandit baseline. Following
+\citet{auer_nonstochastic_2002}, the standalone implementation uses
+\[
+    \gamma=\min\left\{1,\sqrt{\frac{K\log K}{(e-1)T}}\right\},
+    \qquad
+    \eta=\frac{\gamma}{K},
+\]
+together with the usual importance-weighted reward estimate. The EXP3 learners
+inside BM-EXP3 use the same update rule but the Blum--Mansour tuning
+\(\gamma=\min\{1,\sqrt{K\log K/T}\}\) \citep{blum_external_2007}.
+
+EXP3-IX replaces explicit uniform exploration by implicit exploration. In loss form, the estimator divides the observed
+loss by \(p_t(i)+\gamma\), and no additional uniform mixture is used. Following
+\citet{neu_explore_2015}, the implementation uses
+\[
+    \eta=\sqrt{\frac{2\log K}{KT}},
+    \qquad
+    \gamma=\frac{\eta}{2}.
+\]
+Neu proves a root-$T$-order high-probability realized external-regret bound.
+
+Tsallis-INF is used only as the inner bandit learner of Ito-Tsallis. Following
+\citet{zimmert_tsallis-inf_2021}, the implementation uses the
+importance-weighted \(\alpha=1/2\) variant with local learning rate
+\(\eta_s=1/\sqrt{s}\). This is an equivalent scaling of their formulation, which gives adversarial pseudo-regret of
+root-$T$ order.
+
+% ============================================================
+\section{Regret Matching}
+
+Both regret-matching implementations maintain cumulative pairwise replacement
+gains
+\[
+    C_t(i,j)
+    =
+    \sum_{s=1}^{t}
+    \mathbf 1\{I_s=i\}
+    \bigl(r_s(j)-r_s(i)\bigr).
+\]
+With rewards in \([0,1]\), the implementation sets the fixed normalization to \(K\),
+which is a valid choice for the Hart--Mas-Colell procedure \citep{hart_simple_2000},
+and forms a stochastic transition matrix using
+\[
+    Q_t(i,j)=\frac{[C_t(i,j)]_+}{Kt},
+    \qquad i\neq j,
+\]
+with diagonal entries chosen so that each row sums to one.
+
+Regret Matching (RM) implements the adaptive procedure of Section~2 of
+\citet{hart_simple_2000}: after playing action \(i\), the next distribution is
+the \(i\)-th row of \(Q_t\). Hart and Mas-Colell prove that if all players use
+this procedure, the empirical distribution of play converges almost surely to
+the correlated-equilibrium set. This is a joint self-play result, not a
+general individual no-internal-regret guarantee against arbitrary adaptive
+opponents.
+
+Stationary Regret Matching (SRM) instead plays an invariant distribution of
+the transition matrix,
+\[
+    p_{t+1}=p_{t+1}Q_t.
+\]
+Theorem~A of \citet{hart_simple_2000} gives vanishing individual pairwise
+regret almost surely under the paper's conditional-independence assumption.
+This distinction between RM and SRM is important in the later one-player and
+cross-play comparisons.
+
+% ============================================================
+\section{Swap-Regret Reductions}
+
+\paragraph{Blum--Mansour.}
+
+The Blum--Mansour reduction maintains \(K\) external-regret learners, one for
+each source action \citep{blum_external_2007}. Their output distributions form
+a stochastic matrix \(Q_t\), and the master distribution is chosen stationary:
+\[
+    p_t=p_tQ_t.
+\]
+Each row can be interpreted as learning a replacement distribution for one
+source action.
+
+In the full-information version, all rows are updated every round with the
+weighted reward vector \(p_t(i)r_t\). BM-Hedge uses the fixed-horizon Hedge
+learner above. BM-OptHedge replaces Hedge by Optimistic Hedge and, following
+\citet{chen_hedging_2020}, uses
+\[
+    \eta=
+    \left(\frac{K\log K}{m^2T}\right)^{1/4}.
+\]
+In repeated games, \(m\) is the actual number of players; the one-player
+benchmark keeps the implementation default \(m=2\). The fast
+\(O((K\log K)^{3/4}m^{1/2}T^{1/4})\) mixed swap-regret guarantee of
+\citet{chen_hedging_2020} applies when all players use this optimistic
+self-play dynamic.
+
+BM-EXP3 is the bandit Blum--Mansour variant. It uses EXP3 row learners and
+updates all \(K\) rows every round using the importance-weighted feedback
+specified by \citet{blum_external_2007}. The corresponding guarantee is on
+swap pseudo-regret.
+
+\paragraph{Ito reduction.}
+
+Ito retains the stationary-distribution construction but updates only one row
+per round \citep{ito_tight_2020}. First
+\[
+    J_t\sim p_t,
+\]
+then the played action is sampled from row \(J_t\), and only that selected
+sublearner receives feedback. Because \(p_t=p_tQ_t\), the marginal
+distribution of the played action is still \(p_t\).
+
+Ito-Hedge uses the anytime Hedge learner, while Ito-Tsallis uses
+importance-weighted Tsallis-INF. Their learning rates depend on the selected
+row's local update count rather than on the global round. Ito's generic
+reduction shows that an external learner with expected regret \(r(S)\) yields
+\(K\,r(T/K)\) for the maximization-outside-expectation swap criterion
+\citep{ito_tight_2020}. In the terminology of
+Section~\ref{sec:regret-notions}, this is swap pseudo-regret.
+
+\paragraph{LCE-IX.}
+
+LCE-IX is the bandit swap-regret method of
+\citet{huang_near-optimal_2023}. Like Blum--Mansour it uses a stationary
+distribution and updates all rows every round, but combines this construction
+with implicit exploration. Following the parameter schedule in the same work, the implementation uses
+\[
+    \eta_t=\sqrt{\frac{\log K}{t}},
+    \qquad
+    \gamma_t=\frac{\eta_t}{2}.
+\]
+Huang and Pan prove \(O(K\sqrt{T\log K})\) expected swap regret---an expected
+action-regret quantity in the terminology of Chapter~\ref{chap:background}---
+and a corresponding high-probability bound for instantaneous swap regret.
+
+% ============================================================
+\section{Algorithm Summary}
+\label{sec:algorithm-summary}
+
+Table~\ref{tab:algorithm-summary} summarizes the role of each implementation
+and the literature guarantee most closely associated with the implemented
+parameterization. All displayed big-$O$ rates are cumulative in the horizon $T$ and
+suppress constant factors; the RM and SRM entries instead state their
+asymptotic average-regret guarantees. They are not directly comparable unless the regret
+object and the assumptions indicated below the table agree.
+
+\begin{table}[htbp]
+    \centering
+    \footnotesize
+    \caption{Algorithms used in the experiments and their principal literature guarantees.}
+    \label{tab:algorithm-summary}
+    \begin{tabular}{@{}llp{2.55cm}p{3.15cm}p{3.65cm}@{}}
+        \toprule
+        Algorithm & Feedback & Main role & Regret notion & Literature guarantee \\
+        \midrule
+        Hedge
+        & Full
+        & External baseline
+        & External distribution regret
+        & $O(\sqrt{T\log K})$ \\
+        OptHedge\textsuperscript{*}
+        & Full
+        & Optimistic external regret
+        & External distribution regret
+        & $O(T^{1/6}\log^{5/6}K)$ \\
+        RM\textsuperscript{**}
+        & Full
+        & Adaptive regret matching
+        & Internal action regret
+        & $R_T^{\mathrm{int}}/T\to0$ a.s. \\
+        SRM\textsuperscript{**}
+        & Full
+        & Stationary pairwise regret
+        & Internal action regret
+        & $R_T^{\mathrm{int}}/T\to0$ a.s. \\
+        BM-Hedge
+        & Full
+        & BM swap reduction
+        & Swap distribution regret
+        & $O(\sqrt{TK\log K})$ \\
+        BM-OptHedge\textsuperscript{*}
+        & Full
+        & Optimistic BM reduction
+        & Swap distribution regret
+        & $O\!\left(m^{1/2}(K\log K)^{3/4}T^{1/4}\right)$ \\
+        Ito-Hedge
+        & Full
+        & One-row Ito reduction
+        & Swap pseudo-regret
+        & $O(\sqrt{TK\log K})$ \\
+        \midrule
+        EXP3\textsuperscript{***}
+        & Bandit
+        & External baseline
+        & External pseudo-regret
+        & $O(\sqrt{TK\log K})$ \\
+        EXP3-IX\textsuperscript{****}
+        & Bandit
+        & Implicit-exploration baseline
+        & Realized external action regret
+        & $O(\sqrt{TK\log K})$ w.h.p. \\
+        BM-EXP3
+        & Bandit
+        & BM swap reduction
+        & Swap pseudo-regret
+        & $O(K\sqrt{KT\log K})$ \\
+        Ito-Tsallis
+        & Bandit
+        & One-row Ito reduction
+        & Swap pseudo-regret
+        & $O(K\sqrt{T})$ \\
+        LCE-IX
+        & Bandit
+        & Stationary IX swap regret
+        & Expected swap action regret
+        & $O(K\sqrt{T\log K})$ \\
+        \bottomrule
+    \end{tabular}
+
+    \vspace{0.5em}
+    \begin{minipage}{0.97\textwidth}
+        \footnotesize
+        \textsuperscript{*}The optimistic fast rates are repeated-game results rather than generic adversarial guarantees: the OptHedge bound assumes two-player self-play with both players using Optimistic Hedge, while the BM-OptHedge bound assumes all $m$ players use the optimistic BM dynamic \citep{chen_hedging_2020}.\\
+        \textsuperscript{**}For RM, the Hart--Mas-Colell Main Theorem assumes that all players use the adaptive procedure. For SRM, the individual vanishing-regret theorem allows arbitrary opponent behavior subject to conditional independence of players' current randomizations given the past \citep{hart_simple_2000}.\\
+        \textsuperscript{***}The displayed EXP3 rate is the pseudo-regret guarantee for the nonstochastic adversarial-bandit model of \citet{auer_nonstochastic_2002}.\\
+        \textsuperscript{****}For EXP3-IX the displayed order suppresses the confidence-dependent term in \citet{neu_explore_2015}; the theorem is a high-probability bound on realized external regret.
+    \end{minipage}
+\end{table}
+
+The central implementation differences for the empirical comparison are
+therefore simple: standalone learners target external regret; RM and SRM react
+directly to pairwise replacement regret; BM and LCE-IX update all row learners
+through a stationary construction; and Ito updates only one selected row per
+round. The next chapter describes how these methods are evaluated under a
+common experimental framework.

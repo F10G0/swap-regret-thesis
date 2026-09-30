@@ -1,0 +1,80 @@
+\begin{frame}
+  \setbeamercovered{invisible}
+  
+  \frametitle{Regret notions and equilibrium concepts}
+
+  \setlength{\fboxsep}{0.12cm}
+  \setlength{\fboxrule}{0.45pt}
+
+  \vspace{-0.10cm}
+
+  \begin{center}
+
+    % --- Regret notions ---
+    \uncover<1->{%
+      \fcolorbox{TUMblue}{white}{%
+        \parbox{0.97\textwidth}{%
+          \centering
+          {\small\bfseries Regret notions}\\[0.08cm]
+
+          {\small
+          \renewcommand{\arraystretch}{1.25}
+          \begin{tabular}{@{}r@{\hspace{0.12cm}}l@{}}
+            \textbf{External regret:} &
+            compare with one fixed action in hindsight. \\
+
+            \textbf{Internal regret:} &
+            replace one action \(i\) by another action \(j\). \\
+
+            \textbf{Swap regret:} &
+            allow a separate replacement for every action \(i\); \\
+            & that is, \(i \mapsto \phi(i)\).
+          \end{tabular}
+          }
+        }%
+      }
+    }
+
+    \vspace{0.10cm}
+
+    % --- Equilibrium concepts ---
+    \uncover<2->{%
+      \fcolorbox{TUMblue}{white}{%
+        \parbox{0.97\textwidth}{%
+          \centering
+          {\small\bfseries Equilibrium concepts}\\[0.08cm]
+
+          {\small
+          \renewcommand{\arraystretch}{1.25}
+          \begin{tabular}{@{}r@{\hspace{0.12cm}}l@{}}
+            \textbf{CCE:} &
+            no profitable fixed deviation. \\
+
+            \textbf{CE:} &
+            no profitable recommendation-dependent deviation.
+          \end{tabular}
+          }
+        }%
+      }
+    }
+
+  \end{center}
+
+  \vspace{-0.30cm}
+
+  % --- Regret--equilibrium connection ---
+  \uncover<3->{%
+    \begin{itemize}
+      \setlength{\itemsep}{0.12cm}
+
+      \item \textbf{All players external no-regret}
+        \(\Longrightarrow\)
+        \textbf{CCE}
+
+      \item \textbf{All players internal / swap no-regret}
+        \(\Longrightarrow\)
+        \textbf{CE}
+    \end{itemize}
+  }
+
+\end{frame}

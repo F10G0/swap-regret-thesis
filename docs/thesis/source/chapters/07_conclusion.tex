@@ -1,0 +1,56 @@
+% Chapter 7 — Conclusion and Future Work
+
+\chapter{Conclusion and Future Work}
+\label{chap:conclusion}
+
+\section{Conclusion}
+
+This thesis implemented and compared a range of regret-minimizing algorithms
+within a common experimental framework. The evaluation covered external,
+internal, and swap regret under both full-information and bandit feedback, as
+well as repeated-game behavior in RPS and RPSLS.
+
+The experiments show that the choice of regret notion is important for an
+empirical comparison. Differences that are small under external regret can
+become much clearer once action-dependent deviations are considered. At the
+same time, the results depend on the reward process, action-space size,
+horizon, and, in repeated games, the opponent. The experiments therefore do
+not suggest a single ordering of the algorithms that applies across all tested
+settings.
+
+The repeated-game experiments also connect these regret differences to
+equilibrium behavior. External regret and stronger regret notions can lead to
+different CE and CCE behavior, while cross-play shows that the observed regret
+of a learner can depend strongly on the learning dynamics of its opponent.
+Together with the finite-horizon scaling experiments, this provides an
+empirical view of distinctions that are less visible from asymptotic regret
+bounds alone.
+
+The theoretical comparison in Chapter~\ref{chap:discussion} also shows where
+the common action-regret evaluator is informative and where it is not.
+Relations between action regret, distribution regret, and pseudo-regret allow
+some empirical conclusions to be transferred between metrics, while
+sub-root mixed-strategy rates and stronger probabilistic guarantees cannot be
+resolved directly with the current evaluation.
+
+% ============================================================
+\section{Future Work}
+
+A natural next step is to add regret evaluators that more closely match the
+quantities used in the theoretical analyses. In particular, distribution and
+fully mixed regret would allow a more direct comparison with the guarantees
+for Hedge-based and optimistic methods. For high-probability results, replicate
+quantiles or empirical tail frequencies would complement the mean regret used
+here.
+
+The repeated-game experiments could also be extended beyond the selected RPS
+and RPSLS profiles. A larger cross-play matrix and a broader set of games would
+make it possible to examine whether the opponent effects observed here persist
+in other settings. Equilibrium evaluation could also report the largest remaining
+profitable deviation, in addition to the geometric distance to the CE and CCE sets.
+
+Finally, longer horizons, more replicates, and larger action spaces would help
+separate persistent scaling behavior from finite-horizon effects. These
+extensions would use the same experimental framework while providing a more
+complete comparison between theoretical regret guarantees and observed
+learning behavior.

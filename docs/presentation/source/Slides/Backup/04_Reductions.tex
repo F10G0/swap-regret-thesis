@@ -1,0 +1,34 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Blum--Mansour and Ito reductions}
+
+  \vspace{0.3cm}
+
+  Both construct a stochastic matrix $Q_t$ from row learners and play a stationary distribution
+  \[
+    p_t = p_t Q_t.
+  \]
+
+  \vspace{0.2cm}
+
+  \begin{tabularx}{\textwidth}{
+    @{}
+    >{\raggedright\arraybackslash}p{3.0cm}
+    >{\raggedright\arraybackslash}X
+    @{}
+  }
+    \textbf{Blum--Mansour} &
+    All $K$ row learners are updated every round. \\[0.3cm]
+
+    \textbf{Ito} &
+    Sample a row $J_t\sim p_t$ and update only the selected row learner.
+  \end{tabularx}
+
+  \vspace{0.4cm}
+
+  The marginal played-action distribution is still $p_t$, because $p_t$ is stationary.
+
+  \vspace{0.5cm}
+  {\scriptsize\color{black!60}
+    {\itshape Sources: \citet{blum_external_2007}; \citet{ito_tight_2020}.}
+  }
+\end{frame}

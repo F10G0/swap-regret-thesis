@@ -1,0 +1,228 @@
+% Chapter 6 — Discussion
+
+\chapter{Discussion}
+\label{chap:discussion}
+
+The experiments in Chapter~\ref{chap:results} show that the comparison between
+the learners depends strongly on the regret notion and the experimental
+setting. This chapter returns to the research questions from
+Chapter~\ref{chap:introduction}: how the algorithms differ across the three
+regret notions, how stable these differences are across experimental settings,
+and how they appear in repeated games.
+
+% ============================================================
+\section{Regret Metrics and Theoretical Comparison}
+\label{sec:discussion-theory-and-metrics}
+
+The experiments measure expected action regret, while the guarantees in
+Chapter~\ref{chap:algorithms} use several related regret notions. A few simple
+relations are enough to interpret most of the results.
+
+First, action regret \(A_T\) and distribution regret \(D_T\) differ through
+the randomness of the sampled actions. In the bounded finite-action setting,
+this sampling difference is of root-\(T\) order,
+\[
+    A_T-D_T=O_p(\sqrt{T}),
+\]
+up to logarithmic factors for the finite deviation class
+\citep{greenwald_bounds_2006}. Thus a persistent super-root-\(T\) action-regret
+rate cannot be explained by sampling alone and implies the same leading
+polynomial order for distribution regret. Around the root-\(T\) scale, however,
+the two cannot be separated reliably by the current evaluator.
+
+Second, several bandit guarantees concern pseudo-regret
+\[
+    P_T=\max_F \mathbb{E}[Z_F],
+\]
+whereas the experiments estimate expected action regret
+\[
+    E_T=\mathbb{E}\!\left[\max_F Z_F\right].
+\]
+Since
+\[
+    P_T\le E_T,
+\]
+sublinear expected action regret also implies sublinear pseudo-regret, but large
+expected action regret does not imply large pseudo-regret. This distinction is
+made explicit by \citet{huang_near-optimal_2023}.
+
+Some references give stronger probabilistic guarantees than the replicate
+means measured here. Huang and Pan derive an expected swap-regret bound from
+a high-probability instantaneous-regret bound
+\citep{huang_near-optimal_2023}. Such high-probability statements are not
+tested directly by the mean regret curves used in the experiments.
+
+These relations give a more precise interpretation of the individual
+algorithms.
+
+\paragraph{Hedge.}
+Its external action-regret exponents stay close to \(0.5\). Since action and
+distribution regret can differ by root-\(T\) sampling fluctuations, this does
+not determine the corresponding distribution-regret rate and therefore does
+not directly test the standard Hedge guarantee \citep{freund_decision-theoretic_1997}.
+More interestingly, in RPSLS self-play its internal and swap exponents rise
+to about \(0.92\) and \(0.96\)--\(0.97\). If this trend persists, sampling
+noise cannot explain the difference: the corresponding distribution regrets
+must also grow faster than root-\(T\).
+
+\paragraph{OptHedge.}
+The realized internal- and swap-regret exponents are above the root scale in
+several experiments. These quantities do not directly test the faster
+standalone OptHedge result of \citet{chen_hedging_2020}, which concerns
+external mixed regret in optimistic self-play. The theoretical sub-root rate
+therefore remains unresolved by the current evaluator.
+
+\paragraph{BM-Hedge.}
+Its swap action-regret exponents are generally close to \(0.5\). Since this is
+also the scale of the action--distribution sampling difference, the experiment
+does not determine whether the corresponding distribution regret follows the
+root-\(T\) Blum--Mansour bound or a smaller rate
+\citep{blum_external_2007}.
+
+\paragraph{BM-OptHedge.}
+This method has some of the smallest internal- and swap-regret exponents in the
+one-player experiments. The empirical result is favorable, but the
+sub-root mixed-regret guarantee of \citet{chen_hedging_2020} cannot be
+identified directly from sampled action regret.
+
+\paragraph{Ito-Hedge.}
+Ito's reduction gives a swap pseudo-regret guarantee
+\citep{ito_tight_2020}. The observed expected swap regret is sublinear in the
+tested settings, so \(P_T\le E_T\) also gives sublinear swap pseudo-regret if
+the observed trend persists. The exact pseudo-regret rate cannot be recovered
+from the current metric.
+
+\paragraph{RM.}
+RM shows sublinear internal and swap regret in the experiments, including its
+RPSLS profiles. This is compatible with the convergence behavior proved for
+the Hart--Mas-Colell repeated-game procedure
+\citep{hart_simple_2000}. That theorem is a self-play result, however, so the
+one-player and arbitrary cross-play experiments should mainly be viewed as
+empirical comparisons.
+
+\paragraph{SRM.}
+SRM also shows sublinear expected internal and swap regret, often with exponents
+near or below the root scale. This is consistent with its almost-sure
+pairwise-regret result under the assumptions of
+\citet{hart_simple_2000}, although expectation-level experiments cannot verify
+almost-sure convergence.
+
+\paragraph{EXP3.}
+Its expected external action regret remains roughly at the root scale, while
+internal and swap regret can grow substantially faster. Since the standard
+guarantee concerns external pseudo-regret
+\citep{auer_nonstochastic_2002}, the sublinear external results also support
+sublinear pseudo-regret. The larger stronger-regret values do not contradict
+the external-regret guarantee.
+
+\paragraph{EXP3-IX.}
+Neu proves a high-probability bound for realized external regret
+\citep{neu_explore_2015}. The experiments instead report the mean realized
+regret across replicates. Its fitted external-regret exponents remain close to
+the root-$T$ scale, but this expectation-level result does not establish the
+stronger high-probability guarantee.
+
+\paragraph{BM-EXP3.}
+Its expected swap regret is sublinear and usually close to the root scale.
+Because the literature guarantee is on swap pseudo-regret
+\citep{blum_external_2007}, this also supports sublinear pseudo-regret, although
+the fitted action-regret exponent should not be interpreted as the
+pseudo-regret exponent.
+
+\paragraph{Ito-Tsallis.}
+The same argument applies here. Expected swap regret remains sublinear in all
+tested environments, so the weaker swap pseudo-regret is also sublinear if the
+trend persists. The relatively larger exponent in HFA cannot be used to reject
+a sharper pseudo-regret bound.
+
+\paragraph{LCE-IX.}
+This is the cleanest comparison because \citet{huang_near-optimal_2023}
+directly bound expected swap action regret. The fitted swap-regret exponents
+are close to \(0.5\) in both one-player environments, matching the root-\(T\)
+dependence of the theoretical bound for fixed \(K\). The experiment still does
+not test the stronger high-probability statement.
+
+Overall, the empirical metric is informative in several directions. Large
+super-root action regret can rule out sampling as the explanation for a
+distributional effect, while small expected action regret can imply small
+pseudo-regret. Other comparisons remain unresolved, especially sub-root
+mixed-strategy rates and stronger probabilistic guarantees. These are
+limitations of the current evaluator rather than contradictions with the
+corresponding theory.
+
+% ============================================================
+\section{Robustness Across Experimental Conditions}
+\label{sec:discussion-robustness}
+
+The main empirical pattern is that the separation between algorithms is not
+equally strong in every environment. HFA produces much clearer differences in
+internal and swap regret than LRW, where many of the learners remain close
+together.
+
+A plausible reason is the feedback structure of the two reward processes. LRW
+evolves independently of the learner, whereas HFA reacts to past action
+frequencies. An update that changes the learner's behavior can therefore also
+change its future rewards in HFA. This feedback loop gives small differences
+between algorithms more opportunity to accumulate, which fits the stronger
+separation observed in the experiments.
+
+The action-space experiments show a related finite-horizon effect. Increasing
+\(K\) generally raises swap regret and delays the main decline of the regret
+curves. The horizon fits likewise vary across environments: the exponent
+\(\alpha\) alone does not determine which algorithm looks better at a practical
+horizon, since the coefficient \(c\) can shift the curves substantially.
+
+The results therefore suggest a fairly simple picture. Algorithms designed for
+stronger regret usually become more clearly separated from external-regret
+baselines when internal or swap regret is measured, but the size of this
+difference depends on the environment, action space, and horizon.
+
+A broader difference is also visible between the two feedback settings.
+Under full information, several swap-regret-oriented methods show clearer
+separation from the external-regret baseline, and some achieve noticeably
+smaller fitted internal- and swap-regret exponents. Under bandit feedback, the
+corresponding differences are generally less pronounced, with most fitted
+exponents remaining closer to the root-$T$ scale. This is consistent with the
+additional uncertainty introduced by observing only the reward of the sampled
+action. Since the two settings contain different algorithm families, however,
+this should be read as a qualitative comparison rather than a controlled
+feedback ablation.
+
+% ============================================================
+\section{Equilibrium and Opponent Effects in Repeated Games}
+\label{sec:discussion-games}
+
+Two patterns stand out in the repeated-game experiments.
+
+First, the difference between regret notions is also visible in empirical
+equilibrium behavior. In RPS, Hedge self-play gets much closer to the CCE set
+than to the CE set, while several stronger-regret methods approach CE more
+closely. This matches the standard link between external regret and CCE, and
+between action-dependent regret and CE
+\citep{hart_simple_2000,blum_external_2007}.
+
+The joint-action distributions make this intuitive. Hedge can have nearly
+uniform marginal action frequencies while still showing a structured joint
+distribution, so balanced marginals alone do not remove profitable conditional
+deviations.
+
+The trajectories show a similar distinction. For Hedge, CE and CCE distance
+first decrease together; later, CCE distance stays near zero while CE distance
+rises again. A natural interpretation is that fixed deviations are already
+unprofitable while some action-dependent deviations remain. A weaker version
+of the same pattern appears for EXP3 and EXP3-IX.
+
+Second, regret depends strongly on the opponent. Hedge has very large internal
+and swap exponents in self-play, but both move much closer to the root scale
+against BM-Hedge, Ito-Hedge, and SRM. EXP3 shows the same tendency more weakly
+under bandit feedback.
+
+The RM--SRM profiles give the clearest asymmetric example. SRM has internal
+and swap exponents around \(0.50\) in SRM--SRM self-play, but they fall to
+about \(0.34\) and \(0.36\) against RM, while RM does not improve to the same
+extent. This suggests that the opponent can affect both regret levels and their
+finite-horizon growth.
+
+Taken together, the repeated-game results support the expected connection
+between stronger regret and CE behavior, while showing that finite-horizon
+dynamics depend strongly on the interaction between the two learners.

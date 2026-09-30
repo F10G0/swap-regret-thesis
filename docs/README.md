@@ -1,34 +1,75 @@
-# Documentation and Research Materials
+# Thesis Documentation
 
-This directory contains thesis-related documents and selected research material.
-It is separate from generated experiment outputs, which are stored under
+This directory contains the documents and source material associated with the
+bachelor thesis **An Empirical Comparison of Regret-Minimizing Algorithms**.
+
+It is separate from the main experiment outputs, which are stored under
 `results/`.
 
 ## Structure
 
-- `thesis/`
+### `thesis/`
 
-  - Final submitted bachelor thesis.
-  - Includes the submitted PDF and the corresponding source archive.
-  - These files represent the submitted historical version and should not be
-    modified to reflect later code or documentation changes.
+Contains the final submitted bachelor thesis and a buildable version of its
+LaTeX source.
 
-- `presentation/`
+- `An_Empirical_Comparison_of_Regret_Minimizing_Algorithms.pdf`
+  is the final submitted thesis and is preserved unchanged as the authoritative
+  archival artifact.
+- `source/`
+  contains the corresponding LaTeX source, bibliography, front matter, build
+  files, and the figures required to build the final thesis.
 
-  - Bachelor thesis defense presentation.
-  - Includes the presentation PDF and the corresponding LaTeX source archive,
-    with slides, bibliography, figures, and theme.
+The source tree has been cleaned for repository use: duplicate build artifacts,
+unused experimental figures, and auxiliary figure-archive files that are not
+required by the final thesis have been removed. The manuscript source and all
+assets required to build the final document are retained.
 
-- `proposal/`
+The submitted PDF should not be modified to reflect later changes to the
+codebase or documentation.
 
-  - Earlier bachelor thesis proposal and its source files.
-  - Kept as historical planning material.
+### `presentation/`
 
-- `references/`
+Contains the bachelor thesis defense presentation and its LaTeX/Beamer source.
 
-  - Selected papers and project-description material used during the thesis.
-  - This is a curated collection and not a complete local copy of every
-    bibliography entry cited in the thesis.
+- `Bachelors_Thesis_Defense_Presentation.pdf`
+  is the final presentation used for the thesis defense.
+- `source/`
+  contains the corresponding LaTeX/Beamer source, bibliography, figures,
+  slides, backup material, and theme files.
 
-Generated figures, CSV files, caches, and other experiment outputs belong under
-`results/`, not in this directory.
+These files are preserved as the historical version used for the defense.
+
+### `proposal/`
+
+Contains material from the planning and scoping stage of the thesis.
+
+- `supervisor_project_description.pdf`
+  is the original project description provided for the bachelor thesis.
+- `bachelor_thesis_proposal.pdf`
+  is the subsequent thesis proposal.
+- `proposal.tex`
+  contains the LaTeX source of the proposal.
+- `refs.bib`
+  contains the proposal bibliography.
+
+These files are retained to document the development of the project from its
+initial scope to the final thesis.
+
+## External literature
+
+Third-party research papers used during the project are not redistributed in
+this repository. The relevant literature is cited in the thesis, presentation,
+and their bibliography files.
+
+## Generated experiment outputs
+
+General experiment outputs such as raw CSV files, generated figure collections,
+caches, dashboard-created games, and other runtime artifacts belong under
+`results/` or the corresponding runtime output directories.
+
+Figures that are directly required to build the thesis or presentation are
+retained with their respective source trees under `docs/`.
+
+The material in this directory is preserved primarily for documentation,
+reproducibility, and archival purposes.

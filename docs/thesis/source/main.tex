@@ -1,0 +1,61 @@
+\documentclass[
+  oneside,
+  fontsize=11pt,
+  paper=a4,
+  headsepline,
+  listof=totoc,
+  bibliography=totoc,
+  DIV=12
+]{scrbook}
+
+\input{settings}
+
+% Thesis metadata
+\newcommand*{\University}{Technical University of Munich}
+\newcommand*{\School}{School of Computation, Information and Technology - Informatics}
+\newcommand*{\ThesisType}{Bachelor's Thesis in Informatics}
+\newcommand*{\ThesisTitle}{An Empirical Comparison of Regret-Minimizing Algorithms}
+\newcommand*{\ThesisTitleGerman}{Ein empirischer Vergleich von Regret-Minimierungsalgorithmen}
+\newcommand*{\AuthorName}{Yifan Gong}
+\newcommand*{\ExaminerName}{Prof. Dr. Martin Bichler}
+\newcommand*{\SupervisorName}{Julius Durmann, M.Sc.}
+\newcommand*{\SubmissionDate}{September 18, 2026}
+
+\hypersetup{
+  pdftitle={\ThesisTitle},
+  pdfauthor={\AuthorName},
+  pdfsubject={Bachelor's Thesis in Informatics},
+  pdfcreator={LaTeX}
+}
+
+\begin{document}
+\selectlanguage{english}
+
+% Cover page (not numbered)
+\pagenumbering{alph}
+\input{pages/cover}
+
+\frontmatter
+\input{pages/title}
+\input{pages/abstract}
+\tableofcontents
+
+\listoffigures
+% \listoftables
+
+\mainmatter
+\input{chapters/01_introduction}
+\input{chapters/02_theoretical_background}
+\input{chapters/03_algorithms}
+\input{chapters/04_experimental_methodology}
+\input{chapters/05_experimental_results}
+\input{chapters/06_discussion}
+\input{chapters/07_conclusion}
+
+\appendix
+\input{chapters/appendix}
+
+\bibliographystyle{unsrtnat}
+\bibliography{bibliography}
+
+\end{document}

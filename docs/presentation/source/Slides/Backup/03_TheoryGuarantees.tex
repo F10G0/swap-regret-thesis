@@ -1,0 +1,34 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Theory guarantees and comparison caveats}
+
+  \scriptsize
+  \begin{tabularx}{\textwidth}{@{}l l X X@{}}
+    \toprule
+    Algorithm & Feedback & Regret object & Literature guarantee \\
+    \midrule
+    Hedge & Full & external distribution & $O(\sqrt{T\log K})$ \\
+    OptHedge$^*$ & Full & external distribution & $O(T^{1/6}\log^{5/6}K)$ \\
+    RM / SRM$^{**}$ & Full & internal action & $R_T^{\rm int}/T\to0$ a.s. \\
+    BM-Hedge & Full & swap distribution & $O(\sqrt{TK\log K})$ \\
+    BM-OptHedge$^*$ & Full & swap distribution & $O(m^{1/2}(K\log K)^{3/4}T^{1/4})$ \\
+    Ito-Hedge & Full & swap pseudo-regret & $O(\sqrt{TK\log K})$ \\
+    \midrule
+    EXP3 & Bandit & external pseudo-regret & $O(\sqrt{TK\log K})$ \\
+    EXP3-IX & Bandit & realized external action & $O(\sqrt{TK\log K})$ w.h.p. \\
+    BM-EXP3 & Bandit & swap pseudo-regret & $O(K\sqrt{KT\log K})$ \\
+    Ito-Tsallis & Bandit & swap pseudo-regret & $O(K\sqrt{T})$ \\
+    LCE-IX & Bandit & expected swap action & $O(K\sqrt{T\log K})$ \\
+    \bottomrule
+  \end{tabularx}
+
+  \vspace{0.1cm}
+  {\tiny
+  $^*$Optimistic rates require the repeated-game setting of Chen--Peng.\\
+  $^{**}$RM and SRM use different convergence assumptions.}
+
+  \vspace{0.1cm}
+  {\scriptsize\color{black!60}
+  Theoretical objects and assumptions differ across rows; the empirical expected-action-regret comparison should therefore be interpreted qualitatively.\\
+  {\itshape Sources: \citep{freund_decision-theoretic_1997,chen_hedging_2020,hart_simple_2000,blum_external_2007,ito_tight_2020,auer_nonstochastic_2002,neu_explore_2015,zimmert_tsallis-inf_2021,huang_near-optimal_2023}.}
+  }
+\end{frame}

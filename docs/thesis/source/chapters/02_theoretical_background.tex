@@ -1,0 +1,330 @@
+\chapter{Theoretical Background}
+\label{chap:background}
+
+This chapter introduces the theoretical concepts underlying the
+implementation and empirical evaluation, including the online-learning
+setting, regret notions, equilibrium concepts, and their main connections.
+
+
+\section{Online Learning Setting}
+\label{sec:online-learning-setting}
+
+We consider a sequential decision problem with the finite action set
+\([K]=\{1,\ldots,K\}\). At each round \(t=1,\ldots,T\), the learner chooses
+an action without knowing the reward vector of that round in advance. Rather
+than selecting an action deterministically, the learner may randomize by
+choosing a probability distribution \(p_t\in\Delta_K\), where
+\[
+    \Delta_K
+    =
+    \left\{
+        p\in\mathbb{R}_{\geq0}^{K} :
+        \sum_{i=1}^{K}p(i)=1
+    \right\},
+\]
+and then samples an action \(I_t\sim p_t\).
+
+Randomization prevents the learner from always following a predictable
+deterministic pattern and, under bandit feedback, also provides a mechanism
+for exploring different actions.
+
+Associated with round \(t\) is a reward vector
+\(r_t=(r_t(1),\ldots,r_t(K))\in[0,1]^K\). After choosing \(I_t\), the learner
+receives the reward \(r_t(I_t)\). Its objective is to obtain high cumulative
+reward \(\sum_{t=1}^{T}r_t(I_t)\).
+
+The reward sequence may be generated independently of the learner's realized
+actions or may adapt to the previous interaction history. When rewards depend
+on past interaction, the environment is assumed to be
+\emph{non-anticipating}: \(r_t\) may depend on previous actions, but not on
+the learner's fresh random draw \(I_t\) in the same round. The concrete reward
+environments used in the experiments are described in
+Chapter~\ref{chap:methodology}.
+
+\paragraph{Feedback models.}
+Under \emph{full-information feedback}, the learner observes the complete
+reward vector \(r_t\) after each round.
+
+Under \emph{bandit feedback}, the learner observes only the reward
+\(r_t(I_t)\) of the sampled action. The rewards of the remaining actions are
+hidden from the learner. EXP3 is a classical algorithm designed for this
+limited feedback setting \citep{auer_nonstochastic_2002}.
+
+The reward-generation process and the feedback model are separate aspects of
+an online-learning problem. The experiments in this thesis consider both
+full-information and bandit feedback.
+
+Throughout the thesis, algorithms are described in terms of rewards. Results
+stated in terms of losses can be translated using
+\(\ell_t(i)=1-r_t(i)\).
+
+
+\section{Regret Notions}
+\label{sec:regret-notions}
+
+Absolute cumulative reward alone is often insufficient to evaluate an online
+learner, because the attainable reward depends strongly on the environment.
+Regret instead compares the learner's decisions with alternative decisions
+that could have been applied to the same reward sequence.
+
+Throughout this thesis, regret computed from the actions actually sampled by
+the learner is called \emph{action regret}, following the terminology of
+\citet{greenwald_bounds_2006}. This is distinct from \emph{distribution
+regret}, which is computed from the learner's mixed strategy rather than from
+the sampled actions. For two actions \(i,j\in[K]\), define the cumulative
+replacement gain of the sampled action sequence by
+\[
+    G_T(i,j)
+    =
+    \sum_{t=1}^{T}
+    \mathbf{1}\{I_t=i\}
+    \bigl(r_t(j)-r_t(i)\bigr).
+\]
+This quantity measures how much additional reward would have been obtained
+if every realized occurrence of action \(i\) had instead been replaced by
+action \(j\).
+
+The matrix \(G_T\) is the common basis for all three regret notions used in
+the experiments.
+
+\begin{definition}[External regret]
+The external regret after \(T\) rounds is
+\[
+    R_T^{\mathrm{ext}}
+    =
+    \max_{j\in[K]}
+    \sum_{t=1}^{T}
+    \bigl(r_t(j)-r_t(I_t)\bigr).
+\]
+Equivalently,
+\[
+    R_T^{\mathrm{ext}}
+    =
+    \max_{j\in[K]}
+    \sum_{i=1}^{K}G_T(i,j).
+\]
+\end{definition}
+
+External regret compares the realized trajectory with the best single fixed
+action in hindsight.
+
+\begin{definition}[Internal regret]
+The internal regret after \(T\) rounds is
+\[
+    R_T^{\mathrm{int}}
+    =
+    \max_{i,j\in[K]}G_T(i,j).
+\]
+\end{definition}
+
+Internal regret asks whether replacing one particular action \(i\) by another
+action \(j\) would have systematically improved the learner's realized
+performance \citep{hart_simple_2000}.
+
+\begin{definition}[Swap regret]
+A swap deviation is a mapping \(\phi:[K]\rightarrow[K]\) that assigns a
+replacement action to each source action. The swap regret is
+\[
+    R_T^{\mathrm{swap}}
+    =
+    \max_{\phi:[K]\rightarrow[K]}
+    \sum_{t=1}^{T}
+    \bigl(
+        r_t(\phi(I_t))-r_t(I_t)
+    \bigr).
+\]
+Because the replacement for each source action can be chosen independently,
+this is equivalently
+\[
+    R_T^{\mathrm{swap}}
+    =
+    \sum_{i=1}^{K}
+    \max_{j\in[K]}G_T(i,j).
+\]
+\end{definition}
+
+Swap regret therefore allows a separate best replacement for every action
+selected by the learner \citep{goos_general_2003,blum_external_2007}. The
+external-, internal-, and swap-regret quantities above are all action-regret
+quantities because they are evaluated on the sampled action sequence.
+
+\paragraph{Expected action regret.}
+For a randomized learner, action regret is itself a random variable. For
+\(q\in\{\mathrm{ext},\mathrm{int},\mathrm{swap}\}\), this thesis uses
+\[
+    \mathcal{R}_T^{q}
+    =
+    \mathbb{E}\!\left[R_T^{q}\right]
+\]
+for the corresponding \emph{expected action regret}. The expectation is over
+the randomness of the interaction: the learner's randomization and, where
+applicable, random environments or other randomized players. In the swap
+case, this convention agrees with the ``expected swap regret'' studied by
+\citet{huang_near-optimal_2023}, where the best swap deviation is selected
+inside the expectation.
+
+Huang and Pan distinguish this quantity from swap pseudo-regret, where the
+maximization over deviations is taken outside the expectation
+\citep{huang_near-optimal_2023}. The two notions are therefore not treated as
+interchangeable in this thesis. The experiments estimate expected action regret
+by first computing action regret separately for each replicate and then
+averaging the resulting values.
+
+\paragraph{Relations between the regret notions.}
+The three notions differ in the deviation class used for comparison.
+External regret considers one fixed replacement, internal regret one
+source--target replacement, and swap regret an arbitrary replacement mapping.
+Blum and Mansour note that external and internal regret are both
+upper-bounded by swap regret, while swap regret is at most \(K\) times
+internal regret; external and internal regret are not generally ordered
+\citep{blum_external_2007}. Thus swap regret is the strongest of the three
+benchmarks considered here, while external and internal regret capture
+different kinds of deviations.
+
+The corresponding deviation classes are summarized in
+Table~\ref{tab:regret-deviations}.
+
+\begin{table}[ht]
+    \centering
+    \caption{Deviation classes associated with the regret notions.}
+    \label{tab:regret-deviations}
+    \begin{tabular}{ll}
+        \toprule
+        Regret notion & Hindsight deviation \\
+        \midrule
+        External
+        & Replace all realized actions by one fixed action \\
+        Internal
+        & Replace one action \(i\) by another action \(j\) \\
+        Swap
+        & Choose a replacement separately for every action \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+For a single realized action sequence, the experiments compute cumulative
+action regret \(R_T\) and average action regret \(R_T/T\). A learner is
+no-regret with respect to a given deviation class if
+\[
+    \limsup_{T\rightarrow\infty}\frac{R_T}{T}\leq 0.
+\]
+For internal and swap regret as defined above, the identity replacement makes
+the regret nonnegative, so this reduces to \(R_T/T\rightarrow0\).
+
+For comparison, replacing
+\(\mathbf{1}\{I_t=i\}\) in \(G_T(i,j)\) by \(p_t(i)\) gives
+\[
+    \overline{G}_T(i,j)
+    =
+    \sum_{t=1}^{T}
+    p_t(i)\bigl(r_t(j)-r_t(i)\bigr).
+\]
+This is the corresponding \emph{distribution-regret} construction in the
+terminology of \citet{greenwald_bounds_2006}: it evaluates the mixed strategy
+rather than the sampled action sequence. Theoretical guarantees therefore need
+not refer to the same regret object or probabilistic criterion: the literature
+distinguishes action from distribution regret \citep{greenwald_bounds_2006}
+and pseudo-regret from stronger high-probability guarantees
+\citep{huang_near-optimal_2023}. These distinctions are stated explicitly
+where the algorithms are introduced in Chapter~\ref{chap:algorithms}.
+
+The experiments in this thesis use action regret under both full-information
+and bandit feedback, and report its replicate mean as an empirical estimate of
+expected action regret. In the bandit experiments, the learner still receives
+only \(r_t(I_t)\); rewards of actions that were not selected are retained by
+the experimental environment solely for offline regret evaluation.
+
+
+\section{Equilibrium Concepts}
+\label{sec:equilibrium-concepts}
+
+The repeated-game experiments require several standard equilibrium concepts.
+A finite normal-form game consists of a set of players
+\(N=\{1,\ldots,n\}\), finite action sets \(A_i\), and payoff functions
+\(u_i:A_1\times\cdots\times A_n\rightarrow\mathbb{R}\).
+
+Let \(a_t=(a_{1,t},\ldots,a_{n,t})\) be the realized joint action in round
+\(t\). The empirical distribution of joint play after \(T\) rounds is
+\[
+    \widehat{\mu}_T(a)
+    =
+    \frac{1}{T}
+    \sum_{t=1}^{T}
+    \mathbf{1}\{a_t=a\}.
+\]
+This distribution is used directly in the equilibrium analysis of the
+experiments.
+
+\begin{definition}[Coarse correlated equilibrium]
+A distribution \(\mu\) over joint actions is a
+\emph{coarse correlated equilibrium} (CCE) if, for every player \(i\) and
+every fixed alternative action \(a_i'\in A_i\),
+\[
+    \sum_a
+    \mu(a)
+    \bigl(
+        u_i(a_i',a_{-i})-u_i(a)
+    \bigr)
+    \leq0.
+\]
+\end{definition}
+
+A CCE therefore rules out profitable deviations to a single fixed action
+chosen independently of the action drawn from \(\mu\). Replacing the right-hand
+side \(0\) by \(\varepsilon\geq0\) gives the corresponding
+\(\varepsilon\)-CCE notion \citep{leme_convergence_2024}.
+
+\begin{definition}[Correlated equilibrium]
+A distribution \(\mu\) over joint actions is a
+\emph{correlated equilibrium} (CE) if, for every player \(i\) and every pair
+of actions \(a_i,a_i'\in A_i\),
+\[
+    \sum_{a_{-i}}
+    \mu(a_i,a_{-i})
+    \bigl(
+        u_i(a_i',a_{-i})
+        -
+        u_i(a_i,a_{-i})
+    \bigr)
+    \leq0.
+\]
+\end{definition}
+
+Unlike CCE, a correlated equilibrium rules out deviations that depend on the
+action assigned to the player. Replacing the right-hand side \(0\) by
+\(\varepsilon\geq0\) defines an \(\varepsilon\)-CE. This parallels the
+action-dependent replacement considered by internal and swap regret.
+Correlated equilibrium was introduced by \citet{aumann_subjectivity_1974}.
+
+Every correlated equilibrium is also a coarse correlated equilibrium, so
+\(\mathrm{CE}(G)\subseteq\mathrm{CCE}(G)\)
+\citep{leme_convergence_2024}.
+
+The experiments later measure the distance of \(\widehat{\mu}_T\) to these
+equilibrium sets; the precise numerical procedure is described in
+Chapter~\ref{chap:methodology}.
+
+
+\section{Regret and Equilibrium}
+\label{sec:theoretical-connections}
+
+The standard regret--equilibrium correspondence motivates the repeated-game
+experiments. If every player has vanishing external regret, the empirical
+distribution of joint play approaches the coarse correlated-equilibrium set
+\citep{chen_hedging_2020}. If every player has vanishing internal or swap
+regret, the corresponding empirical distribution approaches the
+correlated-equilibrium set \citep{hart_simple_2000,blum_external_2007}. These
+standard implications are used later only as qualitative reference points for
+the empirical CE and CCE measurements.
+
+A stronger result is known in a more specialized self-play setting.
+\citet{leme_convergence_2024} show that, for almost all symmetric two-player
+zero-sum games, if both players use the same no-swap-regret dynamics with
+symmetric initialization, then all but a vanishing fraction of the
+mixed-strategy iterates are close to a symmetric Nash equilibrium. The
+experiments in this thesis do not test this frequent-iterate result directly;
+they measure regret and the time-averaged joint distribution's distance to CE
+and CCE.
+
+The next chapter introduces the concrete learning algorithms implemented in
+the empirical framework and summarizes their theoretical regret guarantees.

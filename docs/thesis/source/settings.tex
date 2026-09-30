@@ -1,0 +1,29 @@
+% Minimal package set for a fast Overleaf build.
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[sc]{mathpazo}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{array}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\KOMAoptions{numbers=noenddot}
+\graphicspath{{logos/}{figures/}}
+\setkomafont{disposition}{\normalfont\bfseries}
+\linespread{1.05}
+\emergencystretch=1.5em
+
+
+% Common notation placeholders for the thesis.
+\newcommand{\Rext}{R^{\mathrm{ext}}}
+\newcommand{\Rint}{R^{\mathrm{int}}}
+\newcommand{\Rswap}{R^{\mathrm{swap}}}
+\newcommand{\CE}{\mathrm{CE}}
+\newcommand{\CCE}{\mathrm{CCE}}
+\newtheorem{definition}{Definition}[chapter]

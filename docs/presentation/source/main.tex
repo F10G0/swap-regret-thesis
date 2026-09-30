@@ -1,0 +1,183 @@
+\documentclass[aspectratio=43,compress,12pt,t]{beamer}
+
+\usetheme{TUMclean}
+\addtobeamertemplate{frametitle}{}{\vspace{-0.3cm}}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{appendixnumberbeamer}
+\usepackage{csquotes}
+\usepackage[
+  backend=biber,
+  style=authoryear,
+  natbib=true,
+  giveninits=true,
+  maxcitenames=2,
+  maxbibnames=3,
+  uniquename=false,
+  uniquelist=false,
+  doi=false,
+  url=false,
+  isbn=false,
+  eprint=false
+]{biblatex}
+\addbibresource{bibliography.bib}
+
+\graphicspath{{figures/}}
+\hypersetup{hidelinks}
+
+\renewcommand{\presentationcontext}{Bachelor's Thesis Defense}
+
+\title{An Empirical Comparison of Regret-Minimizing Algorithms}
+\author{Yifan Gong}
+\date{September 28, 2026}
+
+% Compact literature citations at the bottom of theory slides.
+\newcommand{\litref}[1]{%
+  \vfill\noindent\hspace*{0.02\textwidth}%
+  \parbox{0.96\textwidth}{\color{black!55}\scriptsize #1}%
+}
+
+% Compact bibliography for presentation slides: author, title, venue, year.
+\AtEveryBibitem{%
+  \clearfield{pages}%
+  \clearfield{volume}%
+  \clearfield{number}%
+  \clearlist{publisher}%
+  \clearlist{location}%
+  \clearfield{address}%
+  \clearlist{institution}%
+  \clearlist{organization}%
+  \clearfield{series}%
+  \clearfield{note}%
+  \clearfield{month}%
+  \clearfield{doi}%
+  \clearfield{url}%
+  \clearfield{urldate}%
+  \clearfield{isbn}%
+  \clearfield{issn}%
+  \clearfield{eprint}%
+  \clearname{editor}%
+}
+
+
+
+\setbeamercolor{bibliography entry author}{fg=black}
+\setbeamercolor{bibliography entry title}{fg=black}
+\setbeamercolor{bibliography entry location}{fg=black!60}
+\setbeamercolor{bibliography entry note}{fg=black!60}
+\AtBeginDocument{
+  \setlength{\abovedisplayskip}{0.08cm}
+  \setlength{\belowdisplayskip}{0.08cm}
+  \setlength{\abovedisplayshortskip}{0.08cm}
+  \setlength{\belowdisplayshortskip}{0.08cm}
+}
+
+\begin{document}
+
+% Title page
+\begin{frame}[plain]
+  \vspace*{1.05cm}
+
+  \begin{center}
+
+    {\color{TUMblue}\LARGE
+      An Empirical Comparison of\\[0.12cm]
+      Regret-Minimizing Algorithms
+    }
+
+    \vspace{0.75cm}
+
+    {\Large Yifan Gong}
+
+    \vspace{0.55cm}
+
+    {\large Technical University of Munich}
+
+    \vspace{0.28cm}
+
+    {\normalsize
+    \begin{tabular}{@{}rl@{}}
+      Examiner:   & Prof. Dr. Martin Bichler \\
+      Supervisor: & Julius Durmann, M.Sc.
+    \end{tabular}
+    }
+
+    \vspace{0.9cm}
+
+    {\large September 28, 2026}
+
+  \end{center}
+\end{frame}
+
+\input{Slides/00_Literature}
+\input{Slides/01_Questions}
+\input{Slides/02_RegretEquilibrium}
+\input{Slides/03_Algorithms}
+\input{Slides/04_ExperimentalSetup}
+\input{Slides/05_HFARegretNotions}
+\input{Slides/06_BMReductions}
+\input{Slides/07_EnvironmentComparison}
+\input{Slides/08_ActionSpaceScaling}
+\input{Slides/09_RPSLSSelfPlay}
+\input{Slides/10_RPSEquilibrium}
+\input{Slides/11_RPSLSOpponentDependence}
+\input{Slides/12_Conclusion}
+
+{%
+\setbeamertemplate{footline}{}
+\begin{frame}[noframenumbering]
+  \vfill
+  \vfill
+  \begin{center}
+    {\usebeamercolor[fg]{title}\LARGE Thank you.}
+  \end{center}
+  \vfill
+\end{frame}
+}
+
+\appendix
+\renewcommand{\presentationcontext}{Backup}
+\setbeamertemplate{footline}{%
+  \vbox{%
+    \hbox to \paperwidth{%
+      \hspace*{\TUMcleanFooterLeftMargin}%
+      \usebeamerfont{footline}\textcolor{TUMblue}{Backup}%
+      \hfill%
+      \hspace*{\TUMcleanHeaderRightMargin}%
+    }%
+    \vspace{\TUMcleanFooterBottomSep}%
+  }%
+}
+\input{Slides/Backup/01_FormalRegret}
+\input{Slides/Backup/02_RegretMetrics}
+\input{Slides/Backup/03_TheoryGuarantees}
+\input{Slides/Backup/04_Reductions}
+\input{Slides/Backup/05_EnvironmentDetails}
+\input{Slides/Backup/06_CE_CCE}
+\input{Slides/Backup/07_HorizonScaling_Statistics}
+
+% References are kept after the Q&A backup material for consultation.
+\renewcommand{\presentationcontext}{References}
+\setbeamertemplate{footline}{%
+  \vbox{%
+    \hbox to \paperwidth{%
+      \hspace*{\TUMcleanFooterLeftMargin}%
+      \usebeamerfont{footline}\textcolor{TUMblue}{References}%
+      \hfill%
+      \hspace*{\TUMcleanHeaderRightMargin}%
+    }%
+    \vspace{\TUMcleanFooterBottomSep}%
+  }%
+}
+\begin{frame}[allowframebreaks,noframenumbering]
+  \frametitle{References}
+  \printbibliography[heading=none]
+\end{frame}
+
+\end{document}

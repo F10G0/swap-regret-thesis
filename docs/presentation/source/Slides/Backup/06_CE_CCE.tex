@@ -1,0 +1,64 @@
+\begin{frame}[noframenumbering]
+  \frametitle{Formal CE / CCE conditions and distance}
+
+  \vspace{-0.10cm}
+  \small
+  Let $\mu$ be a distribution over joint actions.
+
+  \vspace{0.20cm}
+
+  \begin{columns}[c,onlytextwidth]
+
+    \begin{column}{0.72\textwidth}
+      \scriptsize
+      
+      \textbf{CCE:} for every player $i$ and fixed alternative $a_i'$,\\[-0.15cm]
+      \[
+        \sum_a \mu(a)
+        \bigl(u_i(a_i',a_{-i})-u_i(a)\bigr)\le 0.
+      \]
+
+      \vspace{-0.20cm}
+
+      \textbf{CE:} for every player $i$ and pair $a_i,a_i'$,\\[-0.15cm]
+      \[
+        \sum_{a_{-i}}\mu(a_i,a_{-i})
+        \bigl(u_i(a_i',a_{-i})-u_i(a_i,a_{-i})\bigr)\le0.
+      \]
+
+    \end{column}
+
+    \begin{column}{0.24\textwidth}
+      \small
+      \raggedright
+      \setlength{\fboxsep}{0.16cm}
+      \setlength{\fboxrule}{0.45pt}
+
+      \hspace*{-1cm}
+      \fcolorbox{TUMblue}{white}{%
+        $\displaystyle
+          \mathrm{CE}(G)\subseteq\mathrm{CCE}(G)
+        $%
+      }
+    \end{column}
+
+  \end{columns}
+
+  \vspace{0.10cm}
+  \textcolor{TUMblue}{\rule{\linewidth}{0.35pt}}
+  \vspace{-0.40cm}
+
+  \small
+  For the empirical joint-action distribution $\hat\mu_t$,
+  \[
+    d_E(\hat\mu_t)=\min_{\mu\in E}\|\hat\mu_t-\mu\|_1,
+    \qquad E\in\{\mathrm{CE},\mathrm{CCE}\}.
+  \]
+
+  \vspace{-0.20cm}
+  \begin{itemize}
+    \setlength{\itemsep}{-0.05cm}
+    \item CE / CCE constraints are linear; the experiments solve the full-dimensional $L_1$ projection with HiGHS.
+    \item Distances are computed per replicate and then averaged; heatmaps average the final empirical distributions.
+  \end{itemize}
+\end{frame}

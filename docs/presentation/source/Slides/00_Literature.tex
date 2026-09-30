@@ -1,0 +1,82 @@
+\begin{frame}
+  \frametitle{Literature: from external regret to stronger guarantees}
+
+  \setlength{\fboxsep}{0.10cm}
+  \setlength{\fboxrule}{0.45pt}
+
+  \begin{center}
+
+    \uncover<1->{%
+      \fcolorbox{TUMblue}{white}{%
+        \parbox{0.94\textwidth}{%
+          \centering
+          {\small\bfseries Classical external-regret learning}\\[0.06cm]
+          {\scriptsize
+          \renewcommand{\arraystretch}{1.15}
+          \begin{tabular}{@{}r@{\hspace{0.10cm}}l@{}}
+            Repeated-play framework: &
+            \textcite{dresher_approximation_1958} \\
+            Weighted Majority: &
+            \textcite{littlestone_weighted_1994} \\
+            Full information (Hedge): &
+            \textcite{freund_decision-theoretic_1997} \\
+            Bandit feedback (EXP3): &
+            \textcite{auer_nonstochastic_2002}
+          \end{tabular}
+          }
+        }%
+      }
+    }
+
+    \vspace{0.06cm}
+    \uncover<2->{%
+      {\color{TUMblue}\small$\downarrow$}
+    }
+    \vspace{0.05cm}
+
+    \uncover<2->{%
+      \fcolorbox{TUMblue}{white}{%
+        \parbox{0.94\textwidth}{%
+          \centering
+          {\small\bfseries Stronger regret in repeated games}\\[0.06cm]
+          {\scriptsize
+          \renewcommand{\arraystretch}{1.15}
+          \begin{tabular}{@{}r@{\hspace{0.10cm}}l@{}}
+            Calibrated learning / CE: &
+            \textcite{foster_calibrated_1997} \\
+            Regret matching / CE: &
+            \textcite{hart_simple_2000} \\
+            External-to-internal/swap reduction: &
+            \textcite{blum_external_2007}
+          \end{tabular}
+          }
+        }%
+      }
+    }
+
+    \vspace{0.06cm}
+    \uncover<3->{%
+      {\color{TUMblue}\small$\downarrow$}
+    }
+    \vspace{0.05cm}
+
+    \uncover<3->{%
+      \fcolorbox{TUMblue}{white}{%
+        \parbox{0.94\textwidth}{%
+          \centering
+          {\small\bfseries Stronger guarantees in structured games}\\[0.06cm]
+          {\scriptsize
+          \renewcommand{\arraystretch}{1.15}
+          \begin{tabular}{@{}r@{\hspace{0.10cm}}l@{}}
+            Faster regret in repeated games: &
+            \textcite{chen_hedging_2020} \\
+            Stronger self-play convergence: &
+            \textcite{leme_convergence_2024}
+          \end{tabular}
+          }
+        }%
+      }
+    }
+
+  \end{center}
+\end{frame}

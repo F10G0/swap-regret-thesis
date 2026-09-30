@@ -1,0 +1,39 @@
+\begin{titlepage}
+  \thispagestyle{empty}
+  \centering
+
+  \IfFileExists{logos/tum.pdf}{%
+    \includegraphics[height=18mm]{logos/tum.pdf}
+  }{}
+
+  \vspace{8mm}
+  {\Large \School\par}
+
+  \vspace{3mm}
+  {\large \University\par}
+
+  \vspace{14mm}
+  {\Large \ThesisType\par}
+
+  \vspace{12mm}
+  {\LARGE\bfseries \ThesisTitle\par}
+
+  \vspace{7mm}
+  {\Large\bfseries \ThesisTitleGerman\par}
+
+  \vspace{15mm}
+  \renewcommand{\arraystretch}{1.35}
+  \begin{tabular}{@{}>{\bfseries}l l@{}}
+    Author: & \AuthorName \\
+    Examiner: & \ExaminerName \\
+    Supervisor: & \SupervisorName \\
+    Submission date: & \SubmissionDate \\
+  \end{tabular}
+
+  \IfFileExists{logos/faculty.png}{%
+    \vfill
+    \includegraphics[height=20mm]{logos/faculty.png}
+  }{%
+    \vfill
+  }
+\end{titlepage}
